@@ -257,6 +257,7 @@ void Problem::initialize_rcemip_moisture(
     const Real z_q2 = 7500.0;
     const Real z_t = 15000.0;
     const Real q_t = 1.0e-11;
+    const Real q0 = parms.rcemip_q0
 
     ParallelFor(bx, [=, parms_d=parms] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
       const Real* prob_lo = geomdata.ProbLo();
@@ -270,6 +271,8 @@ void Problem::initialize_rcemip_moisture(
         qv = q0 * std::exp(-z/z_q1) * std::exp(-ratio * ratio);
       }
     }
+
+    state_pert(i, j, k, RhoQ1_comp) = qv;
 }
 //=============================================================================
 // USER-DEFINED FUNCTION
@@ -281,11 +284,6 @@ void Problem::initialize_rcemip_temp(
     amrex::Array4<amrex::Real const> const& z_cc,
     amrex::GeometryData const& geomdata)
 {
-    const Real g = 9.79764;  // Gravity (m/s^2)
-    const Real cp = 1004.0;  // Specific heat capacity at constant pressure (J/kg/K)
-    const Real p0 = 101325.0;  // Reference pressure (Pa)
-    const Real Rd = 287.0;  // Gas constant for dry air (J/kg/K)
-
     const Real gamma = 0.0067;  // Dry adiabatic lapse rate
     const Real T_0 = parms.rcemip_sst;  // Surface temperature equals SST
     const Real z_t = 15000.0;  // Tropopause height (m)
@@ -296,8 +294,7 @@ void Problem::initialize_rcemip_temp(
         const Real* dx = geomdata.CellSize();
         const Real z = (z_cc) ? z_cc(i,j,k) : prob_lo[2] + (k + 0.5) * dx[2];
 
-        // Temperature profile based on RCEMIP specifications
-        Real T_v0 = T_0 * (1 + 0.608*q0);
+        Real T_v0 = T_0 * (1 + 0.608 * q0);
         Real T_vt = T_v0 - gamma * z_t;
 
         if (z <= z_tropo) {
@@ -308,7 +305,7 @@ void Problem::initialize_rcemip_temp(
             T_v = T_vt;
         }
 
-        Real T = T_v / (1 + 0.608*qv);
+        Real T = T_v / (1 + 0.608 * qv);
 
     });
 }
