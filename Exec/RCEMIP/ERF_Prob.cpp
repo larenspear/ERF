@@ -289,6 +289,10 @@ void Problem::initialize_rcemip_temp(
     const Real z_t = 15000.0;  // Tropopause height (m)
     const Real q0 = parms.rcemip_q0;  // Surface specific humidity
 
+    const p0 = 1014.8; // Surface pressure (hPa)
+    const Rd = 287.04; // Dry air gas constant (J/(kg*K))
+    const g = 9.79764; // Gravitational acceleration (m/s^2)
+
     ParallelFor(bx, [=, parms_d=parms] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
         const Real* prob_lo = geomdata.ProbLo();
         const Real* dx = geomdata.CellSize();
@@ -307,5 +311,18 @@ void Problem::initialize_rcemip_temp(
 
         Real T = T_v / (1 + 0.608 * qv);
 
+        p_t = p0 * std::pow((T_vt/T_v0), (g/(Rd*gamma)));
+
+        if (z <= z_tropo) {
+            // Below tropopause: hydrostatic balance
+            p = p0 * std::pow(T_v0 - (gamma * z) / T_v0, (g/(Rd*gamma)));
+        } else {
+            // Above tropopause: isothermal hydrostatic balance
+            p = p_t * std::exp(-g*(z-z_t)/(Rd*T_vt));
+        }
+
     });
+
+    state_pert(i, j, k, RhoTheta_comp) = p / (Rd * T);
+    state_pert(i, j, k, RhoQ1_comp) = qv;
 }
