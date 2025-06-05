@@ -17,6 +17,19 @@
 #include <ERF_TurbStruct.H>
 #include <ERF_TurbPertStruct.H>
 
+enum MapFacType {
+//  This version assumes isotropic
+    m_x, u_x, v_x, num,
+    m_y = 0, u_y = 1, v_y = 2
+//  This version allows for non-isotropic
+//  m_x, u_x, v_x,
+//  m_y, u_y, v_y, num
+};
+
+enum TauType {
+    tau11, tau22, tau33, tau12, tau13, tau23, tau21, tau31, tau32
+};
+
 AMREX_ENUM(InitType,
     None, Input_Sounding, NCFile, WRFInput, Metgrid, Uniform
 );
@@ -59,6 +72,10 @@ AMREX_ENUM(WindFarmLocType,
 
 AMREX_ENUM(LandSurfaceType,
     SLM, MM5, None, NOAH
+);
+
+AMREX_ENUM(RadiationType,
+    None, RRTMGP
 );
 
 enum struct Coord {
@@ -161,6 +178,18 @@ struct SolverChoice {
         // What type of land surface model to use
         lsm_type = LandSurfaceType::None; // Default
         pp.query_enum_case_insensitive("land_surface_model",lsm_type);
+
+        // What type of radiation model to use
+        rad_type = RadiationType::None; // Default
+        pp.query_enum_case_insensitive("radiation_model", rad_type);
+
+        // Verify that radiation model cannot be RRTMGP if ERF was not compiled with RRTMGP
+#ifndef ERF_USE_RRTMGP
+        if (rad_type == RadiationType::RRTMGP)
+        {
+            amrex::Abort("ERF was not compiled with RRTMGP enabled!");
+        }
+#endif
 
         // Is the terrain none, static or moving?
         std::string terrain_type_temp = "";
@@ -324,6 +353,11 @@ struct SolverChoice {
         pp.query("rayleigh_damp_T", rayleigh_damp_T);
         pp.query("rayleigh_dampcoef", rayleigh_dampcoef);
         pp.query("rayleigh_zdamp", rayleigh_zdamp);
+        pp.query("rayleigh_damp_substep", rayleigh_damp_substep); // apply Rayleigh damping source terms in substep only
+
+        // flags for whether to apply other source terms in substep only
+        pp.query("immersed_forcing_substep", immersed_forcing_substep); // apply Rayleigh damping source terms in substep only
+        pp.query("forest_substep", forest_substep); // apply Rayleigh damping source terms in substep only
 
         // Flag to do MOST rotations with terrain
         pp.query("use_rotate_surface_flux",use_rotate_surface_flux);
@@ -410,7 +444,19 @@ struct SolverChoice {
                 }
             }
         }
-
+        // MRF
+        for (int lev = 0; lev <= max_level; lev++) {
+            if (turbChoice[lev].pbl_ysu_use_consistent_coriolis) {
+                if (use_coriolis) {
+                    turbChoice[lev].pbl_ysu_coriolis_freq = coriolis_factor * sinphi;
+                    if (lev == 0) {
+                        amrex::Print() << "MRF PBL using ERF coriolis frequency: " << turbChoice[lev].pbl_ysu_coriolis_freq << std::endl;
+                    }
+                } else {
+                    amrex::Abort("MRF cannot use ERF coriolis frequency if not using coriolis");
+                }
+            }
+        }
 
         // Which type of multilevel coupling
         coupling_type = CouplingType::TwoWay; // Default
@@ -568,6 +614,12 @@ struct SolverChoice {
             }
         }
 
+        if (rad_type == RadiationType::RRTMGP) {
+            amrex::Print() << "Radiation Model: RRTMGP" << std::endl;
+        } else {
+            amrex::Print() << "Radiation Model: None" << std::endl;
+        }
+
         amrex::Print() << "Buoyancy_type               : " << buoyancy_type << std::endl;
 
            advChoice.display(pp_prefix);
@@ -687,6 +739,11 @@ struct SolverChoice {
     amrex::Real rayleigh_dampcoef      = 0.2; // inverse time scale [1/s]
     amrex::Real rayleigh_zdamp         = 500.0; // damping layer depth [m]
     amrex::Real rayleigh_ztop;
+    bool        rayleigh_damp_substep  = false; // use Rayleigh on substep only?
+
+    // Specify whether to apply other various source terms on substep only
+    bool        immersed_forcing_substep  = false;
+    bool        forest_substep            = false;
 
     // This defaults to true but can be set to false for moving terrain cases only
     bool        use_lagged_delta_rt    = true;
@@ -743,6 +800,7 @@ struct SolverChoice {
     WindFarmType windfarm_type;
     WindFarmLocType windfarm_loc_type;
     LandSurfaceType lsm_type;
+    RadiationType rad_type;
 
     ABLDriverType abl_driver_type;
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> abl_pressure_grad;

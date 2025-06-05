@@ -43,10 +43,14 @@ void ERF::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba_in,
         dm = dm_in;
     }
 
+    // ********************************************************************************************
     // Define grids[lev] to be ba
+    // ********************************************************************************************
     SetBoxArray(lev, ba);
 
+    // ********************************************************************************************
     // Define dmap[lev] to be dm
+    // ********************************************************************************************
     SetDistributionMap(lev, dm);
 
     if (verbose) {
@@ -213,6 +217,14 @@ void ERF::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba_in,
     }
     for (int mvar(0); mvar<qmoist[lev].size(); ++mvar) {
         qmoist[lev][mvar] = micro->Get_Qmoist_Ptr(lev,mvar);
+    }
+
+    //********************************************************************************************
+    // Radiation
+    // *******************************************************************************************
+    if (solverChoice.rad_type != RadiationType::None)
+    {
+        rad[lev]->Init(geom[lev], ba, &vars_new[lev][Vars::cons]);
     }
 
     // ********************************************************************************************
@@ -572,7 +584,7 @@ ERF::ClearLevel (int lev)
         zmom_crse_rhs[lev].clear();
     }
 
-    if (solverChoice.anelastic[lev] == 1) {
+    if (solverChoice.anelastic[lev] == 1 || solverChoice.project_initial_velocity) {
         pp_inc[lev].clear();
     }
 

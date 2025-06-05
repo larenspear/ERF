@@ -6,16 +6,19 @@
  * Main class in ERF code, instantiated from main.cpp
 */
 
-
-#include <ERF_EOS.H>
-#include <ERF.H>
-#include <AMReX_buildInfo.H>
-#include <AMReX_Random.H>
-#include <ERF_EpochTime.H>
-#include <ERF_Utils.H>
-#include <ERF_TerrainMetrics.H>
-#include <ERF_EBIFTerrain.H>
 #include <memory>
+
+#include "ERF_EOS.H"
+#include "ERF.H"
+#include "AMReX_buildInfo.H"
+#include "AMReX_Random.H"
+#include "ERF_EpochTime.H"
+#include "ERF_Utils.H"
+#include "ERF_TerrainMetrics.H"
+#include "ERF_EBIFTerrain.H"
+#ifdef ERF_USE_NETCDF
+#include "ERF_ReadFromWRFBdy.H"
+#endif
 
 using namespace amrex;
 
@@ -57,6 +60,9 @@ Vector<Vector<std::string>> ERF::nc_init_file = {{""}}; // Must provide via inpu
 
 // NetCDF wrfbdy (lateral boundary) file
 std::string ERF::nc_bdy_file; // Must provide via input
+
+// NetCDF wrflow (bottom boundary) file
+std::string ERF::nc_low_file; // Must provide via input
 
 // Flag to trigger initialization from input_sounding like WRF's ideal.exe
 bool ERF::init_sounding_ideal = false;
@@ -128,11 +134,9 @@ ERF::ERF_shared ()
     SMark.resize(nlevs_max);
 #endif
 
-#if defined(ERF_USE_RRTMGP)
     qheating_rates.resize(nlevs_max);
     sw_lw_fluxes.resize(nlevs_max);
     solar_zenith.resize(nlevs_max);
-#endif
 
     // NOTE: size lsm before readparams (chooses the model at all levels)
     lsm.ReSize(nlevs_max);
@@ -150,10 +154,18 @@ ERF::ERF_shared ()
     initializeWindFarm(nlevs_max);
 #endif
 
-#ifdef ERF_USE_RRTMGP
     rad.resize(nlevs_max);
-    for (int lev = 0; lev <= max_level; ++lev) { rad[lev] = std::make_unique<Radiation>(lev,solverChoice); }
+    for (int lev = 0; lev <= max_level; ++lev) {
+        if (solverChoice.rad_type == RadiationType::RRTMGP) {
+#ifdef ERF_USE_RRTMGP
+            rad[lev] = std::make_unique<Radiation>(lev, solverChoice);
+            // pass radiation datalog frequency to model - RRTMGP needs to know when to save data for profiles
+            rad[lev]->setDataLogFrequency(rad_datalog_int);
 #endif
+        } else if (solverChoice.rad_type != RadiationType::None) {
+            Abort("Don't know this radiation model!");
+        }
+    }
 
     const std::string& pv1 = "plot_vars_1"; setPlotVariables(pv1,plot_var_names_1);
     const std::string& pv2 = "plot_vars_2"; setPlotVariables(pv2,plot_var_names_2);
@@ -211,6 +223,7 @@ ERF::ERF_shared ()
 
     vars_new.resize(nlevs_max);
     vars_old.resize(nlevs_max);
+    gradp.resize(nlevs_max);
 
     // We resize this regardless in order to pass it without error
     pp_inc.resize(nlevs_max);
@@ -230,6 +243,7 @@ ERF::ERF_shared ()
     for (int lev = 0; lev < nlevs_max; ++lev) {
         vars_new[lev].resize(Vars::NumTypes);
         vars_old[lev].resize(Vars::NumTypes);
+        gradp[lev].resize(AMREX_SPACEDIM);
     }
 
     // Time integrator
@@ -251,10 +265,7 @@ ERF::ERF_shared ()
     advflux_reg.resize(nlevs_max);
 
     // Stresses
-    Tau11_lev.resize(nlevs_max); Tau22_lev.resize(nlevs_max); Tau33_lev.resize(nlevs_max);
-    Tau12_lev.resize(nlevs_max); Tau21_lev.resize(nlevs_max);
-    Tau13_lev.resize(nlevs_max); Tau31_lev.resize(nlevs_max);
-    Tau23_lev.resize(nlevs_max); Tau32_lev.resize(nlevs_max);
+    Tau.resize(nlevs_max);
     SFS_hfx1_lev.resize(nlevs_max); SFS_hfx2_lev.resize(nlevs_max); SFS_hfx3_lev.resize(nlevs_max);
     SFS_diss_lev.resize(nlevs_max);
     SFS_q1fx1_lev.resize(nlevs_max); SFS_q1fx2_lev.resize(nlevs_max); SFS_q1fx3_lev.resize(nlevs_max);
@@ -277,11 +288,9 @@ ERF::ERF_shared ()
 
     z_phys_nd_new.resize(nlevs_max);
     detJ_cc_new.resize(nlevs_max);
-    ax_new.resize(nlevs_max);
-    ay_new.resize(nlevs_max);
-    az_new.resize(nlevs_max);
 
     z_phys_nd_src.resize(nlevs_max);
+    z_phys_cc_src.resize(nlevs_max);
     detJ_cc_src.resize(nlevs_max);
     ax_src.resize(nlevs_max);
     ay_src.resize(nlevs_max);
@@ -294,10 +303,17 @@ ERF::ERF_shared ()
     // Wall distance
     walldist.resize(nlevs_max);
 
-    // Mapfactors
-    mapfac_m.resize(nlevs_max);
-    mapfac_u.resize(nlevs_max);
-    mapfac_v.resize(nlevs_max);
+    // BoxArrays to make MultiFabs needed to convert WRFBdy data
+    ba1d.resize(nlevs_max);
+    ba2d.resize(nlevs_max);
+
+    // MultiFabs needed to convert WRFBdy data
+    mf_C1H.resize(nlevs_max);
+    mf_C2H.resize(nlevs_max);
+    mf_MUB.resize(nlevs_max);
+
+    // Map factors
+    mapfac.resize(nlevs_max);
 
     // Thin immersed body
     xflux_imask.resize(nlevs_max);
@@ -388,7 +404,11 @@ ERF::ERF_shared ()
         TerrainIF ebterrain(terrain_fab, geom[max_level], stretched_dz_d[max_level]);
         auto gshop = EB2::makeShop(ebterrain);
         bool build_coarse_level_by_coarsening(false);
-        amrex::EB2::Build(gshop, geom[max_level], max_level, max_level, build_coarse_level_by_coarsening);
+        // Note this just needs to be an integer > number of V-cycles one might use
+        int max_coarsening_level = ( solverChoice.terrain_type == TerrainType::EB &&
+                                    (solverChoice.project_initial_velocity ||
+                                     solverChoice.anelastic[0] == 1) ) ? 100 : 0;
+        amrex::EB2::Build(gshop, geom[max_level], max_level, max_coarsening_level, build_coarse_level_by_coarsening);
     }
 }
 
@@ -499,18 +519,19 @@ ERF::post_timestep (int nstep, Real time, Real dt_lev0)
             // Here we pre-divide (rho S) by m^2 before refluxing
             for (MFIter mfi(vars_new[lev][Vars::cons], TilingIfNotGPU()); mfi.isValid(); ++mfi) {
                 const Box& bx = mfi.tilebox();
-                const Array4<      Real>   cons_arr = vars_new[lev][Vars::cons].array(mfi);
-                const Array4<const Real> mapfac_arr = mapfac_m[lev]->const_array(mfi);
+                const Array4<      Real> cons_arr = vars_new[lev][Vars::cons].array(mfi);
+                const Array4<const Real>  mfx_arr = mapfac[lev][MapFacType::m_x]->const_array(mfi);
+                const Array4<const Real>  mfy_arr = mapfac[lev][MapFacType::m_y]->const_array(mfi);
                 if (SolverChoice::mesh_type == MeshType::ConstantDz) {
                     ParallelFor(bx, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
                     {
-                        cons_arr(i,j,k,n) /= (mapfac_arr(i,j,0)*mapfac_arr(i,j,0));
+                        cons_arr(i,j,k,n) /= (mfx_arr(i,j,0)*mfy_arr(i,j,0));
                     });
                 } else {
                     const Array4<const Real>   detJ_arr = detJ_cc[lev]->const_array(mfi);
                     ParallelFor(bx, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
                     {
-                        cons_arr(i,j,k,n) *= detJ_arr(i,j,k) / (mapfac_arr(i,j,0)*mapfac_arr(i,j,0));
+                        cons_arr(i,j,k,n) *= detJ_arr(i,j,k) / (mfx_arr(i,j,0)*mfy_arr(i,j,0));
                     });
                 }
             } // mfi
@@ -523,17 +544,18 @@ ERF::post_timestep (int nstep, Real time, Real dt_lev0)
             for (MFIter mfi(vars_new[lev][Vars::cons], TilingIfNotGPU()); mfi.isValid(); ++mfi) {
                 const Box& bx = mfi.tilebox();
                 const Array4<      Real>   cons_arr = vars_new[lev][Vars::cons].array(mfi);
-                const Array4<const Real> mapfac_arr = mapfac_m[lev]->const_array(mfi);
+                const Array4<const Real>  mfx_arr = mapfac[lev][MapFacType::m_x]->const_array(mfi);
+                const Array4<const Real>  mfy_arr = mapfac[lev][MapFacType::m_y]->const_array(mfi);
                 if (SolverChoice::mesh_type == MeshType::ConstantDz) {
                     ParallelFor(bx, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
                     {
-                        cons_arr(i,j,k,n) *= (mapfac_arr(i,j,0)*mapfac_arr(i,j,0));
+                        cons_arr(i,j,k,n) *= (mfx_arr(i,j,0)*mfy_arr(i,j,0));
                     });
                 } else {
                     const Array4<const Real>   detJ_arr = detJ_cc[lev]->const_array(mfi);
                     ParallelFor(bx, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
                     {
-                        cons_arr(i,j,k,n) *= (mapfac_arr(i,j,0)*mapfac_arr(i,j,0)) / detJ_arr(i,j,k);
+                        cons_arr(i,j,k,n) *= (mfx_arr(i,j,0)*mfy_arr(i,j,0)) / detJ_arr(i,j,k);
                     });
                 }
             } // mfi
@@ -559,7 +581,8 @@ ERF::post_timestep (int nstep, Real time, Real dt_lev0)
     }
 
     if (solverChoice.pert_type == PerturbationType::Source ||
-        solverChoice.pert_type == PerturbationType::Direct) {
+        solverChoice.pert_type == PerturbationType::Direct ||
+        solverChoice.pert_type == PerturbationType::CPM) {
         if (is_it_time_for_action(nstep, time, dt_lev0, pert_interval, -1.)) {
             turbPert.debug(time);
         }
@@ -572,6 +595,15 @@ ERF::post_timestep (int nstep, Real time, Real dt_lev0)
         } else {
             // some variables staggered
             write_1D_profiles_stag(time);
+        }
+    }
+
+    if (solverChoice.rad_type != RadiationType::None)
+    {
+        if (rad_datalog_int > 0 && (nstep+1) % rad_datalog_int == 0) {
+            if (rad[0]->hasDatalog()) {
+                rad[0]->WriteDataLog(time);
+            }
         }
     }
 
@@ -600,7 +632,7 @@ ERF::post_timestep (int nstep, Real time, Real dt_lev0)
       if (is_it_time_for_action(istep[0], time, dt_lev0, bndry_output_planes_interval, bndry_output_planes_per) &&
           time >= bndry_output_planes_start_time)
       {
-         bool is_moist = (micro->Get_Qstate_Size() > 0);
+         bool is_moist = (micro->Get_Qstate_Moist_Size() > 0);
          m_w2d->write_planes(istep[0], time, vars_new, is_moist);
       }
     }
@@ -694,9 +726,11 @@ ERF::InitData_pre ()
         // BC compatibility
         if ( ( (solverChoice.turbChoice[lev].pbl_type == PBLType::MYNN25)   ||
                (solverChoice.turbChoice[lev].pbl_type == PBLType::MYNNEDMF) ||
-               (solverChoice.turbChoice[lev].pbl_type == PBLType::YSU)       ) &&
+               (solverChoice.turbChoice[lev].pbl_type == PBLType::YSU) ||
+               (solverChoice.turbChoice[lev].pbl_type == PBLType::MRF)
+                   ) &&
             phys_bc_type[Orientation(Direction::z,Orientation::low)] != ERF_BC::surface_layer ) {
-            Abort("MYNN2.5/MYNNEDMF/YSU PBL Model requires MOST at lower boundary");
+            Abort("MYNN2.5/MYNNEDMF/YSU/MRF PBL Model requires MOST at lower boundary");
         }
         if ( (solverChoice.turbChoice[lev].les_type == LESType::Deardorff) &&
              (solverChoice.turbChoice[lev].Ce_wall > 0) &&
@@ -772,7 +806,38 @@ ERF::InitData_post ()
                                                       z_phys_cc[lev].get(), z_phys_nd[lev].get());
             }
         }
-    }
+
+#ifdef ERF_USE_NETCDF
+        //
+        // Create the needed bdy_data_xlo etc ... since we don't read it in from checkpoint any more
+        //
+        if (solverChoice.use_real_bcs) {
+
+            bdy_time_interval = read_times_from_wrfbdy(nc_bdy_file,
+                                                       bdy_data_xlo,bdy_data_xhi,bdy_data_ylo,bdy_data_yhi,
+                                                       start_bdy_time);
+            Real dT = bdy_time_interval;
+
+            Real time_since_start_old = t_new[0] - start_bdy_time;
+            int n_time_old = static_cast<int>(time_since_start_old /  dT);
+
+            // I don't think this works if lev > 0 ...?
+            AMREX_ALWAYS_ASSERT(finest_level == 0);
+            int lev = 0;
+            bool use_moist = (solverChoice.moisture_type != MoistureType::None);
+            for (int itime = n_time_old; itime < n_time_old+3; itime++)
+            {
+                read_from_wrfbdy(itime,nc_bdy_file,geom[0].Domain(),
+                                 bdy_data_xlo,bdy_data_xhi,bdy_data_ylo,bdy_data_yhi,
+                                 real_width);
+                convert_all_wrfbdy_data(itime, geom[0].Domain(), bdy_data_xlo, bdy_data_xhi, bdy_data_ylo, bdy_data_yhi,
+                                        *mf_MUB[lev], *mf_C1H[lev], *mf_C2H[lev],
+                                        vars_new[lev][Vars::xvel], vars_new[lev][Vars::yvel], vars_new[lev][Vars::cons],
+                                        geom[lev], use_moist);
+            } // itime
+        } // use_real_bcs && lev == 0
+#endif
+    } // end restart
 
 #ifdef ERF_USE_PARTICLES
     /* If using a Lagrangian microphysics model, its particle container has now been
@@ -890,7 +955,8 @@ ERF::InitData_post ()
     }
 
     if (solverChoice.pert_type == PerturbationType::Source ||
-        solverChoice.pert_type == PerturbationType::Direct) {
+        solverChoice.pert_type == PerturbationType::Direct ||
+        solverChoice.pert_type == PerturbationType::CPM) {
         if (is_it_time_for_action(istep[0], t_new[0], dt[0], pert_interval, -1.)) {
             turbPert.debug(t_new[0]);
         }
@@ -904,7 +970,7 @@ ERF::InitData_post ()
 
         Real time = 0.;
         if (time >= bndry_output_planes_start_time) {
-            bool is_moist = (micro->Get_Qstate_Size() > 0);
+            bool is_moist = (micro->Get_Qstate_Moist_Size() > 0);
             m_w2d->write_planes(0, time, vars_new, is_moist);
         }
     }
@@ -923,8 +989,11 @@ ERF::InitData_post ()
             }
             for (int lev = 0; lev <= finest_level; ++lev)
             {
-                project_velocities(lev, dummy_dt, vars_new[lev], pp_inc[lev]);
+                project_velocity(lev, dummy_dt);
                 pp_inc[lev].setVal(0.);
+                gradp[lev][GpVars::gpx].setVal(0.);
+                gradp[lev][GpVars::gpy].setVal(0.);
+                gradp[lev][GpVars::gpz].setVal(0.);
             }
         }
     }
@@ -1097,7 +1166,7 @@ ERF::InitData_post ()
 
 
         if (restart_chkfile != "") {
-            // Update surface fields if needed
+            // Update surface fields if needed (and available)
             ReadCheckpointFileSurfaceLayer();
         }
 
@@ -1138,7 +1207,7 @@ ERF::InitData_post ()
                 m_SurfaceLayer->update_fluxes(lev, time);
             }
         }
-    }
+    } // end if (phys_bc_type[Orientation(Direction::z,Orientation::low)] == ERF_BC::surface_layer)
 
     // Update micro vars before first plot file
     if (solverChoice.moisture_type != MoistureType::None) {
@@ -1217,6 +1286,12 @@ ERF::InitData_post ()
         for (int i = 0; i < num_energy_datalogs; i++) {
             setRecordEnergyDataInfo(i,tot_e_datalogname[i]);
         }
+    }
+
+    if (solverChoice.rad_type != RadiationType::None)
+    {
+        // Create data log for radiation model if requested
+        rad[0]->setupDataLog();
     }
 
 
@@ -1427,7 +1502,7 @@ ERF::init_only (int lev, Real time)
     {
         // The base state is initialized from WRF wrfinput data, output by
         // ideal.exe or real.exe
-        init_from_wrfinput(lev);
+        init_from_wrfinput(lev, *mf_C1H[lev], *mf_C2H[lev], *mf_MUB[lev]);
         if (lev==0) {
             if ((start_time > 0) && (start_time != t_new[lev])) {
                 Print() << "Ignoring specified start_time="
@@ -1502,7 +1577,8 @@ ERF::init_only (int lev, Real time)
 
     // Initialize turbulent perturbation
     if (solverChoice.pert_type == PerturbationType::Source ||
-        solverChoice.pert_type == PerturbationType::Direct) {
+        solverChoice.pert_type == PerturbationType::Direct ||
+        solverChoice.pert_type == PerturbationType::CPM) {
         turbPert_update(lev, 0.);
         turbPert_amplitude(lev);
     }
@@ -1519,8 +1595,14 @@ ERF::ReadParameters ()
         std::string start_datetime, stop_datetime;
         if (pp.query("start_datetime", start_datetime)) {
             start_time = getEpochTime(start_datetime, datetime_format);
+            if (start_time == -1.0) {
+               amrex::Abort("Invalid start_datetime string!");
+            }
             if (pp.query("stop_datetime", stop_datetime)) {
                 stop_time = getEpochTime(stop_datetime, datetime_format);
+                if (stop_time == -1.0) {
+                    amrex::Abort("Invalid stop_datetime string!");
+                }
             }
             use_datetime = true;
         } else {
@@ -1616,8 +1698,15 @@ ERF::ReadParameters ()
         } // lev
 
         // NetCDF wrfbdy lateral boundary file
-        pp.query("nc_bdy_file", nc_bdy_file);
-        Print() << "Reading NC bdy file name " << nc_bdy_file << std::endl;
+        if (pp.query("nc_bdy_file", nc_bdy_file)) {
+            Print() << "Reading NC bdy file name " << nc_bdy_file << std::endl;
+        }
+
+        // NetCDF wrflow lateral boundary file
+        if (pp.query("nc_low_file", nc_low_file)) {
+            Print() << "Reading NC low file name " << nc_low_file << std::endl;
+        }
+
 #endif
 
         // Flag to trigger initialization from input_sounding like WRF's ideal.exe
@@ -1705,6 +1794,7 @@ ERF::ReadParameters ()
 #ifdef ERF_USE_RRTMGP
         pp.query("plot_rad", plot_rad);
 #endif
+        pp.query("profile_rad_int", rad_datalog_int);
 
         pp.query("output_1d_column", output_1d_column);
         pp.query("column_per", column_per);

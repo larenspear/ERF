@@ -156,20 +156,15 @@ ERF::init_from_metgrid (int lev)
     make_terrain_fitted_coords(lev, geom[lev], *z_phys, zlevels_stag[lev], phys_bc_type);
 
     // Copy LATITUDE, LONGITUDE, SST and LANDMASK data into MF and iMF data structures
-    auto& ba = lev_new[Vars::cons].boxArray();
     auto& dm = lev_new[Vars::cons].DistributionMap();
     auto ngv = lev_new[Vars::cons].nGrowVect(); ngv[2] = 0;
-    BoxList bl2d = ba.boxList();
-    for (auto& b : bl2d) {
-        b.setRange(2,0);
-    }
-    BoxArray ba2d(std::move(bl2d));
+
     int i_lo = geom[lev].Domain().smallEnd(0); int i_hi = geom[lev].Domain().bigEnd(0);
     int j_lo = geom[lev].Domain().smallEnd(1); int j_hi = geom[lev].Domain().bigEnd(1);
 
     if (flag_sst[0]) {
         for (int itime(0); itime < ntimes; ++itime) {
-            sst_lev[lev][itime] = std::make_unique<MultiFab>(ba2d,dm,1,ngv);
+            sst_lev[lev][itime] = std::make_unique<MultiFab>(ba2d[lev],dm,1,ngv);
             for ( MFIter mfi(*(sst_lev[lev][itime]), TilingIfNotGPU()); mfi.isValid(); ++mfi ) {
                 Box gtbx = mfi.growntilebox();
                 FArrayBox& dst = (*(sst_lev[lev][itime]))[mfi];
@@ -191,7 +186,7 @@ ERF::init_from_metgrid (int lev)
 
     if (flag_tsk[0]) {
         for (int itime(0); itime < ntimes; ++itime) {
-            tsk_lev[lev][itime] = std::make_unique<MultiFab>(ba2d,dm,1,ngv);
+            tsk_lev[lev][itime] = std::make_unique<MultiFab>(ba2d[lev],dm,1,ngv);
             for ( MFIter mfi(*(tsk_lev[lev][itime]), TilingIfNotGPU()); mfi.isValid(); ++mfi ) {
                 Box gtbx = mfi.growntilebox();
                 FArrayBox& dst = (*(tsk_lev[lev][itime]))[mfi];
@@ -213,7 +208,7 @@ ERF::init_from_metgrid (int lev)
 
     if (flag_lmask[0]) {
         for (int itime(0); itime < ntimes; ++itime) {
-            lmask_lev[lev][itime] = std::make_unique<iMultiFab>(ba2d,dm,1,ngv);
+            lmask_lev[lev][itime] = std::make_unique<iMultiFab>(ba2d[lev],dm,1,ngv);
             for ( MFIter mfi(*(lmask_lev[lev][itime]), TilingIfNotGPU()); mfi.isValid(); ++mfi ) {
                 Box gtbx = mfi.growntilebox();
                 IArrayBox& dst = (*(lmask_lev[lev][itime]))[mfi];
@@ -232,9 +227,9 @@ ERF::init_from_metgrid (int lev)
     }
 
     solverChoice.has_lat_lon = true;
-    lat_m[lev]    = std::make_unique<MultiFab>(ba2d,dm,1,ngv);
-    sinPhi_m[lev] = std::make_unique<MultiFab>(ba2d,dm,1,ngv);
-    cosPhi_m[lev] = std::make_unique<MultiFab>(ba2d,dm,1,ngv);
+    lat_m[lev]    = std::make_unique<MultiFab>(ba2d[lev],dm,1,ngv);
+    sinPhi_m[lev] = std::make_unique<MultiFab>(ba2d[lev],dm,1,ngv);
+    cosPhi_m[lev] = std::make_unique<MultiFab>(ba2d[lev],dm,1,ngv);
     for ( MFIter mfi(*(lat_m[lev]), TilingIfNotGPU()); mfi.isValid(); ++mfi ) {
         Box gtbx = mfi.growntilebox();
         FArrayBox& dst = (*(lat_m[lev]))[mfi];
@@ -255,7 +250,7 @@ ERF::init_from_metgrid (int lev)
         });
     }
 
-    lon_m[lev] = std::make_unique<MultiFab>(ba2d,dm,1,ngv);
+    lon_m[lev] = std::make_unique<MultiFab>(ba2d[lev],dm,1,ngv);
     for ( MFIter mfi(*(lon_m[lev]), TilingIfNotGPU()); mfi.isValid(); ++mfi ) {
         Box gtbx = mfi.growntilebox();
         FArrayBox& dst = (*(lon_m[lev]))[mfi];
@@ -434,11 +429,11 @@ ERF::init_from_metgrid (int lev)
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
     // Use map scale factors directly from the met_em files
-    for ( MFIter mfi(*mapfac_u[lev], TilingIfNotGPU()); mfi.isValid(); ++mfi ) {
+    for ( MFIter mfi(*mapfac[lev][MapFacType::u_x], TilingIfNotGPU()); mfi.isValid(); ++mfi ) {
         // Define fabs for holding the initial data
-        FArrayBox &msfu_fab = (*mapfac_u[lev])[mfi];
-        FArrayBox &msfv_fab = (*mapfac_v[lev])[mfi];
-        FArrayBox &msfm_fab = (*mapfac_m[lev])[mfi];
+        FArrayBox &msfu_fab = (*mapfac[lev][MapFacType::u_x])[mfi];
+        FArrayBox &msfv_fab = (*mapfac[lev][MapFacType::v_x])[mfi];
+        FArrayBox &msfm_fab = (*mapfac[lev][MapFacType::m_x])[mfi];
 
         init_msfs_from_metgrid(metgrid_debug_msf,
                                msfu_fab, msfv_fab, msfm_fab, flag_msf[0],
@@ -1303,7 +1298,7 @@ init_msfs_from_metgrid (const bool metgrid_debug_msf,
         // This only works here because we have broadcast the FArrayBox of data from the netcdf file to all ranks
         //
 
-        // This copies or sets mapfac_m
+        // This copies or sets mapfac
         if ((flag_msf == 1) and (!metgrid_debug_msf)) {
             msfm_fab.template copy<RunOn::Device>(NC_MSFM_fab[itime]);
             msfu_fab.template copy<RunOn::Device>(NC_MSFU_fab[itime]);

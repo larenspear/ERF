@@ -12,12 +12,7 @@ using namespace amrex;
 /**
  * Function for computing the turbulent viscosity with LES.
  *
- * @param[in]  Tau11 11 strain
- * @param[in]  Tau22 22 strain
- * @param[in]  Tau33 33 strain
- * @param[in]  Tau12 12 strain
- * @param[in]  Tau13 13 strain
- * @param[in]  Tau23 23 strain
+ * @param[in]  Tau_lev strain at this level
  * @param[in]  cons_in cell center conserved quantities
  * @param[out] eddyViscosity turbulent viscosity
  * @param[in]  Hfx1 heat flux in x-dir
@@ -25,16 +20,14 @@ using namespace amrex;
  * @param[in]  Hfx3 heat flux in z-dir
  * @param[in]  Diss dissipation of turbulent kinetic energy
  * @param[in]  geom problem geometry
- * @param[in]  mapfac_u map factor at x-face
- * @param[in]  mapfac_v map factor at y-face
+ * @param[in]  mapfac map factors
  * @param[in]  turbChoice container with turbulence parameters
  */
-void ComputeTurbulentViscosityLES (const MultiFab& Tau11, const MultiFab& Tau22, const MultiFab& Tau33,
-                                   const MultiFab& Tau12, const MultiFab& Tau13, const MultiFab& Tau23,
+void ComputeTurbulentViscosityLES (Vector<std::unique_ptr<MultiFab>>& Tau_lev,
                                    const MultiFab& cons_in, MultiFab& eddyViscosity,
                                    MultiFab& Hfx1, MultiFab& Hfx2, MultiFab& Hfx3, MultiFab& Diss,
                                    const Geometry& geom, bool use_terrain,
-                                   const MultiFab& mapfac_u, const MultiFab& mapfac_v,
+                                   Vector<std::unique_ptr<MultiFab>>& mapfac,
                                    const std::unique_ptr<MultiFab>& z_phys_nd,
                                    const TurbChoice& turbChoice, const Real const_grav,
                                    std::unique_ptr<SurfaceLayer>& /*SurfLayer*/)
@@ -70,15 +63,15 @@ void ComputeTurbulentViscosityLES (const MultiFab& Tau11, const MultiFab& Tau22,
             const Array4<Real>& hfx_z   = Hfx3.array(mfi);
             const Array4<Real const > &cell_data = cons_in.array(mfi);
 
-            Array4<Real const> tau11 = Tau11.array(mfi);
-            Array4<Real const> tau22 = Tau22.array(mfi);
-            Array4<Real const> tau33 = Tau33.array(mfi);
-            Array4<Real const> tau12 = Tau12.array(mfi);
-            Array4<Real const> tau13 = Tau13.array(mfi);
-            Array4<Real const> tau23 = Tau23.array(mfi);
+            Array4<Real const> tau11 = Tau_lev[TauType::tau11]->array(mfi);
+            Array4<Real const> tau22 = Tau_lev[TauType::tau22]->array(mfi);
+            Array4<Real const> tau33 = Tau_lev[TauType::tau33]->array(mfi);
+            Array4<Real const> tau12 = Tau_lev[TauType::tau12]->array(mfi);
+            Array4<Real const> tau13 = Tau_lev[TauType::tau13]->array(mfi);
+            Array4<Real const> tau23 = Tau_lev[TauType::tau23]->array(mfi);
 
-            Array4<Real const> mf_u = mapfac_u.array(mfi);
-            Array4<Real const> mf_v = mapfac_v.array(mfi);
+            Array4<Real const> mf_u = mapfac[MapFacType::u_x]->const_array(mfi);
+            Array4<Real const> mf_v = mapfac[MapFacType::v_y]->const_array(mfi);
 
             Array4<Real const> z_nd_arr = z_phys_nd->const_array(mfi);
 
@@ -157,8 +150,8 @@ void ComputeTurbulentViscosityLES (const MultiFab& Tau11, const MultiFab& Tau22,
 
             const Array4<Real const > &cell_data = cons_in.array(mfi);
 
-            Array4<Real const> mf_u = mapfac_u.array(mfi);
-            Array4<Real const> mf_v = mapfac_v.array(mfi);
+            Array4<Real const> mf_u = mapfac[MapFacType::u_x]->const_array(mfi);
+            Array4<Real const> mf_v = mapfac[MapFacType::v_y]->const_array(mfi);
 
             Array4<Real const> z_nd_arr = z_phys_nd->const_array(mfi);
 
@@ -294,12 +287,7 @@ void ComputeTurbulentViscosityLES (const MultiFab& Tau11, const MultiFab& Tau22,
 /**
  * Function for computing the eddy viscosity with RANS.
  *
- * @param[in]  Tau11 11 strain
- * @param[in]  Tau22 22 strain
- * @param[in]  Tau33 33 strain
- * @param[in]  Tau12 12 strain
- * @param[in]  Tau13 13 strain
- * @param[in]  Tau23 23 strain
+ * @param[in]  Tau_lev strain at this level
  * @param[in]  cons_in cell center conserved quantities
  * @param[out] eddyViscosity turbulent viscosity
  * @param[in]  Hfx1 heat flux in x-dir
@@ -307,16 +295,10 @@ void ComputeTurbulentViscosityLES (const MultiFab& Tau11, const MultiFab& Tau22,
  * @param[in]  Hfx3 heat flux in z-dir
  * @param[in]  Diss dissipation of turbulent kinetic energy
  * @param[in]  geom problem geometry
- * @param[in]  mapfac_u map factor at x-face
- * @param[in]  mapfac_v map factor at y-face
+ * @param[in]  mapfac map factor
  * @param[in]  turbChoice container with turbulence parameters
  */
-void ComputeTurbulentViscosityRANS (const MultiFab& /*Tau11*/,
-                                    const MultiFab& /*Tau22*/,
-                                    const MultiFab& /*Tau33*/,
-                                    const MultiFab& /*Tau12*/,
-                                    const MultiFab& /*Tau13*/,
-                                    const MultiFab& /*Tau23*/,
+void ComputeTurbulentViscosityRANS (Vector<std::unique_ptr<MultiFab>>& /*Tau_lev*/,
                                     const MultiFab& cons_in,
                                     const MultiFab& wdist,
                                     MultiFab& eddyViscosity,
@@ -326,8 +308,7 @@ void ComputeTurbulentViscosityRANS (const MultiFab& /*Tau11*/,
                                     MultiFab& Diss,
                                     const Geometry& geom,
                                     bool use_terrain,
-                                    const MultiFab& /*mapfac_u*/,
-                                    const MultiFab& /*mapfac_v*/,
+                                    Vector<std::unique_ptr<MultiFab>>& /*mapfac*/,
                                     const std::unique_ptr<MultiFab>& z_phys_nd,
                                     const TurbChoice& turbChoice,
                                     const Real const_grav,
@@ -519,12 +500,7 @@ void ComputeTurbulentViscosityRANS (const MultiFab& /*Tau11*/,
  *
  * @param[in]  xvel velocity in x-dir
  * @param[in]  yvel velocity in y-dir
- * @param[in]  Tau11 11 strain
- * @param[in]  Tau22 22 strain
- * @param[in]  Tau33 33 strain
- * @param[in]  Tau12 12 strain
- * @param[in]  Tau13 13 strain
- * @param[in]  Tau23 23 strain
+ * @param[in]  Tau_lev strain at this level
  * @param[in]  cons_in cell center conserved quantities
  * @param[out] eddyViscosity turbulent viscosity
  * @param[in]  Hfx1 heat flux in x-dir
@@ -532,25 +508,23 @@ void ComputeTurbulentViscosityRANS (const MultiFab& /*Tau11*/,
  * @param[in]  Hfx3 heat flux in z-dir
  * @param[in]  Diss dissipation of turbulent kinetic energy
  * @param[in]  geom problem geometry
- * @param[in]  mapfac_u map factor at x-face
- * @param[in]  mapfac_v map factor at y-face
+ * @param[in]  mapfac map factors
  * @param[in]  turbChoice container with turbulence parameters
  * @param[in]  most pointer to Monin-Obukhov class if instantiated
  * @param[in]  vert_only flag for vertical components of eddyViscosity
  */
-void ComputeTurbulentViscosity (const MultiFab& xvel , const MultiFab& yvel ,
-                                const MultiFab& Tau11, const MultiFab& Tau22, const MultiFab& Tau33,
-                                const MultiFab& Tau12, const MultiFab& Tau13, const MultiFab& Tau23,
+void ComputeTurbulentViscosity (const MultiFab& xvel , const MultiFab& yvel,
+                                Vector<std::unique_ptr<MultiFab>>& Tau_lev,
                                 const MultiFab& cons_in,
                                 const MultiFab& wdist,
                                 MultiFab& eddyViscosity,
                                 MultiFab& Hfx1, MultiFab& Hfx2, MultiFab& Hfx3, MultiFab& Diss,
                                 const Geometry& geom,
-                                const MultiFab& mapfac_u, const MultiFab& mapfac_v,
+                                Vector<std::unique_ptr<MultiFab>>& mapfac,
                                 const std::unique_ptr<MultiFab>& z_phys_nd,
                                 const SolverChoice& solverChoice,
                                 std::unique_ptr<SurfaceLayer>& SurfLayer,
-                                const amrex::FArrayBox* z_0,
+                                const FArrayBox* z_0,
                                 const bool& use_terrain_fitted_coords,
                                 const bool& use_moisture,
                                 int level,
@@ -581,26 +555,22 @@ void ComputeTurbulentViscosity (const MultiFab& xvel , const MultiFab& yvel ,
 
     if (turbChoice.les_type != LESType::None) {
         impose_phys_bcs = true;
-        ComputeTurbulentViscosityLES(Tau11, Tau22, Tau33,
-                                     Tau12, Tau13, Tau23,
+        ComputeTurbulentViscosityLES(Tau_lev,
                                      cons_in, eddyViscosity,
                                      Hfx1, Hfx2, Hfx3, Diss,
                                      geom, use_terrain_fitted_coords,
-                                     mapfac_u, mapfac_v,
-                                     z_phys_nd, turbChoice, const_grav,
+                                     mapfac, z_phys_nd, turbChoice, const_grav,
                                      SurfLayer);
     }
 
     if (turbChoice.rans_type != RANSType::None) {
         impose_phys_bcs = true;
-        ComputeTurbulentViscosityRANS(Tau11, Tau22, Tau33,
-                                      Tau12, Tau13, Tau23,
+        ComputeTurbulentViscosityRANS(Tau_lev,
                                       cons_in, wdist,
                                       eddyViscosity,
                                       Hfx1, Hfx2, Hfx3, Diss,
                                       geom, use_terrain_fitted_coords,
-                                      mapfac_u, mapfac_v,
-                                      z_phys_nd, turbChoice, const_grav,
+                                      mapfac, z_phys_nd, turbChoice, const_grav,
                                       SurfLayer, z_0);
     }
 
@@ -620,6 +590,12 @@ void ComputeTurbulentViscosity (const MultiFab& xvel , const MultiFab& yvel ,
                                    solverChoice.RhoQr_comp);
     } else if (turbChoice.pbl_type == PBLType::YSU) {
         ComputeDiffusivityYSU(xvel, yvel, cons_in, eddyViscosity,
+                              geom, turbChoice, SurfLayer,
+                              use_terrain_fitted_coords, use_moisture,
+                              level, bc_ptr, vert_only, z_phys_nd);
+    }
+    else if (turbChoice.pbl_type == PBLType::MRF) {
+        ComputeDiffusivityMRF(xvel, yvel, cons_in, eddyViscosity,
                               geom, turbChoice, SurfLayer,
                               use_terrain_fitted_coords, use_moisture,
                               level, bc_ptr, vert_only, z_phys_nd);

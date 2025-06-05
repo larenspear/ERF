@@ -62,14 +62,17 @@
 #include "ERF_WindFarm.H"
 #endif
 
-#ifdef ERF_USE_RRTMGP
-#include "ERF_Radiation.H"
-#endif
+#include <ERF_RadiationModels.H>
 
 #include <iostream>
 
 #ifdef AMREX_LAZY
 #include <AMReX_Lazy.H>
+#endif
+
+#ifndef AMREX_USE_MPI
+using amrex::MPI_COMM_WORLD;
+using amrex::MPI_Comm;
 #endif
 
 #ifdef ERF_USE_MULTIBLOCK
@@ -89,26 +92,6 @@ AMREX_ENUM(StateInterpType,
 AMREX_ENUM(PlotFileType,
     None, Amrex, Netcdf
 );
-
-
-#if 0
-/**
- * Enum of possible coarse/fine interpolation options
-*/
-namespace InterpType {
-    enum {
-        PCInterp = 0,
-        NodeBilinear,
-        CellConservativeLinear,
-        CellBilinear,
-        CellQuadratic,
-        CellConservativeProtected,
-        CellConservativeQuartic,
-        FaceLinear,
-        FaceConserativeLinear
-    };
-}
-#endif
 
 /**
  * Main class in ERF code, instantiated from main.cpp
@@ -179,12 +162,11 @@ public:
                              amrex::Geometry const& geom_at_lev);
 
     // Project the velocities to be divergence-free -- this is only relevant if anelastic == 1
-    void project_velocities (int lev, amrex::Real dt, amrex::Vector<amrex::MultiFab >& vars,
-                             amrex::MultiFab& p);
+    void project_velocity (int lev, amrex::Real dt);
+    void project_momenta (int lev, amrex::Real dt, amrex::Vector<amrex::MultiFab >& vars);
 
     // Project the velocities to be divergence-free with a thin body
-    void project_velocities_tb (int lev, amrex::Real dt, amrex::Vector<amrex::MultiFab >& vars,
-                                amrex::MultiFab& p);
+    void project_velocity_tb (int lev, amrex::Real dt, amrex::Vector<amrex::MultiFab >& vars);
 
     // Calculate wall distance by solving a Poisson equation
     void poisson_wall_dist (int lev);
@@ -295,8 +277,7 @@ public:
 
     // Perform the volume-weighted sum
     amrex::Real
-    volWgtSumMF (int lev, const amrex::MultiFab& mf, int comp,
-                 const amrex::MultiFab& mapfac, bool finemask);
+    volWgtSumMF (int lev, const amrex::MultiFab& mf, int comp, bool finemask);
 
     // Decide if it is time to take an action
     static bool is_it_time_for_action (int nstep, amrex::Real time, amrex::Real dt,
@@ -346,7 +327,7 @@ public:
                          amrex::MultiFab& xvel_new,  amrex::MultiFab& yvel_new,  amrex::MultiFab& zvel_new,
                          amrex::MultiFab& source,    amrex::MultiFab& xmom_src,
                          amrex::MultiFab& ymom_src,  amrex::MultiFab& zmom_src,
-                         amrex::Geometry fine_geom,
+                         amrex::MultiFab& buoyancy,  amrex::Geometry fine_geom,
                          amrex::Real dt, amrex::Real time);
 
     void advance_microphysics (int lev,
@@ -361,11 +342,9 @@ public:
                       amrex::MultiFab& yvel_in,
                       const amrex::Real& dt_advance);
 
-#if defined(ERF_USE_RRTMGP)
     void advance_radiation (int lev,
                             amrex::MultiFab& cons_in,
                             const amrex::Real& dt_advance);
-#endif
 
     amrex::MultiFab& build_fine_mask (int lev);
 
@@ -451,6 +430,8 @@ public:
 
     // Public data copy for MB
     std::vector<amrex::Box> domain_p;
+
+    // Primary solution data data containers
     amrex::Vector<amrex::Vector<amrex::MultiFab> > vars_new;
     amrex::Vector<amrex::Vector<amrex::MultiFab> > vars_old;
 
@@ -475,7 +456,7 @@ public:
 #endif
 
 #ifdef ERF_USE_NETCDF
-    void init_from_wrfinput (int lev);
+    void init_from_wrfinput (int lev, amrex::MultiFab& mu_C1H, amrex::MultiFab& mu_C2H, amrex::MultiFab& mu_MUB);
     void init_from_metgrid  (int lev);
     void init_from_ncfile   (int lev);
 #endif // ERF_USE_NETCDF
@@ -634,17 +615,6 @@ private:
     void appendPlotVariables (const std::string& pp_plot_var_names, amrex::Vector<std::string>& plot_var_names);
 
 #ifdef ERF_USE_NETCDF
-    //! Write plotfile using NETCDF
-    void writeNCPlotFile (int lev, int which, const std::string& dir,
-                          const amrex::Vector<const amrex::MultiFab*> &mf,
-                          const amrex::Vector<std::string> &plot_var_names,
-                          const amrex::Vector<int>& level_steps, amrex::Real time) const;
-
-    //! Write MultiFab in NetCDF format
-    static void WriteNCMultiFab (const amrex::FabArray<amrex::FArrayBox> &fab,
-                                 const std::string& name,
-                                 bool set_ghost = false) ;
-
     //! Create 1D vertical column output for coupling
     void createNCColumnFile (int lev,
                              const std::string& colfile_name, amrex::Real xloc, amrex::Real yloc);
@@ -656,6 +626,10 @@ private:
                            amrex::Vector<amrex::FArrayBox*> T_lateral);
 
     amrex::Real start_bdy_time;
+    amrex::Real start_low_time;
+
+    amrex::Real bdy_time_interval;
+    amrex::Real low_time_interval;
 
     // *** *** FArrayBox's for holding the SURFACE data
     // amrex::IArrayBox NC_IVGTYP_fab; // Vegetation type (IVGTYP); Discrete numbers;
@@ -672,7 +646,8 @@ private:
     amrex::Vector<amrex::Vector<amrex::FArrayBox>> bdy_data_ylo;
     amrex::Vector<amrex::Vector<amrex::FArrayBox>> bdy_data_yhi;
 
-    amrex::Real bdy_time_interval;
+    amrex::Vector<amrex::FArrayBox> low_data_zlo;
+
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> lat_m, lon_m;       // Latitude and Longitude on the grid
 #endif // ERF_USE_NETCDF
 
@@ -726,11 +701,14 @@ private:
     amrex::Vector<amrex::Real> dt;
     amrex::Vector<long> dt_mri_ratio;
 
-    // array of multifabs to store the solution at each level of refinement
-    // after advancing a level we use "swap".
 #ifndef ERF_USE_MULTIBLOCK
+    // Array of multifabs to store the solution at each level of refinement;
+    // after advancing a level we use "swap".
     amrex::Vector<amrex::Vector<amrex::MultiFab> > vars_new;
     amrex::Vector<amrex::Vector<amrex::MultiFab> > vars_old;
+
+    // Pressure gradient at each level
+    amrex::Vector<amrex::Vector<amrex::MultiFab> > gradp;
 
     // Velocity time averaged field
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> vel_t_avg;
@@ -784,16 +762,15 @@ private:
     amrex::Vector<amrex::Vector<amrex::MultiFab*>> lsm_data; // (lev,ncomp) Components: theta, q1, q2
     amrex::Vector<amrex::Vector<amrex::MultiFab*>> lsm_flux; // (lev,ncomp) Components: theta, q1, q2
 
-#if defined(ERF_USE_RRTMGP)
-    amrex::Vector<std::unique_ptr<Radiation>> rad;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> qheating_rates;  // radiation heating rate source terms
+    amrex::Vector<std::unique_ptr<IRadiation>> rad; // Radiation model at each level
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> qheating_rates;  // radiation heating rate source terms (SW, LW)
 
     // Containers for additional SLM inputs
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> sw_lw_fluxes; // Direct SW (visible, NIR), Diffuse SW (visible, NIR), LW flux
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> solar_zenith; // Solar zenith angle
 
     bool plot_rad = false;
-#endif
+    int rad_datalog_int = -1;
 
     // Fillpatcher classes for coarse-fine boundaries
     int cf_width{0};
@@ -804,10 +781,7 @@ private:
     amrex::Vector<ERFFillPatcher> FPr_w;
 
     // Diffusive stresses and Smag
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> Tau11_lev, Tau22_lev, Tau33_lev;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> Tau12_lev, Tau21_lev;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> Tau13_lev, Tau31_lev;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> Tau23_lev, Tau32_lev;
+    amrex::Vector<amrex::Vector<std::unique_ptr<amrex::MultiFab>>> Tau;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> eddyDiffs_lev;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> SmnSmn_lev;
 
@@ -835,6 +809,7 @@ private:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   az;
 
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> z_phys_nd_src;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> z_phys_cc_src;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   detJ_cc_src;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   ax_src;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   ay_src;
@@ -842,9 +817,6 @@ private:
 
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> z_phys_nd_new;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   detJ_cc_new;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>>   ax_new;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>>   ay_new;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>>   az_new;
 
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> z_t_rk;
 
@@ -854,10 +826,8 @@ private:
     // Wall distance function
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>  walldist;
 
-    // Map scale factors
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> mapfac_m;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> mapfac_u;
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> mapfac_v;
+    // Map scale factors -- vector across levels of vector across types
+    amrex::Vector<amrex::Vector<std::unique_ptr<amrex::MultiFab>>> mapfac;
 
     amrex::Vector<amrex::Vector<amrex::Real>> stretched_dz_h;
     amrex::Vector<amrex::Gpu::DeviceVector<amrex::Real>> stretched_dz_d;
@@ -988,7 +958,7 @@ private:
                                                     "magvel", "divU",
                                                     "pres_hse", "dens_hse", "theta_hse", "pressure", "pert_pres", "pert_dens",
                                                     "eq_pot_temp", "num_turb", "SMark0", "SMark1",
-                                                    "dpdx", "dpdy", "pres_hse_x", "pres_hse_y",
+                                                    "dpdx", "dpdy", "dpdz", "pres_hse_x", "pres_hse_y",
                                                     "z_phys", "detJ" , "mapfac", "lat_m", "lon_m",
                                                     // Time averaged velocity
                                                     "u_t_avg", "v_t_avg", "w_t_avg", "umag_t_avg",
@@ -1005,7 +975,7 @@ private:
                                                     // dissipation
                                                     "diss",
                                                     // moisture vars
-                                                    "moist_density", "qt", "qv", "qc", "qi", "qp", "qrain", "qsnow", "qgraup", "qsat",
+                                                    "moist_density", "qv", "qc", "qi", "qrain", "qsnow", "qgraup", "qt", "qn", "qp", "qsat",
                                                     "rain_accum", "snow_accum", "graup_accum",
                                                     // Terrain IB mask
                                                     "terrain_IB_mask",
@@ -1015,9 +985,7 @@ private:
                                                     // error vars
                                                     ,"xvel_err", "yvel_err", "zvel_err", "pp_err"
 #endif
-#ifdef ERF_USE_RRTMGP
                                                     ,"qsrc_sw", "qsrc_lw"
-#endif
                                                    };
 
     // algorithm choices
@@ -1082,6 +1050,9 @@ private:
     int real_width{0};
     int real_set_width{0};
 
+    // NetCDF initialization of zlo boundary values
+    static std::string nc_low_file;
+
     // Flag to trigger initialization from input_sounding like WRF's ideal.exe
     // used with init_type == InitType::Input_Sounding
     static bool init_sounding_ideal;
@@ -1100,6 +1071,12 @@ private:
     amrex::Real metgrid_proximity{500.0};
     int         metgrid_order{2};
     int         metgrid_force_sfc_k{6};
+
+    amrex::Vector<amrex::BoxArray> ba1d;
+    amrex::Vector<amrex::BoxArray> ba2d;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> mf_C1H;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> mf_C2H;
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> mf_MUB;
 
     // 1D CDF output (for ingestion in AMR-Wind)
     static int         output_1d_column;
