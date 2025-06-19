@@ -49,7 +49,7 @@ Problem::Problem(const amrex::Real* problo, const amrex::Real* probhi)
   parms.ufac = parms.pert_deltaU * std::exp(0.5) / parms.pert_ref_height;
   parms.vfac = parms.pert_deltaV * std::exp(0.5) / parms.pert_ref_height;
 
-  if(parms.rcemip_sst == 295.0) { //Because these are read in from files, float == is ok?
+  if (parms.rcemip_sst == 295.0) { //Because these are read in from files, float == is ok?
     parms.q0 = parms.rcemip_sst = 12.00
   } else if (parms.rcemp_sst == 300.0){
     parms.q0 = parms.rcemip_sst = 18.65;
@@ -270,7 +270,7 @@ void Problem::initialize_rcemip_moisture(
         const Real ratio = z/z_q2;
         qv = q0 * std::exp(-z/z_q1) * std::exp(-ratio * ratio);
       }
-    }
+    });
 
     state_pert(i, j, k, RhoQ1_comp) = qv;
 }
