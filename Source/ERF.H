@@ -172,6 +172,8 @@ public:
     // Calculate wall distance by solving a Poisson equation
     void poisson_wall_dist (int lev);
 
+    void make_subdomains(const amrex::BoxList& ba, amrex::Vector<amrex::BoxArray>& bins);
+
 #ifdef ERF_USE_FFT
     void solve_with_fft (int lev, amrex::MultiFab& rhs, amrex::MultiFab& p,
                          amrex::Array<amrex::MultiFab,AMREX_SPACEDIM>& fluxes);
@@ -651,6 +653,9 @@ private:
     amrex::Vector<amrex::Vector<amrex::FArrayBox>> bdy_data_ylo;
     amrex::Vector<amrex::Vector<amrex::FArrayBox>> bdy_data_yhi;
 
+    // Maximum value of terrain read in from wrfinput at level 0
+    amrex::Real z_top = 0.;
+
     amrex::Vector<amrex::FArrayBox> low_data_zlo;
 
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> lat_m, lon_m;       // Latitude and Longitude on the grid
@@ -1066,10 +1071,6 @@ private:
     // NetCDF initialization of zlo boundary values
     static std::string nc_low_file;
 
-    // Flag to trigger initialization from input_sounding like WRF's ideal.exe
-    // used with init_type == InitType::Input_Sounding
-    static bool init_sounding_ideal;
-
     // Options for vertical interpolation of met_em*.nc data.
     bool        metgrid_debug_quiescent{false};
     bool        metgrid_debug_isothermal{false};
@@ -1171,6 +1172,8 @@ private:
     // Holds info for dynamically generated tagging criteria
     //
     static amrex::Vector<amrex::AMRErrorTag> ref_tags;
+
+    amrex::Vector<amrex::Vector<amrex::BoxArray>> subdomains;
 
     //
     // Build a mask that zeroes out values on a coarse level underlying
