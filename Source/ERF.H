@@ -142,6 +142,7 @@ public:
 
     // Hurricane track line output as VTKPolyline
     amrex::Vector<std::array<amrex::Real, 2>> hurricane_track_xy;
+    amrex::Vector<amrex::Vector<amrex::MultiFab>> initial_state;
     std::string MakeVTKFilename(int nstep);
     void WriteVTKPolyline(const std::string& filename,
                           amrex::Vector<std::array<amrex::Real, 2>>& points_xy);
@@ -170,6 +171,8 @@ public:
 
     // Calculate wall distance by solving a Poisson equation
     void poisson_wall_dist (int lev);
+
+    void make_subdomains(const amrex::BoxList& ba, amrex::Vector<amrex::BoxArray>& bins);
 
 #ifdef ERF_USE_FFT
     void solve_with_fft (int lev, amrex::MultiFab& rhs, amrex::MultiFab& p,
@@ -404,6 +407,10 @@ public:
     void init_from_hse (int lev);
 
     void init_thin_body (int lev, const amrex::BoxArray& ba, const amrex::DistributionMapping& dm);
+
+    void init_coarse_weather_data();
+
+    void interp_weather_data_onto_mesh();
 
 #ifdef ERF_USE_MULTIBLOCK
     // constructor used when ERF is created by a multiblock driver
@@ -646,6 +653,9 @@ private:
     amrex::Vector<amrex::Vector<amrex::FArrayBox>> bdy_data_ylo;
     amrex::Vector<amrex::Vector<amrex::FArrayBox>> bdy_data_yhi;
 
+    // Maximum value of terrain read in from wrfinput at level 0
+    amrex::Real z_top = 0.;
+
     amrex::Vector<amrex::FArrayBox> low_data_zlo;
 
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> lat_m, lon_m;       // Latitude and Longitude on the grid
@@ -874,6 +884,9 @@ private:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> thin_yforce;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> thin_zforce;
 
+    amrex::Vector<amrex::MultiFab> weather_forecast_data;
+    amrex::Geometry geom_weather;
+
     int last_plot_file_step_1;
     int last_plot_file_step_2;
     int last_subvol;
@@ -952,12 +965,17 @@ private:
                                                      "rhoQ1", "rhoQ2", "rhoQ3",
                                                      "rhoQ4", "rhoQ5", "rhoQ6"};
 
-    // Note that the order of variable names here must match the order in ERF_Derive.cpp
+    // **************************************************************************************
+    // NOTE: The order of variable names here **MUST MATCH THE ORDER** in IO/ERF_Plotfile.cpp
+    // **************************************************************************************
     const amrex::Vector<std::string> derived_names {"soundspeed", "temp", "theta", "KE", "scalar",
                                                     "vorticity_x","vorticity_y","vorticity_z",
                                                     "magvel", "divU",
                                                     "pres_hse", "dens_hse", "theta_hse", "pressure", "pert_pres", "pert_dens",
-                                                    "eq_pot_temp", "num_turb", "SMark0", "SMark1",
+                                                    "eq_pot_temp",
+#ifdef ERF_USE_WINDFARM
+                                                    "num_turb", "SMark0", "SMark1",
+#endif
                                                     "dpdx", "dpdy", "dpdz", "pres_hse_x", "pres_hse_y",
                                                     "z_phys", "detJ" , "mapfac", "lat_m", "lon_m",
                                                     // Time averaged velocity
@@ -1052,10 +1070,6 @@ private:
 
     // NetCDF initialization of zlo boundary values
     static std::string nc_low_file;
-
-    // Flag to trigger initialization from input_sounding like WRF's ideal.exe
-    // used with init_type == InitType::Input_Sounding
-    static bool init_sounding_ideal;
 
     // Options for vertical interpolation of met_em*.nc data.
     bool        metgrid_debug_quiescent{false};
@@ -1158,6 +1172,8 @@ private:
     // Holds info for dynamically generated tagging criteria
     //
     static amrex::Vector<amrex::AMRErrorTag> ref_tags;
+
+    amrex::Vector<amrex::Vector<amrex::BoxArray>> subdomains;
 
     //
     // Build a mask that zeroes out values on a coarse level underlying
