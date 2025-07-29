@@ -48,7 +48,6 @@ struct ProbParm : ProbParmDefaults {
   int rcemip_rad_scheme = 0;      // 0=default, 1=RCEMIP radiation scheme
   int rcemip_qv_init = 0;         // 0=use default, 1=use RCEMIP specific humidity profile
 
-
   amrex::Real rcemip_sst = 300.0;  // SST in K (295, 300 [default], or 305)
   amrex::Real rcemip_domain_height = 40000.0; // Domain height in meters
   // Radiation parameters
@@ -67,7 +66,9 @@ struct ProbParm : ProbParmDefaults {
 
   // Analytic sounding parameters
   amrex::Real rcemip_tropopause_height = 15000.0; // Tropopause height in meters
+  amrex::Real& z_t = rcemip_tropopause_height; // Alias to tropopause
   amrex::Real rcemip_temp_gradient = 0.0067;     // Temperature gradient in K/m
+  amrex::Real& rcemip_gamma = rcemip_temp_gradient; // Alias to temperature gradient
   amrex::Real rcemip_surface_pressure = 1014.8;  // Surface pressure in hPa
   amrex::Real rcemip_zq1 = 4000.0;              // Height parameter 1 for humidity in meters
   amrex::Real rcemip_zq2 = 7500.0;              // Height parameter 2 for humidity in meters

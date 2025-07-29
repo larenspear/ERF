@@ -1,6 +1,5 @@
 #include "ERF_Prob.H"
 #include "AMReX_Random.H"
-
 using namespace amrex;
 
 std::unique_ptr<ProblemBase>
@@ -253,10 +252,10 @@ void Problem::initialize_rcemip_moisture(
     amrex::GeometryData const& geomdata)
 {
     const real sst = parms.rcemip_sst;
-    const Real z_q1 = 4000.0;
-    const Real z_q2 = 7500.0;
-    const Real z_t = 15000.0; //tropopause height
-    const Real q_t = 1.0e-11;
+    const Real z_q1 = parms.z_q1;
+    const Real z_q2 = parms.q_q2;
+    const Real z_t = parms.tropopause_height; //tropopause height
+    const Real q_t = parms.q_t; // specific humidity at tropopause
     const Real q0 = parms.q0;
 
     ParallelFor(bx, [=, parms_d=parms] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
@@ -265,14 +264,13 @@ void Problem::initialize_rcemip_moisture(
       const Real z = (z_cc) ? z_cc(i,j,k) : prob_lo[2] + (k + 0.5) * dx[2];
       Real qv = 0.0;
       if (z <= z_t){
-          qv = q_t;
-      } else {
         const Real ratio = z/z_q2;
         qv = q0 * std::exp(-z/z_q1) * std::exp(-ratio * ratio);
+      } else {
+        qv = q_t;
       }
+      state_pert(i, j, k, RhoQ1_comp) = qv;
     });
-
-    state_pert(i, j, k, RhoQ1_comp) = qv;
 }
 //=============================================================================
 // USER-DEFINED FUNCTION
