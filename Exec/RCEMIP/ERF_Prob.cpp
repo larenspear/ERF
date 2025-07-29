@@ -14,7 +14,6 @@ Problem::Problem(const amrex::Real* problo, const amrex::Real* probhi)
   // Parse params
   ParmParse pp("prob");
 
-  // Add below your existing parameter queries
   pp.query("use_rcemip", parms.use_rcemip); // Use RCEMIP initial conditions
   pp.query("rcemip_case_type", parms.rcemip_case_type); // 0 = small domain, 1 = large domain
   pp.query("rcemip_sst", parms.rcemip_sst);  // Surface temperature for RCEMIP cases
@@ -49,21 +48,21 @@ Problem::Problem(const amrex::Real* problo, const amrex::Real* probhi)
   parms.ufac = parms.pert_deltaU * std::exp(0.5) / parms.pert_ref_height;
   parms.vfac = parms.pert_deltaV * std::exp(0.5) / parms.pert_ref_height;
 
-  if (parms.rcemip_sst == 295.0) { //Because these are read in from files, float == is ok?
-    parms.q0 = parms.rcemip_sst = 12.00
-  } else if (parms.rcemp_sst == 300.0){
-    parms.q0 = parms.rcemip_sst = 18.65;
+  if (parms.rcemip_sst == 295.0) {
+    parms.q0 = 12.00;
+  } else if (parms.rcemip_sst == 300.0){
+    parms.q0 = 18.65;
   } else if (parms.rcemip_sst == 305.0) {
-    parms.q0 = parms.rcemip_sst = 24.00;
+    parms.q0 = 24.00;
   } else {
-    AMREX_ASSERT_WITH_MESSAGE(false, "Invalid SST for RCEMIP case"); //Do we only want to allow paper values?
+    AMREX_ASSERT_WITH_MESSAGE(false, "Invalid SST for RCEMIP case");
   }
 
  	if (parms.use_rcemip) {
   		amrex::Print() << "\n==== RCEMIP Configuration ====" << std::endl;
     	amrex::Print() << " - Case type: " << (parms.rcemip_case_type == 0 ? "RCE_small" : "RCE_large") << std::endl;
     	amrex::Print() << " - SST: " << parms.rcemip_sst << " K" << std::endl;
-    	amrex::Print() << " - Surface q0: " << parms.rcemip_q0 << " g/kg" << std::endl;
+    	amrex::Print() << " - Surface q0: " << parms.q0 << " g/kg" << std::endl;
     	amrex::Print() << " - Domain height: " << parms.rcemip_domain_height << " m" << std::endl;
     	amrex::Print() << "==========================\n" << std::endl;
   }
@@ -253,11 +252,12 @@ void Problem::initialize_rcemip_moisture(
     amrex::Array4<amrex::Real const> const& z_cc,
     amrex::GeometryData const& geomdata)
 {
+    const real sst = parms.rcemip_sst;
     const Real z_q1 = 4000.0;
     const Real z_q2 = 7500.0;
-    const Real z_t = 15000.0;
+    const Real z_t = 15000.0; //tropopause height
     const Real q_t = 1.0e-11;
-    const Real q0 = parms.rcemip_q0
+    const Real q0 = parms.q0;
 
     ParallelFor(bx, [=, parms_d=parms] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
       const Real* prob_lo = geomdata.ProbLo();
@@ -265,7 +265,7 @@ void Problem::initialize_rcemip_moisture(
       const Real z = (z_cc) ? z_cc(i,j,k) : prob_lo[2] + (k + 0.5) * dx[2];
       Real qv = 0.0;
       if (z <= z_t){
-          qv = qt;
+          qv = q_t;
       } else {
         const Real ratio = z/z_q2;
         qv = q0 * std::exp(-z/z_q1) * std::exp(-ratio * ratio);
@@ -278,6 +278,9 @@ void Problem::initialize_rcemip_moisture(
 // USER-DEFINED FUNCTION
 //=============================================================================
 //
+//
+
+/*
 void Problem::initialize_rcemip_temp(
     const amrex::Box& bx,
     amrex::Array4<amrex::Real> const& state_pert,
@@ -287,11 +290,11 @@ void Problem::initialize_rcemip_temp(
     const Real gamma = 0.0067;  // Dry adiabatic lapse rate
     const Real T_0 = parms.rcemip_sst;  // Surface temperature equals SST
     const Real z_t = 15000.0;  // Tropopause height (m)
-    const Real q0 = parms.rcemip_q0;  // Surface specific humidity
-
-    const p0 = 1014.8; // Surface pressure (hPa)
-    const Rd = 287.04; // Dry air gas constant (J/(kg*K))
-    const g = 9.79764; // Gravitational acceleration (m/s^2)
+    const Real q0 = parms.q0;  // Surface specific humidity
+    const Real z_tropo = parms.rcemip_tropopause_height;
+    const Real p0 = 1014.8; // Surface pressure (hPa)
+    const Real Rd = 287.04; // Dry air gas constant (J/(kg*K))
+    const Real g = 9.79764; // Gravitational acceleration (m/s^2)
 
     ParallelFor(bx, [=, parms_d=parms] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
         const Real* prob_lo = geomdata.ProbLo();
@@ -311,8 +314,8 @@ void Problem::initialize_rcemip_temp(
 
         Real T = T_v / (1 + 0.608 * qv);
 
-        p_t = p0 * std::pow((T_vt/T_v0), (g/(Rd*gamma)));
-
+        Real p_t = p0 * std::pow((T_vt/T_v0), (g/(Rd*gamma)));
+        Real p = 0;
         if (z <= z_tropo) {
             // Below tropopause: hydrostatic balance
             p = p0 * std::pow(T_v0 - (gamma * z) / T_v0, (g/(Rd*gamma)));
@@ -326,3 +329,4 @@ void Problem::initialize_rcemip_temp(
     state_pert(i, j, k, RhoTheta_comp) = p / (Rd * T);
     state_pert(i, j, k, RhoQ1_comp) = qv;
 }
+*/

@@ -43,7 +43,12 @@ struct ProbParm : ProbParmDefaults {
 
   //RCEMIP
 	// Domain configuration
+  int use_rcemip = 1;
   int rcemip_case_type = 0;        // 0=small domain, 1=large domain
+  int rcemip_rad_scheme = 0;      // 0=default, 1=RCEMIP radiation scheme
+  int rcemip_qv_init = 0;         // 0=use default, 1=use RCEMIP specific humidity profile
+
+
   amrex::Real rcemip_sst = 300.0;  // SST in K (295, 300 [default], or 305)
   amrex::Real rcemip_domain_height = 40000.0; // Domain height in meters
   // Radiation parameters
@@ -69,7 +74,7 @@ struct ProbParm : ProbParmDefaults {
   amrex::Real rcemip_qt = 1.0e-11;              // Upper atmosphere specific humidity in g/kg
 
   // Derived parameters - will be set based on SST
-  amrex::Real rcemip_q0 = 18.65;  // Surface specific humidity in g/kg
+  amrex::Real q0 = 18.65;  // Surface specific humidity in g/kg
 
 
 }; // namespace ProbParm
@@ -107,6 +112,12 @@ public:
     		amrex::Array4<amrex::Real> const& state_pert,
     		amrex::Array4<amrex::Real const> const& z_cc,
     		amrex::GeometryData const& geomdata);
+
+    void initialize_rcemip_temp(
+        const amrex::Box& bx,
+        amrex::Array4<amrex::Real> const& state_pert,
+        amrex::Array4<amrex::Real const> const& z_cc,
+        amrex::GeometryData const& geomdata);
 
 protected:
     std::string name() override { return "ABL"; }
