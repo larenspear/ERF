@@ -278,19 +278,17 @@ void Problem::initialize_rcemip_moisture(
 //
 //
 
-/*
 void Problem::initialize_rcemip_temp(
     const amrex::Box& bx,
     amrex::Array4<amrex::Real> const& state_pert,
     amrex::Array4<amrex::Real const> const& z_cc,
     amrex::GeometryData const& geomdata)
 {
-    const Real gamma = 0.0067;  // Dry adiabatic lapse rate
+    const Real gamma = parms.rcemip_temp_gradient;  // Dry adiabatic lapse rate
     const Real T_0 = parms.rcemip_sst;  // Surface temperature equals SST
-    const Real z_t = 15000.0;  // Tropopause height (m)
+    const Real z_t = parms.rcemip_tropopause_height;  // Tropopause height (m)
     const Real q0 = parms.q0;  // Surface specific humidity
-    const Real z_tropo = parms.rcemip_tropopause_height;
-    const Real p0 = 1014.8; // Surface pressure (hPa)
+    const Real p0 = parms.rcemip_surface_pressure; // Surface pressure (hPa)
     const Real Rd = 287.04; // Dry air gas constant (J/(kg*K))
     const Real g = 9.79764; // Gravitational acceleration (m/s^2)
 
@@ -321,10 +319,9 @@ void Problem::initialize_rcemip_temp(
             // Above tropopause: isothermal hydrostatic balance
             p = p_t * std::exp(-g*(z-z_t)/(Rd*T_vt));
         }
+    state_pert(i, j, k, RhoTheta_comp) = p / (Rd * T);
+    state_pert(i, j, k, RhoQ1_comp) = qv;
 
     });
 
-    state_pert(i, j, k, RhoTheta_comp) = p / (Rd * T);
-    state_pert(i, j, k, RhoQ1_comp) = qv;
 }
-*/
