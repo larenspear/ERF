@@ -114,14 +114,14 @@ public:
     		amrex::Array4<amrex::Real const> const& z_cc,
     		amrex::GeometryData const& geomdata);
 
-    void initialize_rcemip_temp(
+    void initialize_rcemip_temp_pressure(
         const amrex::Box& bx,
         amrex::Array4<amrex::Real> const& state_pert,
         amrex::Array4<amrex::Real const> const& z_cc,
         amrex::GeometryData const& geomdata);
 
 protected:
-    std::string name() override { return "ABL"; }
+    std::string name() override { return "RCEMIP"; }
 
 private:
     ProbParm parms;

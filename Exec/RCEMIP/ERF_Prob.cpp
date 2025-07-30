@@ -278,7 +278,7 @@ void Problem::initialize_rcemip_moisture(
 //
 //
 
-void Problem::initialize_rcemip_temp(
+void Problem::initialize_rcemip_temp_pressure(
     const amrex::Box& bx,
     amrex::Array4<amrex::Real> const& state_pert,
     amrex::Array4<amrex::Real const> const& z_cc,
