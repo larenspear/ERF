@@ -108,17 +108,21 @@ public:
         amrex::Array4<amrex::Real const> const& mf_v,
         const SolverChoice& sc) override;
 
-		void initialize_rcemip_moisture(
-    		const amrex::Box& bx,
-    		amrex::Array4<amrex::Real> const& state_pert,
-    		amrex::Array4<amrex::Real const> const& z_cc,
-    		amrex::GeometryData const& geomdata);
+    void erf_init_dens_hse_moist(amrex::MultiFab& rho_hse,
+                                 std::unique_ptr<amrex::MultiFab>& z_phys_nd,
+                                 amrex::Geometry const& geom) override;
 
-    void initialize_rcemip_temp_pressure(
-        const amrex::Box& bx,
-        amrex::Array4<amrex::Real> const& state_pert,
-        amrex::Array4<amrex::Real const> const& z_cc,
-        amrex::GeometryData const& geomdata);
+    void init_isentropic_hse_no_terrain(amrex::Real *theta, amrex::Real* r, amrex::Real* p, amrex::Real *q_v,
+                                        const amrex::Real& dz, const amrex::Real& prob_lo_z,
+                                        const int& khi);
+
+private:
+    // Helper functions for RCEMIP-specific calculations
+    void compute_rcemip_profiles(const amrex::Real z, amrex::Real& theta, amrex::Real& rho, 
+                                amrex::Real& q_v, amrex::Real& pressure, amrex::Real& temperature);
+    
+    amrex::Real compute_rcemip_moisture(const amrex::Real z);
+    amrex::Real compute_rcemip_temperature(const amrex::Real z, const amrex::Real pressure);
 
 protected:
     std::string name() override { return "RCEMIP"; }

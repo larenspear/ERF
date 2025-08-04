@@ -242,41 +242,151 @@ Problem::init_custom_pert(
 }
 
 //=============================================================================
-// USER-DEFINED FUNCTION
+// STANDARD ERF FUNCTIONS FOLLOWING MOISTREGTESTS CONVENTIONS
 //=============================================================================
-//
-void Problem::initialize_rcemip_moisture(
-    const amrex::Box& bx,
-    amrex::Array4<amrex::Real> const& state_pert,
-    amrex::Array4<amrex::Real const> const& z_cc,
-    amrex::GeometryData const& geomdata)
-{
-    const real sst = parms.rcemip_sst;
-    const Real z_q1 = parms.z_q1;
-    const Real z_q2 = parms.q_q2;
-    const Real z_t = parms.tropopause_height; //tropopause height
-    const Real q_t = parms.q_t; // specific humidity at tropopause
-    const Real q0 = parms.q0;
 
-    ParallelFor(bx, [=, parms_d=parms] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-      const Real* prob_lo = geomdata.ProbLo();
-      const Real* dx = geomdata.CellSize();
-      const Real z = (z_cc) ? z_cc(i,j,k) : prob_lo[2] + (k + 0.5) * dx[2];
-      Real qv = 0.0;
-      if (z <= z_t){
+void Problem::erf_init_dens_hse_moist(MultiFab& rho_hse,
+                                      std::unique_ptr<MultiFab>& /*z_phys_nd*/,
+                                      Geometry const& geom)
+{
+    const int khi = geom.Domain().bigEnd()[2];
+    const Real* prob_lo = geom.ProbLo();
+    const Real dz = geom.CellSize()[2];
+
+    // Initialize background profiles
+    Vector<Real> h_r(khi+1), h_p(khi+1), h_t(khi+1), h_q_v(khi+1);
+    
+    init_isentropic_hse_no_terrain(h_t.data(), h_r.data(), h_p.data(), h_q_v.data(),
+                                   dz, prob_lo[2], khi);
+
+    // Copy to device
+    Gpu::DeviceVector<Real> d_r(khi+1), d_p(khi+1), d_t(khi+1), d_q_v(khi+1);
+    Gpu::copyAsync(Gpu::hostToDevice, h_r.begin(), h_r.end(), d_r.begin());
+    Gpu::copyAsync(Gpu::hostToDevice, h_p.begin(), h_p.end(), d_p.begin());
+    Gpu::copyAsync(Gpu::hostToDevice, h_t.begin(), h_t.end(), d_t.begin());
+    Gpu::copyAsync(Gpu::hostToDevice, h_q_v.begin(), h_q_v.end(), d_q_v.begin());
+
+    Real* r = d_r.data();
+
+    // Set the density
+    for (MFIter mfi(rho_hse, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.tilebox();
+        const Array4<Real>& rho_arr = rho_hse.array(mfi);
+
+        ParallelFor(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            rho_arr(i, j, k) = r[k];
+        });
+    }
+
+    Gpu::streamSynchronize();
+}
+
+void Problem::init_isentropic_hse_no_terrain(Real *theta, Real* r, Real* p, Real *q_v,
+                                             const Real& dz, const Real& prob_lo_z,
+                                             const int& khi)
+{
+    // Physical constants
+    const Real Rd = 287.04;   // Dry air gas constant (J/(kg*K))
+    const Real Cp = 1004.0;   // Specific heat at constant pressure (J/(kg*K))
+    const Real g = 9.79764;   // Gravitational acceleration (m/s^2)
+    const Real p0 = parms.rcemip_surface_pressure * 100.0; // Convert hPa to Pa
+
+    // Initialize surface conditions
+    p[0] = p0;
+    q_v[0] = parms.q0 * 1e-3; // Convert g/kg to kg/kg
+    
+    Real temperature = parms.rcemip_sst;
+    theta[0] = temperature;
+    r[0] = p[0] / (Rd * temperature * (1.0 + 0.608 * q_v[0]));
+
+    // Build profiles upward using hydrostatic equilibrium
+    for (int k = 1; k <= khi; k++) {
+        const Real z = prob_lo_z + k * dz;
+        
+        // Compute moisture profile
+        q_v[k] = compute_rcemip_moisture(z);
+        
+        // Compute temperature profile
+        Real T_v0 = parms.rcemip_sst * (1 + 0.608 * q_v[0]);
+        Real T_vt = T_v0 - parms.rcemip_temp_gradient * parms.rcemip_tropopause_height;
+        
+        Real T_v;
+        if (z <= parms.rcemip_tropopause_height) {
+            T_v = T_v0 - parms.rcemip_temp_gradient * z;
+        } else {
+            T_v = T_vt;
+        }
+        
+        temperature = T_v / (1 + 0.608 * q_v[k]);
+        
+        // Hydrostatic equilibrium for pressure
+        Real rho_prev = r[k-1];
+        Real rho_guess = p[k-1] / (Rd * temperature * (1.0 + 0.608 * q_v[k]));
+        Real rho_avg = 0.5 * (rho_prev + rho_guess);
+        p[k] = p[k-1] - rho_avg * g * dz;
+        
+        // Update density and potential temperature
+        r[k] = p[k] / (Rd * temperature * (1.0 + 0.608 * q_v[k]));
+        theta[k] = temperature * std::pow(p0/p[k], Rd/Cp);
+    }
+}
+
+//=============================================================================
+// HELPER FUNCTIONS FOR RCEMIP-SPECIFIC CALCULATIONS
+//=============================================================================
+
+Real Problem::compute_rcemip_moisture(const Real z)
+{
+    const Real z_q1 = parms.rcemip_zq1;
+    const Real z_q2 = parms.rcemip_zq2;
+    const Real z_t = parms.rcemip_tropopause_height;
+    const Real q_t = parms.rcemip_qt * 1e-3; // Convert g/kg to kg/kg
+    const Real q0 = parms.q0 * 1e-3; // Convert g/kg to kg/kg
+
+    Real qv = 0.0;
+    if (z <= z_t) {
         const Real ratio = z/z_q2;
         qv = q0 * std::exp(-z/z_q1) * std::exp(-ratio * ratio);
-      } else {
+    } else {
         qv = q_t;
-      }
-      state_pert(i, j, k, RhoQ1_comp) = qv;
-    });
+    }
+    return qv;
 }
-//=============================================================================
-// USER-DEFINED FUNCTION
-//=============================================================================
-//
-//
+
+Real Problem::compute_rcemip_temperature(const Real z, const Real pressure)
+{
+    const Real gamma = parms.rcemip_temp_gradient;
+    const Real T_0 = parms.rcemip_sst;
+    const Real z_t = parms.rcemip_tropopause_height;
+    const Real q0 = parms.q0 * 1e-3; // Convert g/kg to kg/kg
+    
+    Real T_v0 = T_0 * (1 + 0.608 * q0);
+    Real T_vt = T_v0 - gamma * z_t;
+    
+    Real T_v;
+    if (z <= z_t) {
+        T_v = T_v0 - gamma * z;
+    } else {
+        T_v = T_vt;
+    }
+    
+    Real qv = compute_rcemip_moisture(z);
+    return T_v / (1 + 0.608 * qv);
+}
+
+void Problem::compute_rcemip_profiles(const Real z, Real& theta, Real& rho, 
+                                     Real& q_v, Real& pressure, Real& temperature)
+{
+    const Real Rd = 287.04;
+    const Real Cp = 1004.0;
+    const Real p0 = parms.rcemip_surface_pressure * 100.0; // Convert hPa to Pa
+    
+    q_v = compute_rcemip_moisture(z);
+    temperature = compute_rcemip_temperature(z, pressure);
+    
+    theta = temperature * std::pow(p0/pressure, Rd/Cp);
+    rho = pressure / (Rd * temperature * (1.0 + 0.608 * q_v));
+}
 
 void Problem::initialize_rcemip_temp_pressure(
     const amrex::Box& bx,
@@ -300,7 +410,8 @@ void Problem::initialize_rcemip_temp_pressure(
         Real T_v0 = T_0 * (1 + 0.608 * q0);
         Real T_vt = T_v0 - gamma * z_t;
 
-        if (z <= z_tropo) {
+        Real T_v;
+        if (z <= z_t) {
             // Below tropopause: linear decrease with height
             T_v = T_v0 - gamma * z;
         } else {
@@ -312,7 +423,7 @@ void Problem::initialize_rcemip_temp_pressure(
 
         Real p_t = p0 * std::pow((T_vt/T_v0), (g/(Rd*gamma)));
         Real p = 0;
-        if (z <= z_tropo) {
+        if (z <= z_t) {
             // Below tropopause: hydrostatic balance
             p = p0 * std::pow(T_v0 - (gamma * z) / T_v0, (g/(Rd*gamma)));
         } else {
@@ -323,5 +434,4 @@ void Problem::initialize_rcemip_temp_pressure(
     state_pert(i, j, k, RhoQ1_comp) = qv;
 
     });
-
 }
