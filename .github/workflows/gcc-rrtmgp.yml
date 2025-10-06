@@ -54,9 +54,9 @@ jobs:
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
         spack concretize -f
         spack install
-        rm -rf /tmp/spack_view
-        mkdir -p /tmp/spack_view
-        spack view -i add -i /tmp/spack_view hdf5 netcdf-c netcdf-fortran parallel-netcdf openmpi
+        #rm -rf /tmp/spack_view
+        #mkdir -p /tmp/spack_view
+        #spack view -i add -i /tmp/spack_view hdf5 netcdf-c netcdf-fortran parallel-netcdf openmpi
 
     #- name: Push packages and update index
     #  env:
@@ -100,9 +100,6 @@ jobs:
           -DRRTMGP_ENABLE_NETCDF=ON \
           -DRRTMGP_NETCDF_ROOT=${NETCDF_ROOT} \
           -DRRTMGP_NETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
-          -DCMAKE_CXX_FLAGS="-I${NETCDF_INCLUDE}" \
-          -DCMAKE_C_FLAGS="-I${NETCDF_INCLUDE}" \
-          -DCMAKE_INCLUDE_SYSTEM_FLAG_CXX="-isystem " \
           ${{github.workspace}};
 
     - name: Compile and Link
