@@ -56,7 +56,7 @@ jobs:
         spack install
         rm -rf /tmp/spack_view
         mkdir -p /tmp/spack_view
-        spack view add -i /tmp/spack_view hdf5 netcdf-c netcdf-fortran parallel-netcdf openmpi
+        spack view -i add -i /tmp/spack_view hdf5 netcdf-c netcdf-fortran parallel-netcdf openmpi
 
     #- name: Push packages and update index
     #  env:
