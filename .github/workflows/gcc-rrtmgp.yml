@@ -52,14 +52,14 @@ jobs:
         spack concretize -f
         spack install
 
-    - name: Push packages and update index
-      env:
-        GITHUB_USER: ${{ github.actor }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run:
-        spack env activate erf_netcdf
-        spack buildcache push --base-image ubuntu:22.04 --update-index -d ./local-buildcache $(spack find --format "{hash}")
-      if: ${{ !cancelled() }}
+    #- name: Push packages and update index
+    #  env:
+    #    GITHUB_USER: ${{ github.actor }}
+    #    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #  run:
+    #    spack env activate erf_netcdf
+    #    spack buildcache push --base-image ubuntu:22.04 --update-index -d ./local-buildcache $(spack find --format "{hash}")
+    #  if: ${{ !cancelled() }}
 
     - name: Configure Project and Generate Build System
       run: |
