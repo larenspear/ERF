@@ -54,7 +54,8 @@ jobs:
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
         spack concretize -f
         spack install
-        spack load hdf5
+        mkdir -p /tmp/spack_view
+        spack view add -i /tmp/spack_view hdf5 netcdf-c netcdf-fortran parallel-netcdf openmpi
 
     #- name: Push packages and update index
     #  env:
@@ -70,7 +71,6 @@ jobs:
         . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
         spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
-        export NETCDF_ROOT=$(spack location -i netcdf-c)
         export NETCDF_INCLUDE=$(nc-config --includedir)
         export NETCDF_LIB=$(nc-config --libdir)
         cmake \
@@ -93,7 +93,7 @@ jobs:
           -DNETCDF_ROOT=${NETCDF_ROOT} \
           -DNETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
           -DNETCDF_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
-          -DNetCDF_ROOT=${NETCDF_ROOT} \
+          -DNETCDF_ROOT=/tmp/spack_view \
           -DNetCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
           -DNetCDF_C_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
           -DRRTMGP_ENABLE_NETCDF=ON \
@@ -101,6 +101,7 @@ jobs:
           -DRRTMGP_NETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
           -DCMAKE_CXX_FLAGS="-I${NETCDF_INCLUDE}" \
           -DCMAKE_C_FLAGS="-I${NETCDF_INCLUDE}" \
+          -DCMAKE_INCLUDE_SYSTEM_FLAG_CXX="-isystem " \
           ${{github.workspace}};
 
     - name: Compile and Link
