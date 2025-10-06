@@ -42,6 +42,7 @@ jobs:
 
     - name: Setup Spack
       uses: spack/setup-spack@v2
+      run: . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
 
     - name: set up NetCDF
       run: |
