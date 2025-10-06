@@ -72,6 +72,7 @@ jobs:
         . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
         spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
+        export NETCDF_ROOT=$(spack location -i netcdf-c)
         cmake \
           -B${{runner.workspace}}/ERF/build \
           -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install \
@@ -84,6 +85,7 @@ jobs:
           -DERF_ENABLE_HDF5:BOOL=${{matrix.netcdf}} \
           -DERF_ENABLE_KOKKOS:BOOL=ON \
           -DHDF5_ROOT=${HDF5_ROOT} \
+          -DNETCDF_ROOT=${NETCDF_ROOT} \
           -DERF_ENABLE_EKAT:BOOL=${{matrix.rrtmgp}} \
           -DERF_ENABLE_RRTMGP:BOOL=${{matrix.rrtmgp}} \
           -DERF_ENABLE_TESTS:BOOL=ON \
