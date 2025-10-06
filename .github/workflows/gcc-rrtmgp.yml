@@ -72,9 +72,6 @@ jobs:
         . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
         spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
-        export NETCDF_ROOT=$(spack location -i netcdf-fortran)
-        export NETCDF_INCLUDE=$(nc-config --includedir)
-        export NETCDF_LIB=$(nc-config --libdir)
         cmake \
           -B${{runner.workspace}}/ERF/build \
           -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install \
@@ -92,14 +89,6 @@ jobs:
           -DERF_ENABLE_TESTS:BOOL=ON \
           -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
           -DERF_ENABLE_FCOMPARE:BOOL=ON \
-          -DNETCDF_ROOT=${NETCDF_ROOT} \
-          -DNETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
-          -DNETCDF_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
-          -DNetCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
-          -DNetCDF_C_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
-          -DRRTMGP_ENABLE_NETCDF=ON \
-          -DRRTMGP_NETCDF_ROOT=${NETCDF_ROOT} \
-          -DRRTMGP_NETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
           ${{github.workspace}};
 
     - name: Compile and Link
