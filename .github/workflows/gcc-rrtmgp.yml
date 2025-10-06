@@ -10,11 +10,15 @@ jobs:
   library:
     name: GNU@9.3 C++17 Release - NetCDF ${{matrix.netcdf}} - Particles ${{matrix.particles}}
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
     # env: {CXXFLAGS: "-fno-operator-names -Werror -Wall -Wextra -Wpedantic -Wnull-dereference -Wfloat-conversion -Wshadow -Woverloaded-virtual"}
     strategy:
       matrix:
         particles: [OFF, ON]
         netcdf: [OFF, ON]
+        rrtmgp: [OFF, ON]
 
     steps:
 
@@ -36,15 +40,25 @@ jobs:
         restore-keys: |
              ccache-${{ github.workflow }}-${{ github.job }}-git-
 
+    - name: Setup Spack
+      uses: spack/setup-spack@v2
+
     - name: set up NetCDF
       run: |
-        git clone https://github.com/spack/spack.git
-        . spack/share/spack/setup-env.sh
         spack env create erf_netcdf
         spack env activate erf_netcdf
         spack add netcdf-c netcdf-fortran parallel-netcdf
         spack concretize -f
         spack install
+
+    - name: Push packages and update index
+      env:
+        GITHUB_USER: ${{ github.actor }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run:
+        spack env activate erf_netcdf
+        spack buildcache push --base-image ubuntu:22.04 --update-index -d ./local-buildcache $(spack find --format "{hash}")
+      if: ${{ !cancelled() }}
 
     - name: Configure Project and Generate Build System
       run: |
@@ -58,6 +72,8 @@ jobs:
           -DERF_ENABLE_PARTICLES:BOOL=${{matrix.particles}} \
           -DERF_ENABLE_NETCDF:BOOL=${{matrix.netcdf}} \
           -DERF_ENABLE_HDF5:BOOL=${{matrix.netcdf}} \
+          -DERF_ENABLE_EKAT:BOOL=${{matrix.rrtmgp}} \
+          -DERF_ENABLE_RRTMGP:BOOL=${{matrix.rrtmgp}} \
           -DERF_ENABLE_TESTS:BOOL=ON \
           -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
           -DERF_ENABLE_FCOMPARE:BOOL=ON \
