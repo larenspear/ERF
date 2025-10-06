@@ -51,7 +51,7 @@ jobs:
         . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
         spack env create erf_netcdf
         spack env activate erf_netcdf
-        spack add netcdf-c netcdf-fortran parallel-netcdf hdf5
+        spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
         spack concretize -f
         spack install
         spack load hdf5
