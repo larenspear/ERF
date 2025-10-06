@@ -67,8 +67,10 @@ jobs:
 
     - name: Configure Project and Generate Build System
       run: |
-        spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
+        export NETCDF_ROOT=$(spack location -i netcdf-c)
+        export NETCDF_INCLUDE=$(nc-config --includedir)
+        export NETCDF_LIB=$(nc-config --libdir)
         cmake \
           -B${{runner.workspace}}/ERF/build \
           -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install \
@@ -79,12 +81,22 @@ jobs:
           -DERF_ENABLE_PARTICLES:BOOL=${{matrix.particles}} \
           -DERF_ENABLE_NETCDF:BOOL=${{matrix.netcdf}} \
           -DERF_ENABLE_HDF5:BOOL=${{matrix.netcdf}} \
+          -DERF_ENABLE_KOKKOS:BOOL=ON \
           -DHDF5_ROOT=${HDF5_ROOT} \
           -DERF_ENABLE_EKAT:BOOL=${{matrix.rrtmgp}} \
           -DERF_ENABLE_RRTMGP:BOOL=${{matrix.rrtmgp}} \
           -DERF_ENABLE_TESTS:BOOL=ON \
           -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
           -DERF_ENABLE_FCOMPARE:BOOL=ON \
+          -DNETCDF_ROOT=${NETCDF_ROOT} \
+          -DNETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
+          -DNETCDF_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
+          -DNetCDF_ROOT=${NETCDF_ROOT} \
+          -DNetCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
+          -DNetCDF_C_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
+          -DRRTMGP_ENABLE_NETCDF=ON \
+          -DRRTMGP_NETCDF_ROOT=${NETCDF_ROOT} \
+          -DRRTMGP_NETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
           ${{github.workspace}};
 
     - name: Compile and Link
