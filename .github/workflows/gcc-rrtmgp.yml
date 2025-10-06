@@ -8,7 +8,7 @@ concurrency:
 
 jobs:
   library:
-    name: GNU@9.3 C++17 Release - NetCDF ${{matrix.netcdf}} - Particles ${{matrix.particles}}
+    name: GNU@9.3 C++17 Release - NetCDF ${{matrix.netcdf}} - Particles ${{matrix.particles}} - RRTMGP ${{matrix.rrtmgp}}
     runs-on: ubuntu-22.04
     permissions:
       contents: read
