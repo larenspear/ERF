@@ -97,6 +97,8 @@ jobs:
           -DRRTMGP_ENABLE_NETCDF=ON \
           -DRRTMGP_NETCDF_ROOT=${NETCDF_ROOT} \
           -DRRTMGP_NETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
+          -DCMAKE_CXX_FLAGS="-I${NETCDF_INCLUDE}" \
+          -DCMAKE_C_FLAGS="-I${NETCDF_INCLUDE}" \
           ${{github.workspace}};
 
     - name: Compile and Link
