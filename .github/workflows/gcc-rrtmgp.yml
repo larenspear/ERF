@@ -42,10 +42,10 @@ jobs:
 
     - name: Setup Spack
       uses: spack/setup-spack@v2
-      run: . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
 
     - name: set up NetCDF
       run: |
+        . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
         spack env create erf_netcdf
         spack env activate erf_netcdf
         spack add netcdf-c netcdf-fortran parallel-netcdf
