@@ -19,9 +19,9 @@ jobs:
         particles: [OFF, ON]
         netcdf: [OFF, ON]
         rrtmgp: [OFF, ON]
-      exclude:
-      - rrtmgp: ON
-        netcdf: OFF
+        exclude:
+        - rrtmgp: ON
+          netcdf: OFF
 
     steps:
 
