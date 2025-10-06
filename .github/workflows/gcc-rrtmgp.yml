@@ -72,6 +72,7 @@ jobs:
         . /home/runner/work/ERF/ERF/spack/share/spack/setup-env.sh
         spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
+        export NETCDF_ROOT=$(spack location -i netcdf-fortran)
         export NETCDF_INCLUDE=$(nc-config --includedir)
         export NETCDF_LIB=$(nc-config --libdir)
         cmake \
@@ -94,7 +95,6 @@ jobs:
           -DNETCDF_ROOT=${NETCDF_ROOT} \
           -DNETCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
           -DNETCDF_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
-          -DNETCDF_ROOT=/tmp/spack_view \
           -DNetCDF_INCLUDE_DIR=${NETCDF_INCLUDE} \
           -DNetCDF_C_LIBRARY=${NETCDF_LIB}/libnetcdf.so \
           -DRRTMGP_ENABLE_NETCDF=ON \
