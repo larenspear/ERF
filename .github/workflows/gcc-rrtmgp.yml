@@ -54,6 +54,7 @@ jobs:
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
         spack concretize -f
         spack install
+        rm -rf /tmp/spack_view
         mkdir -p /tmp/spack_view
         spack view add -i /tmp/spack_view hdf5 netcdf-c netcdf-fortran parallel-netcdf openmpi
 
