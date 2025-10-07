@@ -80,8 +80,8 @@ jobs:
         export HDF5_ROOT=$(spack location -i hdf5)
         export NETCDF_ROOT=$(spack location -i netcdf-c)
         cmake \
-          -B${{runner.workspace}}/ERF/build \
-          -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install \
+          -B${ERF_DIR}/build \
+          -DCMAKE_INSTALL_PREFIX:PATH=${ERF_DIR}/install \
           -DCMAKE_BUILD_TYPE:STRING=Debug \
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DERF_DIM:STRING=3 \
