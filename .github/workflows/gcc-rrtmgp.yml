@@ -23,13 +23,13 @@ jobs:
         - rrtmgp: ON
           netcdf: OFF
     env:
-      ERF_DIR: ${{ github.workspace }}/ERF
+      ERF_DIR: ${{ github.workspace }}/erf_clone
     steps:
 
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-        path: ${ERF_DIR}
+        path: erf_clone
 
     - name: Install Dependencies
       run: ${ERF_DIR}/Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
