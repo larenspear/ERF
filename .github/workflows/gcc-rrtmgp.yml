@@ -28,13 +28,13 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-        #path: './ERF'
+        path: './ERF'
 
     - name: Install Dependencies
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
+      run: ./ERF/Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
 
     - name: Install CCache
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
+      run: ./ERF/Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
 
     - name: Set Up Cache
       uses: actions/cache@v4
@@ -47,13 +47,13 @@ jobs:
     - name: Setup Spack
       uses: spack/setup-spack@v2
       with:
-        path: ${{ runner.workspace }}/spack_install_dir
+        path: ${{ github.workspace }}/spack_install_dir
 
     - name: set up NetCDF
       run: |
         echo ${{ github.workspace }}
         echo ${{ runner.workspace }}
-        . ${{ runner.workspace }}/../spack_install_dir/share/spack/setup-env.sh
+        . ${{ github.workspace }}/../spack_install_dir/share/spack/setup-env.sh
         spack env create erf_netcdf
         spack env activate erf_netcdf
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
@@ -74,7 +74,7 @@ jobs:
 
     - name: Configure Project and Generate Build System
       run: |
-        . ${{ runner.workspace }}/../spack_install_dir/share/spack/setup-env.sh
+        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
         spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
         export NETCDF_ROOT=$(spack location -i netcdf-c)
