@@ -46,7 +46,7 @@ jobs:
     - name: Setup Spack
       uses: spack/setup-spack@v2
       with:
-        install-dir: /opt/spack
+        path: /opt/spack
 
     - name: set up NetCDF
       run: |
