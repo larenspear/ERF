@@ -69,6 +69,12 @@ jobs:
     #    spack buildcache push --base-image ubuntu:22.04 --update-index -d ./local-buildcache $(spack find --format "{hash}")
     #  if: ${{ !cancelled() }}
 
+    - name: Create CMake Policy File
+      run: |
+        cat > ${{ github.workspace }}/cmake_policy.cmake << 'EOL'
+        cmake_policy(SET CMP0076 NEW)
+        EOL
+
     - name: Configure Project and Generate Build System
       run: |
         . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
