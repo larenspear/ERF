@@ -46,11 +46,11 @@ jobs:
     - name: Setup Spack
       uses: spack/setup-spack@v2
       with:
-        path: ${{ github.workspace }}/../spack_install
+        path: ${{ github.workspace }}/spack_install_dir
 
     - name: set up NetCDF
       run: |
-        . ${{ github.workspace }}/../spack_install/share/spack/setup-env.sh
+        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
         spack env create erf_netcdf
         spack env activate erf_netcdf
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
@@ -71,7 +71,7 @@ jobs:
 
     - name: Configure Project and Generate Build System
       run: |
-        . ${{ github.workspace }}/../spack_install/share/spack/setup-env.sh
+        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
         spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
         export NETCDF_ROOT=$(spack location -i netcdf-c)
