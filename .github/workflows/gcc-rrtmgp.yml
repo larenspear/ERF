@@ -22,19 +22,20 @@ jobs:
         exclude:
         - rrtmgp: ON
           netcdf: OFF
-
+    env:
+      ERF_DIR: ${{ github.workspace }}/ERF
     steps:
 
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-        path: './ERF'
+        path: ${ERF_DIR}
 
     - name: Install Dependencies
-      run: ./ERF/Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
+      run: ${ERF_DIR}/Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
 
     - name: Install CCache
-      run: ./ERF/Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
+      run: ${ERF_DIR}/Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
 
     - name: Set Up Cache
       uses: actions/cache@v4
@@ -96,7 +97,7 @@ jobs:
           -DERF_ENABLE_TESTS:BOOL=ON \
           -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
           -DERF_ENABLE_FCOMPARE:BOOL=ON \
-          ${{github.workspace}};
+          ${ERF_DIR};
 
     - name: Compile and Link
       run: |
@@ -105,22 +106,22 @@ jobs:
         export CCACHE_MAXSIZE=300M
         ccache -z
 
-        cmake --build ${{runner.workspace}}/ERF/build --parallel 2 --verbose \
-        2>&1 | tee -a ${{runner.workspace}}/build-output.txt;
+        cmake --build ${ERF_DIR}/build --parallel 2 --verbose \
+        2>&1 | tee -a ${ERF_DIR}/build-output.txt;
 
         ccache -s
         du -hs ~/.cache/ccache
 
     - name: Report
       run: |
-        egrep "warning:|error:" ${{runner.workspace}}/build-output.txt \
+        egrep "warning:|error:" ${ERF_DIR}/build-output.txt \
           | egrep -v "Submodules/amrex" | egrep -v "lto-wrapper: warning:" | sort | uniq \
-          | awk 'BEGIN{i=0}{print $0}{i++}END{print "Warnings: "i}' > ${{runner.workspace}}/build-output-warnings.txt
-        cat ${{runner.workspace}}/build-output-warnings.txt
-        export return=$(tail -n 1 ${{runner.workspace}}/build-output-warnings.txt | awk '{print $2}')
+          | awk 'BEGIN{i=0}{print $0}{i++}END{print "Warnings: "i}' > ${ERF_DIR}/build-output-warnings.txt
+        cat ${ERF_DIR}/build-output-warnings.txt
+        export return=$(tail -n 1 ${ERF_DIR}/build-output-warnings.txt | awk '{print $2}')
         exit ${return}
 
     - name: CMake Tests # see file ERF/Tests/CTestList.cmake
       run: |
         ctest -L regression -VV
-      working-directory: ${{runner.workspace}}/ERF/build
+      working-directory: ${ERF_DIR}/build
