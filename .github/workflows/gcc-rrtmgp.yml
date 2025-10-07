@@ -53,7 +53,7 @@ jobs:
       run: |
         echo ${{ github.workspace }}
         echo ${{ runner.workspace }}
-        . ${{ github.workspace }}/../spack_install_dir/share/spack/setup-env.sh
+        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
         spack env create erf_netcdf
         spack env activate erf_netcdf
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
