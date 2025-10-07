@@ -97,6 +97,11 @@ jobs:
         du -hs ~/Library/Caches/ccache
         ccache -s
 
+    - name: Set executable permissions
+      run: |
+        find ${ERF_DIR}/build -type f -name "erf_*" -exec chmod +x {} \;
+        find ${ERF_DIR}/build -type f -name "amrex_*" -exec chmod +x {} \;
+
     - name: Report
       run: |
         egrep "warning:|error:" ${ERF_DIR}/../build-output.txt \
