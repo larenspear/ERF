@@ -22,6 +22,8 @@ jobs:
         exclude:
         - rrtmgp: ON
           netcdf: OFF
+        - rrtmgp: OFF
+          netcdf: OFF
     env:
       ERF_DIR: ${{ github.workspace }}/erf_clone
     steps:
