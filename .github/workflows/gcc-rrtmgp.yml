@@ -46,11 +46,11 @@ jobs:
     - name: Setup Spack
       uses: spack/setup-spack@v2
       with:
-        path: ${{ github.workspace }}/spack_install_dir
+        path: ${{ github.workspace }}/../spack_install_dir
 
     - name: set up NetCDF
       run: |
-        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
+        . ${{ github.workspace }}/../spack_install_dir/share/spack/setup-env.sh
         spack env create erf_netcdf
         spack env activate erf_netcdf
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
@@ -69,15 +69,9 @@ jobs:
     #    spack buildcache push --base-image ubuntu:22.04 --update-index -d ./local-buildcache $(spack find --format "{hash}")
     #  if: ${{ !cancelled() }}
 
-    - name: Create CMake Policy File
-      run: |
-        cat > ${{ github.workspace }}/cmake_policy.cmake << 'EOL'
-        cmake_policy(SET CMP0076 NEW)
-        EOL
-
     - name: Configure Project and Generate Build System
       run: |
-        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
+        . ${{ github.workspace }}/../spack_install_dir/share/spack/setup-env.sh
         spack env activate erf_netcdf
         export HDF5_ROOT=$(spack location -i hdf5)
         export NETCDF_ROOT=$(spack location -i netcdf-c)
