@@ -59,8 +59,11 @@ jobs:
         brew install hdf5-mpi
         brew unlink hdf5-mpi
         brew install --force netcdf
+        brew unlink hdf5
         brew install --force netcdf-fortran
+        brew unlink hdf5
         brew install --force netcdf-cxx
+        brew unlink hdf5
         #brew install pnetcdf
         brew link hdf5-mpi
 
