@@ -125,4 +125,4 @@ jobs:
       run: |
         ls
         ctest -L regression -VV
-      working-directory: ${{ github.workspace }}/erf_clone/build
+      working-directory: ${ERF_DIR}/build
