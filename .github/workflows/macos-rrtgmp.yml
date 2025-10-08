@@ -112,16 +112,13 @@ jobs:
 
     - name: Set executable permissions
       run: |
+        ls ${{ github.workspace }}/erf_clone/build/
+        ls ${{ github.workspace }}/erf_clone/Build
+        chmod +x ${{ github.workspace }}/erf_clone/build/Exec/ABL/erf_abl
+        chmod +x ${{ github.workspace }}/erf_clone/Build/Exec/ABL/erf_abl
+        /Users/runner/work/ERF/ERF/erf_clone/Build/Exec/ABL/erf_abl
         find ${ERF_DIR}/build -type f -name "erf_*" -exec chmod +x {} \;
         find ${ERF_DIR}/build -type f -name "amrex_*" -exec chmod +x {} \;
-
-    - name: Set executable permissions
-      run: |
-        find /Users/runner/work/ERF/ERF -name "erf_density_current" -type f
-        chmod +x /Users/runner/work/ERF/ERF/erf_clone/Build/Exec/DryRegTests/DensityCurrent/erf_density_current
-        find /Users/runner/work/ERF/ERF/erf_clone/Build -type f -name "erf_*" -exec chmod +x {} \;
-        find /Users/runner/work/ERF/ERF/erf_clone/Build -type f -name "amrex_*" -exec chmod +x {} \;
-        ls -la /Users/runner/work/ERF/ERF/erf_clone/Build/Exec/DryRegTests/DensityCurrent/
 
     - name: Report
       run: |
