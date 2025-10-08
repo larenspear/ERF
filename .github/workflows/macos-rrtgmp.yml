@@ -68,7 +68,7 @@ jobs:
         #. ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
         #spack env activate erf_netcdf
         export HDF5_ROOT=$(brew --prefix hdf5-mpi)
-        export NETCDF_ROOT=$(brew --prefix netcdf)
+        export NETCDF_ROOT=$(brew --prefix pnetcdf)
         cmake \
           -B${ERF_DIR}/build \
           -DCMAKE_INSTALL_PREFIX:PATH=${ERF_DIR}/install \
