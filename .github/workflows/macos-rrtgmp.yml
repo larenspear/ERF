@@ -101,7 +101,7 @@ jobs:
         export CCACHE_SLOPPINESS=time_macros
         ccache -z
 
-        cmake --build ${ERF_DIR}/ERF/build --parallel 2 --verbose \
+        cmake --build ${ERF_DIR}/build --parallel 2 --verbose \
         2>&1 | tee -a ${ERF_DIR}/build-output.txt;
 
         du -hs ~/Library/Caches/ccache
