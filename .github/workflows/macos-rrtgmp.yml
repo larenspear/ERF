@@ -123,5 +123,6 @@ jobs:
 
     - name: CMake Tests # see file ERF/Tests/CTestList.cmake
       run: |
+        ls
         ctest -L regression -VV
       working-directory: ${{ github.workspace }}/erf_clone/build
