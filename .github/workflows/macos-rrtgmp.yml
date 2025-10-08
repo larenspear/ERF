@@ -43,26 +43,32 @@ jobs:
         restore-keys: |
              ccache-${{ github.workflow }}-${{ github.job }}-git-
 
-    - name: Set Up Spack
-      uses: spack/setup-spack@v2
-      with:
-        path: ${{ github.workspace }}/spack_install_dir
+    #- name: Set Up Spack
+    #  uses: spack/setup-spack@v2
+    #  with:
+    #    path: ${{ github.workspace }}/spack_install_dir
 
     - name: Set Up NetCDF
       run: |
-        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
-        spack env create erf_netcdf
-        spack env activate erf_netcdf
-        spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
-        spack concretize -f
-        spack install
+        #. ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
+        #spack env create erf_netcdf
+        #spack env activate erf_netcdf
+        #spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
+        #spack concretize -f
+        #spack install
+        brew install netcdf
+        brew install hdf5
+        brew install open-mpi
+        brew install netcdf-fortran
+        brew install netcdf-cxx
+        brew install pnetcdf
 
     - name: Configure Project and Generate Build System
       run: |
-        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
-        spack env activate erf_netcdf
-        export HDF5_ROOT=$(spack location -i hdf5)
-        export NETCDF_ROOT=$(spack location -i netcdf-c)
+        #. ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
+        #spack env activate erf_netcdf
+        export HDF5_ROOT=$(brew --prefix hdf5)
+        export NETCDF_ROOT=$(brew --prefix netcdf)
         cmake \
           -B${ERF_DIR}/build \
           -DCMAKE_INSTALL_PREFIX:PATH=${ERF_DIR}/install \
