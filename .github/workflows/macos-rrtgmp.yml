@@ -35,6 +35,9 @@ jobs:
     - name: Install Dependencies
       run: ${ERF_DIR}/Submodules/AMReX/.github/workflows/dependencies/dependencies_mac.sh
 
+    - name: Install CCache
+      run: ${ERF_DIR}/Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
+
     - name: Set Up Cache
       uses: actions/cache@v4
       with:
@@ -125,4 +128,4 @@ jobs:
       run: |
         ls
         ctest -L regression -VV
-      working-directory: ${ERF_DIR}/build
+      working-directory: ${{ github.workspace }}/erf_clone/build
