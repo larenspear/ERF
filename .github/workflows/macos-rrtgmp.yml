@@ -70,6 +70,68 @@ jobs:
         brew install pnetcdf
         brew link hdf5-mpi
 
+    - name: Patch EKAT FPE for Apple Silicon
+      run: |
+        cat > ekat_fpe.patch << 'EOF'
+        diff --git a/src/core/ekat_fpe.cpp b/src/core/ekat_fpe.cpp
+        index xxxxxxx..yyyyyyy 100644
+        --- a/src/core/ekat_fpe.cpp
+        +++ b/src/core/ekat_fpe.cpp
+        @@ -9,7 +9,13 @@
+
+        int ekat_get_enabled_fpes () {
+        fenv_t fenv;
+        +#if defined(__APPLE__) && defined(__arm64__)
+        +  // Apple Silicon implementation
+        +  fegetenv(&fenv);
+        +  return FE_ALL_EXCEPT; // Return all exceptions as we can't easily check on macOS ARM
+        +#else
+        return fegetenv (&fenv) ? -1 : (fenv.__control & FE_ALL_EXCEPT);
+        +#endif
+        }
+
+        int ekat_disable_fpes (const int excepts) {
+        @@ -19,11 +25,20 @@
+
+        fenv_t fenv;
+        fegetenv(&fenv);
+        +#if defined(__APPLE__) && defined(__arm64__)
+        +  // Apple Silicon implementation - we need to use the macOS functions
+        +  int old_excepts = fegetexcept();
+        +  fedisableexcept(excepts);
+        +#else
+        int old_excepts = fenv.__control & FE_ALL_EXCEPT;
+
+        // FE_ALL_EXCEPT bits in fenv.__control are "disable" flags, not "enable" flags.
+        fenv.__control &= ~new_excepts;
+        fenv.__mxcsr   &= ~(new_excepts << 7);
+        +#endif
+
+        fesetenv(&fenv);
+        return old_excepts;
+        @@ -35,11 +50,20 @@
+
+        fenv_t fenv;
+        fegetenv(&fenv);
+        +#if defined(__APPLE__) && defined(__arm64__)
+        +  // Apple Silicon implementation - we need to use the macOS functions
+        +  int old_excepts = fegetexcept();
+        +  feenableexcept(excepts);
+        +#else
+        int old_excepts = fenv.__control & FE_ALL_EXCEPT;
+
+        // FE_ALL_EXCEPT bits in fenv.__control are "disable" flags, not "enable" flags.
+        fenv.__control |= new_excepts;
+        fenv.__mxcsr   |= new_excepts << 7;
+        +#endif
+
+        fesetenv(&fenv);
+        return old_excepts;
+        EOF
+
+        cd /Users/runner/work/ERF/ERF/erf_clone/Submodules/ekat
+        patch -p1 < ../../../ekat_fpe.patch
+
     - name: Configure Project and Generate Build System
       run: |
         #. ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
