@@ -57,10 +57,10 @@ jobs:
         #spack concretize -f
         #spack install
         brew install hdf5-mpi
-        brew install netcdf
-        brew install open-mpi
-        brew install netcdf-fortran
-        brew install netcdf-cxx
+        #brew install netcdf
+        #brew install open-mpi
+        #brew install netcdf-fortran
+        #brew install netcdf-cxx
         brew install pnetcdf
 
     - name: Configure Project and Generate Build System
