@@ -114,7 +114,7 @@ jobs:
       run: |
         ls ${{ github.workspace }}/erf_clone/build/
         ls ${{ github.workspace }}/erf_clone/Build
-        chmod +x ${{ github.workspace }}/erf_clone/build/Exec/ABL/erf_abl
+        #chmod +x ${{ github.workspace }}/erf_clone/build/Exec/ABL/erf_abl
         chmod +x ${{ github.workspace }}/erf_clone/Build/Exec/ABL/erf_abl
         /Users/runner/work/ERF/ERF/erf_clone/Build/Exec/ABL/erf_abl
         find ${ERF_DIR}/build -type f -name "erf_*" -exec chmod +x {} \;
