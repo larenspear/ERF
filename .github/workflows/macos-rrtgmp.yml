@@ -57,10 +57,9 @@ jobs:
         #spack concretize -f
         #spack install
         brew install hdf5-mpi
-        #brew install netcdf
-        #brew install open-mpi
-        #brew install netcdf-fortran
-        #brew install netcdf-cxx
+        brew install --force netcdf
+        brew install --force netcdf-fortran
+        brew install --force netcdf-cxx
         brew install pnetcdf
 
     - name: Configure Project and Generate Build System
@@ -68,7 +67,7 @@ jobs:
         #. ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
         #spack env activate erf_netcdf
         export HDF5_ROOT=$(brew --prefix hdf5-mpi)
-        export NETCDF_ROOT=$(brew --prefix pnetcdf)
+        export NETCDF_ROOT=$(brew --prefix netcdf)
         cmake \
           -B${ERF_DIR}/build \
           -DCMAKE_INSTALL_PREFIX:PATH=${ERF_DIR}/install \
