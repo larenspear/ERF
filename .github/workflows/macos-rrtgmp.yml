@@ -67,7 +67,7 @@ jobs:
         brew unlink hdf5
         brew install --force netcdf-cxx
         brew unlink hdf5
-        #brew install pnetcdf
+        brew install pnetcdf
         brew link hdf5-mpi
 
     - name: Configure Project and Generate Build System
