@@ -112,13 +112,17 @@ jobs:
 
     - name: Set executable permissions
       run: |
+        echo "----------- small b build"
         ls ${{ github.workspace }}/erf_clone/build/
+        echo "----------- big b build"
         ls ${{ github.workspace }}/erf_clone/Build
+        echo "----------- executables"
         #chmod +x ${{ github.workspace }}/erf_clone/build/Exec/ABL/erf_abl
-        chmod +x ${{ github.workspace }}/erf_clone/Build/Exec/ABL/erf_abl
-        /Users/runner/work/ERF/ERF/erf_clone/Build/Exec/ABL/erf_abl
-        find ${ERF_DIR}/build -type f -name "erf_*" -exec chmod +x {} \;
-        find ${ERF_DIR}/build -type f -name "amrex_*" -exec chmod +x {} \;
+        #chmod +x ${{ github.workspace }}/erf_clone/Build/Exec/ABL/erf_abl
+        find ${ERF_DIR}/build -type f -name "erf_*" -print -exec chmod +x {} \;
+        find ${ERF_DIR}/build -type f -name "amrex_*" -print -exec chmod +x {} \;
+        #find ${ERF_DIR}/build -type f -name "erf_*" -exec chmod +x {} \;
+        #find ${ERF_DIR}/build -type f -name "amrex_*" -exec chmod +x {} \;
 
     - name: Report
       run: |
