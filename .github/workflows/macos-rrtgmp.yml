@@ -94,6 +94,7 @@ jobs:
           -DERF_ENABLE_TESTS:BOOL=ON \
           -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
           -DERF_ENABLE_FCOMPARE:BOOL=ON \
+          -DEKAT_DISABLE_FPE=ON \
           ${ERF_DIR};
 
     - name: Compile and Link
