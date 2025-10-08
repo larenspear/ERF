@@ -115,6 +115,14 @@ jobs:
         find ${ERF_DIR}/build -type f -name "erf_*" -exec chmod +x {} \;
         find ${ERF_DIR}/build -type f -name "amrex_*" -exec chmod +x {} \;
 
+    - name: Set executable permissions
+      run: |
+        find /Users/runner/work/ERF/ERF -name "erf_density_current" -type f
+        chmod +x /Users/runner/work/ERF/ERF/erf_clone/Build/Exec/DryRegTests/DensityCurrent/erf_density_current
+        find /Users/runner/work/ERF/ERF/erf_clone/Build -type f -name "erf_*" -exec chmod +x {} \;
+        find /Users/runner/work/ERF/ERF/erf_clone/Build -type f -name "amrex_*" -exec chmod +x {} \;
+        ls -la /Users/runner/work/ERF/ERF/erf_clone/Build/Exec/DryRegTests/DensityCurrent/
+
     - name: Report
       run: |
         egrep "warning:|error:" ${ERF_DIR}/../build-output.txt \
