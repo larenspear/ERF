@@ -46,6 +46,18 @@ jobs:
         restore-keys: |
              ccache-${{ github.workflow }}-${{ github.job }}-git-
 
+    - name: Cache Spack packages
+      uses: actions/cache@v4
+      id: spack-cache
+      with:
+        path: |
+          ${{ github.workspace }}/spack_install_dir/opt/spack
+          ${{ github.workspace }}/spack_install_dir/var/spack
+      key: spack-${{ runner.os }}-${{ hashFiles('**/spack.yaml', '**/spack.lock') }}-${{ matrix.netcdf }}-${{ matrix.rrtmgp }}
+      restore-keys: |
+        spack-${{ runner.os }}-
+
+
     - name: Set Up Spack
       uses: spack/setup-spack@v2
       with:
@@ -58,7 +70,12 @@ jobs:
         spack env activate erf_netcdf
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5+mpi openmpi
         spack concretize -f
-        spack install
+        if [ "${{ steps.spack-cache.outputs.cache-hit }}" != "true" ]; then
+          echo "Installing Spack packages..."
+          spack install
+        else
+          echo "Using cached Spack packages!"
+        fi
 
     - name: Configure Project and Generate Build System
       run: |
