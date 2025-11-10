@@ -1,0 +1,49 @@
+name: MacOS
+
+on: [push, pull_request, workflow_dispatch]
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.head_ref }}-macos
+  cancel-in-progress: true
+
+jobs:
+  MacOS-Clang:
+    name: Apple Clang@11.0 - Particles ${{matrix.particles}}
+    runs-on: macos-latest
+    # env: {CXXFLAGS: "-fno-operator-names -Werror -Wall -Wextra -Wpedantic -Wnull-dereference -Wfloat-conversion -Wshadow -Woverloaded-virtual"}
+    strategy:
+      matrix:
+        particles: [OFF, ON]
+
+    steps:
+
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Install Dependencies
+      run: Submodules/AMReX/.github/workflows/dependencies/dependencies_mac.sh
+
+    - name: Setup Spack
+      uses: spack/setup-spack@v2
+      with:
+        path: ${{ github.workspace }}/spack_install_dir
+
+    - name: Set Up Cache
+      uses: actions/cache@v4
+      with:
+        path: ~/Library/Caches/ccache
+        key: ccache-${{ github.workflow }}-${{ github.job }}-git-${{ github.sha }}
+        restore-keys: |
+             ccache-${{ github.workflow }}-${{ github.job }}-git-
+
+    - name: Build ERF
+      run: |
+        echo ${{ github.workspace }}
+        echo ${{ runner.workspace }}
+        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
+        spack env create erf
+        spack env activate erf
+        spack add erf
+        spack concretize -f
+        spack install
