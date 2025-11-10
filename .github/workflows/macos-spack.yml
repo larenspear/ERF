@@ -21,8 +21,11 @@ jobs:
       with:
         submodules: true
 
-    - name: Install Dependencies
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies_mac.sh
+    - name: Force HTTPS for all GitHub clones (fix submodules)
+        shell: bash
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Setup Spack
       uses: spack/setup-spack@v2
