@@ -1,4 +1,4 @@
-name: MacOS
+name: MacOS Spack Build
 
 on: [push, pull_request, workflow_dispatch]
 
@@ -8,46 +8,51 @@ concurrency:
 
 jobs:
   MacOS-Clang:
-    name: Apple Clang@11.0 - Particles ${{matrix.particles}}
+    name: Apple Clang@17.0
     runs-on: macos-latest
     # env: {CXXFLAGS: "-fno-operator-names -Werror -Wall -Wextra -Wpedantic -Wnull-dereference -Wfloat-conversion -Wshadow -Woverloaded-virtual"}
     strategy:
+      fail-fast: false
       matrix:
-        particles: [OFF, ON]
+        include:
+        - name: no-mpi / particles OFF
+          spec: "erf~mpi+particles"
+        - name: no-mpi / particles ON
+          spec: "erf~mpi~particles "
+        - name: mpi / particles OFF
+          spec: "erf+mpi+particles"
+        - name: mpi / particles ON
+          spec: "erf+mpi~particles"
 
     steps:
 
     - uses: actions/checkout@v4
       with:
-        submodules: true
-
-    - name: Force HTTPS for all GitHub clones (fix submodules)
-      shell: bash
-      run: |
-        git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-        git config --global url."https://github.com/".insteadOf "git@github.com:"
-        git clone --recurse-submodules https://github.com/erf-model/ERF.git
+        submodules: recursive
 
     - name: Setup Spack
       uses: spack/setup-spack@v2
       with:
         path: ${{ github.workspace }}/spack_install_dir
 
-    - name: Set Up Cache
+    - name: Cache Spack downloads
       uses: actions/cache@v4
       with:
-        path: ~/Library/Caches/ccache
-        key: ccache-${{ github.workflow }}-${{ github.job }}-git-${{ github.sha }}
+        path: |
+          ~/.spack/cache
+          ${{ github.workspace }}/spack_install_dir/var/spack/cache
+        key: spack-cache-${{ runner.os }}-${{ hashFiles('**/package.py', '**/spack.yaml') }}
         restore-keys: |
-             ccache-${{ github.workflow }}-${{ github.job }}-git-
+          spack-cache-${{ runner.os }}-
 
-    - name: Build ERF
+    - name: Build ERF (${{ matrix.spec }})
+      shell: bash
       run: |
+        set -euxo pipefail
         echo ${{ github.workspace }}
         echo ${{ runner.workspace }}
         . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
-        spack env create erf
-        spack env activate erf
-        spack add erf
-        spack concretize -f
-        spack install
+        spack env create -d ./.env
+        spack -e ./.env add ${{ matrix.spec }}
+        spack -e ./.env concretize -f
+        spack -e ./.env install -j $(sysctl -n hw.ncpu)
