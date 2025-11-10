@@ -8,7 +8,7 @@ concurrency:
 
 jobs:
   MacOS-Clang:
-    name: Apple Clang@17.0
+    name: Apple Clang@17.0 ${{ matrix.name }}
     runs-on: macos-latest
     # env: {CXXFLAGS: "-fno-operator-names -Werror -Wall -Wextra -Wpedantic -Wnull-dereference -Wfloat-conversion -Wshadow -Woverloaded-virtual"}
     strategy:
@@ -31,14 +31,14 @@ jobs:
           spec: "erf+mpi+netcdf+particles"
         - name: +mpi+netcdf~particles
           spec: "erf+mpi+netcdf~particles"
+        - name: +mpi+netcdf~particles+fft
+          spec: "erf+mpi+netcdf~particles+fft"
         - name: +mpi+netcdf+particles+openmp
           spec: "erf+mpi+netcdf+particles+openmp"
         - name: +mpi+netcdf~particles+openmp
           spec: "erf+mpi+netcdf~particles+openmp"
-        - name: +mpi+netcdf+particles^mvapich2
-          spec: "erf+mpi+netcdf+particles^mvapich2"
-        - name: +mpi+netcdf~particles^mvapich2
-          spec: "erf+mpi+netcdf~particles^mvapich2"
+        - name: +mpi+netcdf~particles+openmp+fft
+          spec: "erf+mpi+netcdf~particles+openmp+fft"
 
     steps:
 
