@@ -15,20 +15,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - name: no-mpi / particles OFF
+        - name: ~mpi+particles
           spec: "erf~mpi+particles"
-        - name: no-mpi / particles ON
+        - name: ~mpi~particles
           spec: "erf~mpi~particles "
-        - name: mpi / particles OFF
+        - name: +mpi+particles
           spec: "erf+mpi+particles"
-        - name: mpi / particles ON
+        - name: +mpi~particles
           spec: "erf+mpi~particles"
+        - name: +mpi+openmp
+          spec: "erf+mpi+openmp"
+        - name: ~mpi+openmp
+          spec: "erf~mpi+openmp"
+        - name: +mpi+netcdf+particles
+          spec: "erf+mpi+netcdf+particles"
+        - name: +mpi+netcdf~particles
+          spec: "erf+mpi+netcdf~particles"
+        - name: +mpi+netcdf+particles+openmp
+          spec: "erf+mpi+netcdf+particles+openmp"
+        - name: +mpi+netcdf~particles+openmp
+          spec: "erf+mpi+netcdf~particles+openmp"
+        - name: +mpi+netcdf+particles^mvapich2
+          spec: "erf+mpi+netcdf+particles^mvapich2"
+        - name: +mpi+netcdf~particles^mvapich2
+          spec: "erf+mpi+netcdf~particles^mvapich2"
 
     steps:
 
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    - name: Force HTTPS for all GitHub clones (fix submodules)
+      shell: bash
+      run: |
+        git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Setup Spack
       uses: spack/setup-spack@v2
