@@ -22,9 +22,10 @@ jobs:
         submodules: true
 
     - name: Force HTTPS for all GitHub clones (fix submodules)
-        run: |
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
+      shell: bash
+      run: |
+        git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Setup Spack
       uses: spack/setup-spack@v2
