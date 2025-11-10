@@ -26,6 +26,7 @@ jobs:
       run: |
         git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
         git config --global url."https://github.com/".insteadOf "git@github.com:"
+        git clone --recurse-submodules https://github.com/erf-model/ERF.git
 
     - name: Setup Spack
       uses: spack/setup-spack@v2
