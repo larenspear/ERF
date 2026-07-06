@@ -37,6 +37,15 @@ Radiation::Radiation (const int& lev,
     // Must specify a surface temp (LSM can overwrite)
     pp.get("rad_t_sfc", m_rad_t_sfc);
 
+    // Surface albedo and emissivity (LSM can overwrite). Used for idealized
+    // experiments such as RCEMIP, which prescribes a surface albedo of 0.07.
+    pp.query("rad_sfc_albedo"    , m_rad_sfc_albedo);
+    pp.query("rad_sfc_emissivity", m_rad_sfc_emissivity);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE((m_rad_sfc_albedo >= 0.) && (m_rad_sfc_albedo <= 1.),
+        "erf.rad_sfc_albedo must be between 0 and 1");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE((m_rad_sfc_emissivity >= 0.) && (m_rad_sfc_emissivity <= 1.),
+        "erf.rad_sfc_emissivity must be between 0 and 1");
+
     // Radiation timestep, as a number of atm steps
     pp.query("rad_freq_in_steps", m_rad_freq_in_steps);
 
@@ -503,6 +512,8 @@ Radiation::mf_to_kokkos_buffers (iMultiFab* lmask,
     Real cons_lat = m_lat_cons;
     Real cons_lon = m_lon_cons;
     Real rad_t_sfc = m_rad_t_sfc;
+    Real rad_sfc_albedo     = m_rad_sfc_albedo;
+    Real rad_sfc_emissivity = m_rad_sfc_emissivity;
 
     for (MFIter mfi(*m_cons_in); mfi.isValid(); ++mfi) {
         const auto& vbx  = mfi.validbox();
@@ -601,25 +612,24 @@ Radiation::mf_to_kokkos_buffers (iMultiFab* lmask,
         // Parsed surface temp
         Kokkos::deep_copy(t_sfc, rad_t_sfc);
 
-        // EAMXX dummy atmos constants
-        Kokkos::deep_copy(sfc_alb_dir_vis, Real(0.06));
-        Kokkos::deep_copy(sfc_alb_dir_nir, Real(0.06));
-        Kokkos::deep_copy(sfc_alb_dif_vis, Real(0.06));
-        Kokkos::deep_copy(sfc_alb_dif_nir, Real(0.06));
+        // Parsed albedo/emissivity (defaults are the EAMXX dummy atmos constants)
+        Kokkos::deep_copy(sfc_alb_dir_vis, rad_sfc_albedo);
+        Kokkos::deep_copy(sfc_alb_dir_nir, rad_sfc_albedo);
+        Kokkos::deep_copy(sfc_alb_dif_vis, rad_sfc_albedo);
+        Kokkos::deep_copy(sfc_alb_dif_nir, rad_sfc_albedo);
 
         // AML NOTE: These are not used in current EAMXX, I've left
         //           the code to plug into these if we need it.
         //
-        // Current EAMXX constants
-        Kokkos::deep_copy(sfc_emis, Real(0.98));
+        Kokkos::deep_copy(sfc_emis, rad_sfc_emissivity);
         Kokkos::deep_copy(lw_src  , zero );
     } else {
         Vector<real1d_k> rrtmgp_in_vars = {t_sfc, sfc_emis,
                                            sfc_alb_dir_vis, sfc_alb_dir_nir,
                                            sfc_alb_dif_vis, sfc_alb_dif_nir};
-        Vector<Real> rrtmgp_default_vals = {rad_t_sfc, Real(0.98),
-                                            Real(0.06), Real(0.06),
-                                            Real(0.06), Real(0.06)};
+        Vector<Real> rrtmgp_default_vals = {rad_t_sfc, rad_sfc_emissivity,
+                                            rad_sfc_albedo, rad_sfc_albedo,
+                                            rad_sfc_albedo, rad_sfc_albedo};
         for (int ivar(0); ivar<lsm_input_ptrs.size(); ivar++) {
             auto rrtmgp_default_val = rrtmgp_default_vals[ivar];
             auto rrtmgp_to_fill_k = rrtmgp_in_vars[ivar];

@@ -1,0 +1,63 @@
+diff --git a/src/core/ekat_fpe.cpp b/src/core/ekat_fpe.cpp
+index c4e0e71..0ef906a 100644
+--- a/src/core/ekat_fpe.cpp
++++ b/src/core/ekat_fpe.cpp
+@@ -5,6 +5,49 @@
+ #ifndef EKAT_HAVE_FEENABLEEXCEPT
+ 
+ // Drop-in replacement of some useful GNU utils (needed on Apple platforms)
++#if defined(__aarch64__)
++
++// On Apple Silicon (arm64) fenv_t holds the FPSR/FPCR registers; the
++// exception trap-enable bits live in FPCR, 8 bits above the flag bits.
++inline int fegetexcept (void)
++{
++  static fenv_t fenv;
++
++  return fegetenv (&fenv) ? -1 : static_cast<int>((fenv.__fpcr >> 8) & FE_ALL_EXCEPT);
++}
++
++inline int feenableexcept (int excepts)
++{
++  static fenv_t fenv;
++  int new_excepts = excepts & FE_ALL_EXCEPT,
++               old_excepts;  // previous masks
++
++  if ( fegetenv (&fenv) ) return -1;
++  old_excepts = static_cast<int>((fenv.__fpcr >> 8) & FE_ALL_EXCEPT);
++
++  // unmask (enable traps)
++  fenv.__fpcr |= static_cast<decltype(fenv.__fpcr)>(new_excepts) << 8;
++
++  return ( fesetenv (&fenv) ? -1 : old_excepts );
++}
++
++inline int fedisableexcept (int excepts)
++{
++  static fenv_t fenv;
++  int new_excepts = excepts & FE_ALL_EXCEPT,
++               old_excepts;  // all previous masks
++
++  if ( fegetenv (&fenv) ) return -1;
++  old_excepts = static_cast<int>((fenv.__fpcr >> 8) & FE_ALL_EXCEPT);
++
++  // mask (disable traps)
++  fenv.__fpcr &= ~(static_cast<decltype(fenv.__fpcr)>(new_excepts) << 8);
++
++  return ( fesetenv (&fenv) ? -1 : old_excepts );
++}
++
++#else // Apple x86-64
++
+ inline int fegetexcept (void)
+ {
+   static fenv_t fenv;
+@@ -44,6 +87,8 @@ inline int fedisableexcept (int excepts)
+   return ( fesetenv (&fenv) ? -1 : old_excepts );
+ }
+ 
++#endif // __aarch64__
++
+ #endif // EKAT_NEEDS_FEENABLEEXCEPT
+ 
+ namespace ekat {

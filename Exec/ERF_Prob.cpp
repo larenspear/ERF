@@ -137,6 +137,9 @@ Problem::init_custom_pert (
     else if  (my_prob_name_ci == "rico") {
 #include "Prob/ERF_InitCustomPert_RICO.H"
     }
+    else if  (my_prob_name_ci == "rcemip") {
+#include "Prob/ERF_InitCustomPert_RCEMIP.H"
+    }
     else if  (my_prob_name_ci == "sdm_congestus3d") {
 #include "Prob/ERF_InitCustomPert_SDMCongestus3D.H"
     }

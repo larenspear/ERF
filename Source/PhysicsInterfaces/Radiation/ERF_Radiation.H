@@ -260,6 +260,11 @@ private:
     // T surf if no LSM is available
     amrex::Real m_rad_t_sfc = -1;
 
+    // Surface albedo and emissivity if no LSM is available
+    // (defaults are the EAMXX dummy atmosphere constants)
+    amrex::Real m_rad_sfc_albedo     = amrex::Real(0.06);
+    amrex::Real m_rad_sfc_emissivity = amrex::Real(0.98);
+
     // Pointer to the CC conserved vars
     amrex::MultiFab* m_cons_in = nullptr;
 

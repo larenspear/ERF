@@ -12,6 +12,7 @@ CEXE_headers += ERF_InitCustomPert_KE.H
 CEXE_headers += ERF_InitCustomPert_MovingTerrain.H
 CEXE_headers += ERF_InitCustomPert_MultiSpeciesBubble.H
 CEXE_headers += ERF_InitCustomPert_ParticleTests.H
+CEXE_headers += ERF_InitCustomPert_RCEMIP.H
 CEXE_headers += ERF_InitCustomPert_RICO.H
 CEXE_headers += ERF_InitCustomPert_ScalarAdvDiff.H
 CEXE_headers += ERF_InitCustomPert_SDMCongestus3D.H
