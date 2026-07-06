@@ -53,12 +53,18 @@ and the constants in Tables 1-2 and Eq. 1 of the paper.
 
 ## Building
 
-The case uses the shared ERF executable with RRTMGP enabled. With GNU Make:
+The case uses the shared ERF executable with RRTMGP and the FFT Poisson
+solver enabled (the deck runs anelastic). Use CMake — the GNU Make path does
+not currently build RRTMGP (it expects an external Kokkos):
 
 ```sh
-cd Exec
-make -j USE_RRTMGP=TRUE USE_NETCDF=TRUE
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DERF_DIM=3 -DERF_ENABLE_MPI=ON \
+  -DERF_ENABLE_NETCDF=ON -DERF_ENABLE_HDF5=ON -DERF_ENABLE_KOKKOS=ON \
+  -DERF_ENABLE_RRTMGP=ON -DERF_ENABLE_FFT=ON .
+cmake --build build --parallel 8
 ```
+
+On Apple Silicon, first apply the EKAT patch (see Files above).
 
 The RRTMGP k-distribution and cloud-optics NetCDF files ship with the RRTMGP
 submodule; the deck points at them with paths relative to this directory
@@ -104,8 +110,16 @@ erf.rad_t_sfc           = 305.0
   form).
 - `erf.rad_freq_in_steps = 10` calls radiation every 60 s; the protocol
   allows any interval <= 15 min, so this can be relaxed for speed.
-- Timestep (`fixed_dt = 6 s`, `fixed_fast_dt = 1 s`) has not been tuned;
-  reduce if the run goes unstable during deep-convection onset.
+- The deck runs the anelastic solver (standard for RCE CRMs, cf. SAM). This
+  is also a hard requirement in practice: ERF's compressible
+  acoustic-substepping is unstable on this stretched vertical grid (a 2-dx
+  computational checkerboard in w grows exponentially from rest — amplitude
+  doubling per 6 s step — and crashes SAM within ~2 simulated minutes;
+  insensitive to beta_s, fast_dt, advection scheme, LES closure, surface
+  fluxes, and radiation; the identical setup on a uniform vertical grid is
+  stable). Candidate upstream bug in the stretched-dz fast integrator.
+- Timestep (`fixed_dt = 6 s`) has not been tuned; reduce if the run goes
+  unstable during deep-convection onset.
 - `RCE_large` (channel, ~6000 km x 400 km, dx = 3 km) is not set up yet; it
   needs only a different deck (domain size, dx, and its own z levels /
   o3vmr from the generator script).

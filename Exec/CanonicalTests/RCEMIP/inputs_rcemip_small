@@ -31,7 +31,7 @@ erf.terrain_z_levels = 0.000 50.000 102.250 156.851 213.910 273.535 335.845 400.
 
 # TIME STEP
 erf.fixed_dt      = 6.0
-erf.fixed_fast_dt = 1.0
+# erf.fixed_fast_dt is unused in anelastic mode (no acoustic substepping)
 
 # DIAGNOSTICS & VERBOSITY
 erf.sum_interval = 100
@@ -49,11 +49,29 @@ erf.plot_vars_1 = density x_velocity y_velocity z_velocity pressure theta temp q
 erf.use_gravity  = true
 erf.use_coriolis = false         # RCEMIP: no rotation
 
+# Anelastic solver (requires a build with ERF_ENABLE_FFT=ON). This matches
+# standard RCE CRM practice (e.g. SAM). It is also required here in practice:
+# the compressible acoustic-substepping path is unstable on this stretched
+# vertical grid (a 2-dx computational mode in w grows from rest and crashes
+# the run within ~20 steps, for any beta_s and fast_dt; the same setup with a
+# uniform vertical grid is stable) -- candidate upstream bug.
+erf.anelastic = 1
+
 erf.moisture_model = "SAM"       # single-moment microphysics with ice
 
 erf.molec_diff_type = "None"
 erf.les_type        = "Smagorinsky"
 erf.Cs              = 0.25
+
+# Upwinded advection (implicit scale-selective dissipation). With centered
+# advection a 2-dx computational mode in w, pumped by the initially unstable
+# surface layer, grows exponentially and crashes the run within minutes.
+erf.dycore_horiz_adv_type    = Upwind_3rd
+erf.dycore_vert_adv_type     = Upwind_3rd
+erf.dryscal_horiz_adv_type   = Upwind_3rd_SL
+erf.dryscal_vert_adv_type    = Upwind_3rd_SL
+erf.moistscal_horiz_adv_type = Upwind_3rd_SL
+erf.moistscal_vert_adv_type  = Upwind_3rd_SL
 
 # INITIALIZATION: analytic RCEMIP sounding (Wing et al. 2018, Eqs. 2-6)
 erf.init_type           = "input_sounding"
