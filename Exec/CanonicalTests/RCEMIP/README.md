@@ -104,10 +104,11 @@ erf.rad_t_sfc           = 305.0
   then the deck routes the ocean through the constant-z0 (land) path, which
   with fixed SST is thermodynamically identical. The protocol's optional
   1 m/s minimum surface wind is not directly settable in ERF (the MOST
-  iteration has a hardcoded 0.1 m/s floor); the deck instead enables
-  `erf.most.include_wstar`, ERF's convective-gustiness term, which plays the
-  same role in the weak-wind limit (the protocol also allows the quadrature
-  form).
+  formulation has a hardcoded 0.1 m/s floor, which this branch extends to
+  the local wind in the scalar fluxes so they survive calm conditions); the
+  deck instead enables `erf.most.include_wstar`, ERF's convective-gustiness
+  term, which plays the same role in the weak-wind limit (the protocol also
+  allows the quadrature form).
 - `erf.rad_freq_in_steps = 10` calls radiation every 60 s; the protocol
   allows any interval <= 15 min, so this can be relaxed for speed.
 - The deck runs the anelastic solver (standard for RCE CRMs, cf. SAM). This
@@ -118,6 +119,35 @@ erf.rad_t_sfc           = 305.0
   insensitive to beta_s, fast_dt, advection scheme, LES closure, surface
   fluxes, and radiation; the identical setup on a uniform vertical grid is
   stable). Candidate upstream bug in the stretched-dz fast integrator.
+- The LES closure is Smagorinsky with anisotropic mixing lengths
+  (`erf.mix_isotropic = false`): the vertical filter width is dz and the
+  horizontal is sqrt(dx*dy). This is required, not a tuning choice: ERF
+  disables its implicit vertical diffusion solve in anelastic mode, so all
+  vertical diffusion is explicit and must satisfy K dt/dz^2 < 0.5; the
+  default isotropic filter width (dx*dy*dz)^(1/3) ~ 368 m violates that
+  limit at dz = 50 m as soon as convection develops.
+- Scalar advection is WENOZ5 (essentially non-oscillatory; good positivity
+  behavior for moist scalars). Note an upstream quirk: with a WENO horizontal
+  scheme the vertical scalar scheme silently follows it, whatever
+  `*_vert_adv_type` says.
+- This branch carries three ERF bug fixes without which this case cannot
+  run (all candidate upstream PRs; see the issue drafts):
+  1. `ERF_SlowRhsPost.cpp`: in anelastic mode the scalars were advected with
+     unweighted momenta (missing area factors), which on a stretched vertical
+     grid violates the max principle and blows up moisture within simulated
+     minutes.
+  2. `ERF_ComputeTurbulentViscosity.cpp`: with `mix_isotropic = false` the
+     vertical scalar diffusivities were copied from the horizontal viscosity
+     (~400x too large on this grid).
+  3. `ERF.cpp` / `ERF_SurfaceLayer.H`: `init_type = input_sounding` silently
+     overwrote `erf.most.surf_temp/surf_moist` with the sounding surface
+     values (making the ocean flux-free), and `ERF_MOSTStress.H`'s Moeng
+     scalar fluxes vanish identically in calm conditions (no floor on the
+     local wind speed) — the surface fluxes in ALL cold-start runs were zero
+     before these fixes.
+- `erf.most.pblh_calc` must be set when `erf.most.include_wstar` is on;
+  otherwise w* is computed from an uninitialized PBL height (1e30 sentinel)
+  and u* explodes once the surface buoyancy flux turns positive.
 - Timestep (`fixed_dt = 6 s`) has not been tuned; reduce if the run goes
   unstable during deep-convection onset.
 - `RCE_large` (channel, ~6000 km x 400 km, dx = 3 km) is not set up yet; it

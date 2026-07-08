@@ -12,7 +12,6 @@
 
     const bool use_moisture = (sc.moisture_type != MoistureType::None);
 
-    const Real rdOcp = sc.rdOcp;
     const int klo = geomdata.Domain().smallEnd(2);
 
     ParallelForRNG(bx, [=] AMREX_GPU_DEVICE(int i, int j, int k, const RandomEngine& engine) noexcept
@@ -20,8 +19,10 @@
         const int layer = k - klo;
 
         //
-        // Add temperature perturbations -- we want to keep pressure constant
-        //     so these effectively end up as density perturbations
+        // Add potential-temperature perturbations. We perturb (rho theta)
+        // rather than using the constant-pressure density trick because the
+        // anelastic solver holds density to the base state and would discard
+        // a pure density perturbation, leaving the flow unseeded.
         //
         if ((layer >= 0) && (layer < T_pert_num_layers) && (T_pert_amp_bottom != zero)) {
 
@@ -30,22 +31,10 @@
             Real frac = (T_pert_num_layers > 1) ? Real(layer) / Real(T_pert_num_layers-1) : zero;
             Real amp  = T_pert_amp_bottom + (T_pert_amp_top - T_pert_amp_bottom) * frac;
 
-            Real rhotheta  = state(i,j,k,RhoTheta_comp);
-            Real rho       = state(i,j,k,Rho_comp);
-            Real qv        = (use_moisture) ? state(i,j,k,RhoQ1_comp) / rho : zero;
-            Real Told      = getTgivenRandRTh(rho,rhotheta,qv);
-            Real P         = getPgivenRTh(rhotheta,qv);
+            Real rho = state(i,j,k,Rho_comp);
 
             Real rand_double = amrex::Random(engine); // Between zero and one
-            Real Tpert    = (rand_double*two - one)*amp;
-            Real Tnew     = Told + Tpert;
-
-            Real theta_new = getThgivenTandP(Tnew,P,rdOcp);
-            Real rhonew    = getRhogivenThetaPress(theta_new,P,rdOcp,qv);
-            state_pert(i, j, k, Rho_comp) = rhonew - rho;
-
-            // Note we do not perturb this
-            state_pert(i, j, k, RhoTheta_comp) = zero;
+            state_pert(i, j, k, RhoTheta_comp) = rho * (rand_double*two - one)*amp;
         }
 
         // Optional moisture noise (off by default; the protocol asks for

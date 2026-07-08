@@ -62,16 +62,26 @@ erf.moisture_model = "SAM"       # single-moment microphysics with ice
 erf.molec_diff_type = "None"
 erf.les_type        = "Smagorinsky"
 erf.Cs              = 0.25
+# Anisotropic mixing lengths (vertical filter width = dz, horizontal =
+# sqrt(dx*dy)). Required on this grid: with the default isotropic
+# (dx*dy*dz)^(1/3) ~ 368 m, the vertical eddy viscosity in convective plumes
+# violates the explicit vertical-diffusion stability limit (K dt/dz^2 > 0.5
+# at dz = 50 m, dt = 6 s) and the run blows up at convection onset.
+erf.mix_isotropic   = false
 
 # Upwinded advection (implicit scale-selective dissipation). With centered
 # advection a 2-dx computational mode in w, pumped by the initially unstable
 # surface layer, grows exponentially and crashes the run within minutes.
+# Scalars use WENO: with non-monotone upwinding, advection overshoots on the
+# sharp qv gradients of onset-stage grid-scale convection create spurious
+# supersaturation extrema (qv approaching 2x qsat), whose condensation
+# heating drives a runaway updraft that crashes the microphysics.
 erf.dycore_horiz_adv_type    = Upwind_3rd
 erf.dycore_vert_adv_type     = Upwind_3rd
-erf.dryscal_horiz_adv_type   = Upwind_3rd_SL
-erf.dryscal_vert_adv_type    = Upwind_3rd_SL
-erf.moistscal_horiz_adv_type = Upwind_3rd_SL
-erf.moistscal_vert_adv_type  = Upwind_3rd_SL
+erf.dryscal_horiz_adv_type   = WENOZ5
+erf.dryscal_vert_adv_type    = WENOZ5
+erf.moistscal_horiz_adv_type = WENOZ5
+erf.moistscal_vert_adv_type  = WENOZ5
 
 # INITIALIZATION: analytic RCEMIP sounding (Wing et al. 2018, Eqs. 2-6)
 erf.init_type           = "input_sounding"
@@ -100,6 +110,9 @@ erf.most.zref          = 25.0      # first cell center [m]
 erf.most.z0            = 0.0002    # ocean roughness length [m]
 erf.most.include_wstar = true      # convective gustiness in the weak-wind limit
                                    # (ERF analog of the protocol's 1 m/s floor)
+erf.most.pblh_calc     = "MYNN25"  # PBL-height estimator: required by
+                                   # include_wstar (w* ~ (g/thv * hfx * pblh)^1/3;
+                                   # without it pblh stays at its 1e30 sentinel)
 
 # RAYLEIGH DAMPING near the model top (gravity-wave absorber above 25 km)
 erf.rayleigh_damp_U   = true
