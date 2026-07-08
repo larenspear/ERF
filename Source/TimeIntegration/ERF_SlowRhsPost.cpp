@@ -286,21 +286,34 @@ void erf_slow_rhs_post (int level, int finest_level,
 
         // We have projected the velocities stored in S_data but we will use
         //    the velocities stored in {avg_xmom,avg_ymom,avg_zmom} to update the scalars,
-        //    so we need to copy from S_data (projected) into these
+        //    so we need to copy from S_data (projected) into these.
+        // The scalar advection (AdvectionSrcForScalars) expects avg_{x,y,z}mom
+        //    to carry the area factors and inverse map factors, as constructed in
+        //    AdvectionSrcForRhoAndTheta on the compressible path; without them the
+        //    scalar flux divergence is inconsistent with the (divergence-free)
+        //    projected momenta wherever dz varies, and scalar extrema grow
+        //    unboundedly on stretched vertical grids.
+        // NOTE: for terrain-fitted coordinates (VariableDz) the vertical
+        //    component should additionally be converted from rho*w to Omega.
         if (l_anelastic) {
             Box tbx_inc = mfi.nodaltilebox(0);
             Box tby_inc = mfi.nodaltilebox(1);
             Box tbz_inc = mfi.nodaltilebox(2);
 
+            const Array4<const Real>& ax_avg_arr = ax->const_array(mfi);
+            const Array4<const Real>& ay_avg_arr = ay->const_array(mfi);
+            const Array4<const Real>& az_avg_arr = az->const_array(mfi);
+
             ParallelFor(tbx_inc, tby_inc, tbz_inc,
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                avg_xmom_arr(i,j,k) = cur_xmom(i,j,k);
+                avg_xmom_arr(i,j,k) = ax_avg_arr(i,j,k) * cur_xmom(i,j,k) / mf_uy(i,j,0);
             },
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                avg_ymom_arr(i,j,k) = cur_ymom(i,j,k);
+                avg_ymom_arr(i,j,k) = ay_avg_arr(i,j,k) * cur_ymom(i,j,k) / mf_vx(i,j,0);
             },
             [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                avg_zmom_arr(i,j,k) = cur_zmom(i,j,k);
+                avg_zmom_arr(i,j,k) = az_avg_arr(i,j,k) * cur_zmom(i,j,k) /
+                                      (mf_mx(i,j,0) * mf_my(i,j,0));
             });
         }
 
