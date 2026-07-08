@@ -1186,13 +1186,18 @@ ERF::InitData_post ()
         }
 
         // If initializing from an input_sounding, make sure the surface layer
-        // is using the same surface conditions
+        // is using the same surface conditions -- unless the user explicitly
+        // prescribed them (e.g. a fixed-SST ocean warmer than the initial air)
         if (solverChoice.init_type == InitType::Input_Sounding) {
             const Real theta0 = input_sounding_data.theta_ref_inp_sound;
             const Real qv0    = input_sounding_data.qv_ref_inp_sound;
             for (int lev = 0; lev <= finest_level; lev++) {
-                m_SurfaceLayer->set_t_surf(lev, theta0);
-                m_SurfaceLayer->set_q_surf(lev, qv0);
+                if (!m_SurfaceLayer->user_specified_surf_temp()) {
+                    m_SurfaceLayer->set_t_surf(lev, theta0);
+                }
+                if (!m_SurfaceLayer->user_specified_surf_moist()) {
+                    m_SurfaceLayer->set_q_surf(lev, qv0);
+                }
             }
         }
 

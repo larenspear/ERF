@@ -1827,7 +1827,11 @@ struct moeng_flux
         amrex::Real wsp_mean = umm_arr(i,j,0);
         wsp_mean = std::max(wsp_mean, WSMIN);
 
-        amrex::Real wsp     = std::sqrt(velx*velx+vely*vely);
+        // Floor the local wind speed like the mean: without it the scalar
+        // flux vanishes in calm conditions (e.g. a convectively unstable
+        // surface layer at cold start), where MOST should recover the
+        // free-convective flux -rho*ustar*qstar.
+        amrex::Real wsp     = std::max(std::sqrt(velx*velx+vely*vely), WSMIN);
         amrex::Real num1    = wsp * (qv_mean-qv_surf);
         amrex::Real num2    = wsp_mean * (qv-qv_mean);
 
@@ -1865,7 +1869,8 @@ struct moeng_flux
         amrex::Real wsp_mean    = umm_arr(i,j,0);
         wsp_mean = std::max(wsp_mean, WSMIN);
 
-        amrex::Real wsp     = std::sqrt(velx*velx+vely*vely);
+        // Floor the local wind speed like the mean (see compute_q_flux)
+        amrex::Real wsp     = std::max(std::sqrt(velx*velx+vely*vely), WSMIN);
         amrex::Real num1    = wsp * (theta_mean-theta_surf);
         amrex::Real num2    = wsp_mean * (theta-theta_mean);
 

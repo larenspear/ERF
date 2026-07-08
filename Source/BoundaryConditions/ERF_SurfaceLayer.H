@@ -114,11 +114,13 @@ public:
       // Get surface temperature
       auto erf_st = pp.query("most.surf_temp", surf_temp);
       if (erf_st) { default_land_surf_temp  = surf_temp; }
+      m_user_specified_surf_temp = erf_st;
 
       // Get surface moisture
       bool erf_sq = false;
       if (use_moisture) { erf_sq = pp.query("most.surf_moist", surf_moist); }
       if (erf_sq) { default_land_surf_moist = surf_moist; }
+      m_user_specified_surf_moist = erf_sq;
 
       // Custom type user must specify the fluxes
       if (flux_type == FluxCalcType::CUSTOM ||
@@ -642,6 +644,12 @@ public:
   amrex::MultiFab* get_t_surf (const int& lev) { return t_surf[lev].get(); }
   void set_t_surf(const int& lev, const amrex::Real tsurf) { t_surf[lev]->setVal(tsurf); }
 
+  // Whether the user explicitly set most.surf_temp / most.surf_moist in the
+  // inputs (used to keep derived defaults, e.g. from an input sounding, from
+  // clobbering them)
+  bool user_specified_surf_temp () const { return m_user_specified_surf_temp; }
+  bool user_specified_surf_moist () const { return m_user_specified_surf_moist; }
+
   amrex::MultiFab* get_q_surf (const int& lev) { return q_surf[lev].get(); }
   void set_q_surf(const int& lev, const amrex::Real qsurf) { q_surf[lev]->setVal(qsurf); }
 
@@ -736,6 +744,8 @@ private:
   amrex::Real surf_heating_rate{0};
   amrex::Real surf_temp_flux{0};
   amrex::Real default_land_surf_moist{zero};
+  bool m_user_specified_surf_temp{false};
+  bool m_user_specified_surf_moist{false};
   amrex::Real surf_moist;
   amrex::Real surf_moist_flux{0};
   amrex::Real custom_ustar{0};
