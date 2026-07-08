@@ -310,8 +310,10 @@ void ComputeTurbulentViscosityLES (Vector<std::unique_ptr<MultiFab>>& Tau_lev,
                    {
                        int indx   = n;
                        int indx_v = indx + offset;
+                       // The vertical diffusivity must follow the vertical viscosity;
+                       // with anisotropic mixing (mix_isotropic = false) Mom_v != Mom_h
                        mu_turb(i,j,k,indx)   = mu_turb(i,j,k,EddyDiff::Mom_h) * fac_ptr[indx-1];
-                       mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,indx);
+                       mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,EddyDiff::Mom_v) * fac_ptr[indx-1];
                    });
                 }
                 break;
@@ -324,7 +326,7 @@ void ComputeTurbulentViscosityLES (Vector<std::unique_ptr<MultiFab>>& Tau_lev,
                     // NOTE: Theta_h, Theta_v have already been set for Deardorff
                     if (!(indx_v == EddyDiff::Theta_v && use_KE)) {
                         mu_turb(i,j,k,indx)   = mu_turb(i,j,k,EddyDiff::Mom_h) * fac_ptr[indx-1];
-                        mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,indx);
+                        mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,EddyDiff::Mom_v) * fac_ptr[indx-1];
                     }
                 });
                 break;
@@ -529,8 +531,10 @@ void ComputeTurbulentViscosityLES_EB (Vector<std::unique_ptr<MultiFab>>& Tau_lev
                    {
                        int indx   = n;
                        int indx_v = indx + offset;
+                       // The vertical diffusivity must follow the vertical viscosity;
+                       // with anisotropic mixing (mix_isotropic = false) Mom_v != Mom_h
                        mu_turb(i,j,k,indx)   = mu_turb(i,j,k,EddyDiff::Mom_h) * fac_ptr[indx-1];
-                       mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,indx);
+                       mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,EddyDiff::Mom_v) * fac_ptr[indx-1];
                    });
                 }
                 break;
@@ -543,7 +547,7 @@ void ComputeTurbulentViscosityLES_EB (Vector<std::unique_ptr<MultiFab>>& Tau_lev
                     // NOTE: Theta_h, Theta_v have already been set for Deardorff
                     if (!(indx_v == EddyDiff::Theta_v && use_KE)) {
                         mu_turb(i,j,k,indx)   = mu_turb(i,j,k,EddyDiff::Mom_h) * fac_ptr[indx-1];
-                        mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,indx);
+                        mu_turb(i,j,k,indx_v) = mu_turb(i,j,k,EddyDiff::Mom_v) * fac_ptr[indx-1];
                     }
                 });
                 break;
