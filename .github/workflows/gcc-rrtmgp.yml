@@ -66,6 +66,13 @@ jobs:
       uses: spack/setup-spack@v3
       with:
         spack_path: ${{ github.workspace }}/spack_install_dir
+        # Pinned so the package recipes stop drifting between runs. Jobs have been
+        # installing OpenMPI with different hashes (recipes on develop plus reuse
+        # from the public build cache); different installed headers make ccache
+        # miss every file that includes mpi.h. The pin removes the drift over
+        # time; identical specs within one run need a project build cache.
+        spack_ref: cd657f2c90770f5722715f6a0f95d7a5a359359b
+        packages_ref: fa11df3be41f58bac19b73346422e06b103ee5b5
 
     - name: Install CA certificates
       run: |
@@ -86,6 +93,7 @@ jobs:
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
         spack concretize -f
         spack install --deprecated
+        spack find -lv openmpi hdf5 netcdf-c parallel-netcdf
 
     - name: Configure Project and Generate Build System
       run: |
