@@ -65,6 +65,11 @@ jobs:
       uses: spack/setup-spack@v3
       with:
         spack_path: ${{ github.workspace }}/spack_install_dir
+        # Pinned: with both on develop and reuse-based concretization, jobs in the
+        # same run installed OpenMPI with different hashes, so the installed
+        # headers differed and ccache missed every TU that includes mpi.h.
+        spack_ref: cd657f2c90770f5722715f6a0f95d7a5a359359b
+        packages_ref: fa11df3be41f58bac19b73346422e06b103ee5b5
 
     - name: Install CA certificates
       run: |
@@ -85,6 +90,7 @@ jobs:
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
         spack concretize -f
         spack install --deprecated
+        spack find -lv openmpi hdf5 netcdf-c parallel-netcdf
 
     - name: Configure Project and Generate Build System
       run: |
