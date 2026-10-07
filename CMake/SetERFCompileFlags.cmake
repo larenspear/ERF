@@ -14,6 +14,13 @@ function(set_erf_compile_flags target)
       # Avoid notes about -faligned-new with GCC > 7
       list(APPEND ERF_CXX_FLAGS "-faligned-new")
     endif()
+    # In a single-precision build, warn when a Real is silently widened to
+    # double (a bare double literal, or an unqualified C math call such as
+    # exp() that only has a double overload). This is what broke the SINGLE
+    # build in ERF_ComputeDiffusivityMYJ.cpp; the flag is silent in DOUBLE.
+    if(ERF_PRECISION STREQUAL "SINGLE" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
+      list(APPEND ERF_CXX_FLAGS "-Wdouble-promotion")
+    endif()
   endif()
 
   # Add our extra flags according to language
