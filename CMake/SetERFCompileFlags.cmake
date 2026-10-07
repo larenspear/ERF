@@ -14,6 +14,20 @@ function(set_erf_compile_flags target)
       # Avoid notes about -faligned-new with GCC > 7
       list(APPEND ERF_CXX_FLAGS "-faligned-new")
     endif()
+    # SURVEY (measuring branch, not for merge): candidate warnings, counted per
+    # flag from the CI log. hip.yml already builds clean with most of these
+    # under Clang; this measures them under GCC.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
+      list(APPEND ERF_CXX_FLAGS
+        "-Wshadow" "-Wfloat-conversion" "-Wnull-dereference" "-Woverloaded-virtual"
+        "-Wextra-semi" "-Wunreachable-code" "-Wimplicit-fallthrough")
+      if(ERF_PRECISION STREQUAL "SINGLE")
+        list(APPEND ERF_CXX_FLAGS "-Wdouble-promotion")
+      endif()
+    endif()
+    if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+      list(APPEND ERF_CXX_FLAGS "-Wduplicated-cond" "-Wlogical-op")
+    endif()
   endif()
 
   # Add our extra flags according to language
