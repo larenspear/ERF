@@ -1,0 +1,142 @@
+name: AWS stack
+
+# Builds and tests ERF inside a container that matches an AWS HPC node (Amazon Linux
+# 2023, EFA libfabric + Open MPI), on GitHub's runners. Catches "does not build on AWS"
+# without needing an AWS account. Merge tier.
+on:
+  push:
+    branches: [development]
+    paths-ignore:
+      - Docs/**
+      - README.rst
+      - license.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-aws
+  cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/erf-aws-ci
+
+jobs:
+  image:
+    name: Build the AWS environment image
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: meta
+        run: echo "tag=$(sha256sum Build/aws/Dockerfile | cut -c1-12)" >> "$GITHUB_OUTPUT"
+      # The registry cache backend needs the docker-container buildx driver.
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The tag is a hash of the Dockerfile: an unchanged Dockerfile is a no-op push
+      # (layers already in the registry), a changed one builds a new image.
+      - uses: docker/build-push-action@v6
+        with:
+          context: Build/aws
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }},${{ env.IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+
+  Build-And-Test-AWS:
+    name: Amazon Linux 2023 - EFA Open MPI - DOUBLE
+    needs: image
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/erf-aws-ci:${{ needs.image.outputs.tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Show the stack
+        run: |
+          cat /etc/os-release | head -2
+          gcc --version | head -1
+          cmake --version | head -1
+          mpicxx --version | head -1
+          ompi_info | grep -E "Open MPI:|Configure command line" | head -2
+          fi_info --version 2>/dev/null | head -1 || true
+
+      # ccache per matrix variant, written only from development; see ci.yml for how it works.
+      - name: Restore Cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.workflow }}-${{ github.job }}-DOUBLE-git-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ github.workflow }}-${{ github.job }}-DOUBLE-git-
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
+            -DAMReX_ASSERTIONS:BOOL=ON \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+            -DERF_DIM:STRING=3 \
+            -DERF_ENABLE_MPI:BOOL=ON \
+            -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
+            '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
+            -DERF_ENABLE_PARTICLES:BOOL=ON \
+            -DERF_ENABLE_TESTS:BOOL=ON \
+            -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
+            -DERF_ENABLE_FCOMPARE:BOOL=ON
+
+      - name: Build
+        run: |
+          export CCACHE_COMPRESS=1
+          export CCACHE_COMPRESSLEVEL=10
+          export CCACHE_MAXSIZE=600M
+          ccache -z
+          build_start=$(date +%s)
+          set -o pipefail
+          cmake --build build --parallel "$(nproc)" 2>&1 | tee build-output.txt
+          ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ccache -s | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save Cache
+        if: always() && github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.workflow }}-${{ github.job }}-DOUBLE-git-${{ github.sha }}
+
+      - name: Report
+        run: |
+          grep -Ei "warning:|error:" build-output.txt \
+            | grep -Ev "Submodules/(amrex|googletest)" | sort | uniq \
+            | awk 'BEGIN{i=0}{print $0}{i++}END{print "Warnings: "i}' > build-output-warnings.txt
+          cat build-output-warnings.txt
+          test "$(tail -n 1 build-output-warnings.txt | awk '{print $2}')" = "0"
+
+      - name: Run Serial Unit Tests
+        working-directory: build
+        run: ctest -L unit -LE parallel --output-on-failure --no-tests=error
+
+      - name: Run Parallel Tests
+        working-directory: build
+        run: ctest -L parallel --output-on-failure --no-tests=error
+
+      - name: Regression Tests
+        working-directory: build
+        run: ctest -L regression --output-on-failure --no-tests=error
