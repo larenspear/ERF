@@ -34,13 +34,34 @@ jobs:
           - name: bound-check
             cmake_extra: -DAMReX_BOUND_CHECK:BOOL=ON
             cxx_flags: ""
+            test_opts: ""
+            malloc_perturb: ""
           - name: sanitizers
             cmake_extra: ""
             cxx_flags: "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+            test_opts: ""
+            malloc_perturb: ""
+          # Hardware FPE traps: a NaN or Inf aborts with a backtrace where it is produced
+          # instead of propagating. abort_on_unused_inputs fails a case whose inputs file
+          # names a parameter nothing reads (typos, dead parameters).
+          - name: fpe-traps
+            cmake_extra: ""
+            cxx_flags: ""
+            test_opts: "amrex.fpe_trap_invalid=1 amrex.fpe_trap_zero=1 amrex.fpe_trap_overflow=1 amrex.abort_on_unused_inputs=1"
+            malloc_perturb: ""
+          # Uninitialised memory and standard-library misuse: stack variables start as a
+          # garbage pattern (GCC 12+), the heap likewise via MALLOC_PERTURB_, and libstdc++
+          # debug mode checks iterators and container bounds.
+          - name: uninit-stdlib
+            cmake_extra: -DCMAKE_CXX_COMPILER=g++-12
+            cxx_flags: "-ftrivial-auto-var-init=pattern -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC"
+            test_opts: ""
+            malloc_perturb: "165"
     env:
       # Open MPI leaks at shutdown by design; a leak report would fail every test.
       ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
       UBSAN_OPTIONS: print_stacktrace=1
+      MALLOC_PERTURB_: ${{ matrix.malloc_perturb }}
     steps:
     - uses: actions/checkout@v7
       with:
@@ -48,6 +69,10 @@ jobs:
 
     - name: Install Dependencies
       run: Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
+
+    - name: Install GCC 12
+      if: matrix.name == 'uninit-stdlib'
+      run: sudo apt-get install -y --no-install-recommends g++-12
 
     - name: Install CCache
       run: Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
@@ -75,6 +100,7 @@ jobs:
           -DERF_ENABLE_PARTICLES:BOOL=ON \
           -DERF_ENABLE_TESTS:BOOL=ON \
           -DERF_ENABLE_FCOMPARE:BOOL=ON \
+          "-DERF_TEST_EXTRA_RUNTIME_OPTIONS=${{ matrix.test_opts }}" \
           ${{ matrix.cmake_extra }}
 
     - name: Build
