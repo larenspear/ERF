@@ -18,9 +18,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        particles: [OFF, ON]
+        # PR tier: one build (DOUBLE, particles ON). All three, with the downloadable artifact, on merge.
+        particles: ${{ fromJSON(github.event_name == 'pull_request' && '["ON"]' || '["OFF", "ON"]') }}
         particles_precision: [DOUBLE, SINGLE]
-        mesh_precision: [DOUBLE, SINGLE]
+        mesh_precision: ${{ fromJSON(github.event_name == 'pull_request' && '["DOUBLE"]' || '["DOUBLE", "SINGLE"]') }}
         mpi: [ON]
         exclude:
           # Only matching mesh/particle precisions are tested, i.e. DOUBLE mesh
@@ -177,6 +178,7 @@ jobs:
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: Upload artifact (from build tree)
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: ERF-win64-Release-mpi-${{ matrix.mpi }}-mesh-${{ matrix.mesh_precision }}-particles-${{ matrix.particles }}-${{ matrix.particles_precision }}
