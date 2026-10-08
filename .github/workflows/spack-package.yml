@@ -1,0 +1,84 @@
+name: Spack package
+
+# Builds ERF through its Spack recipe (spack/spack-packages: erf) so a change in ERF's
+# CMake that the recipe does not follow is caught here rather than at the next release.
+# Manual runs can point at a fork and branch of spack-packages to test a recipe change
+# before it is merged there.
+on:
+  workflow_dispatch:
+    inputs:
+      packages_repository:
+        description: spack-packages repository (owner/name)
+        default: spack/spack-packages
+      packages_ref:
+        description: spack-packages git ref
+        default: develop
+      spec:
+        description: spec to install (manual runs build this one spec; the weekly run builds the matrix)
+        default: erf@develop +mpi+particles
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC, against spack-packages develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.sha }}-spack-package
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: spack install ${{ matrix.spec }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # The easy cases: what a user types. A manual run builds only the spec it was given.
+        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop", "erf@develop +netcdf+noahmp", "erf@develop ~mpi", "erf@develop +cuda cuda_arch=80"]') }}
+    env:
+      SPEC: ${{ matrix.spec }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        uses: ./.github/actions/free-space-ubuntu
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip \
+            libopenmpi-dev openmpi-bin cmake pkg-config
+
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          packages_repository: ${{ inputs.packages_repository || 'spack/spack-packages' }}
+          packages_ref: ${{ inputs.packages_ref || 'develop' }}
+
+      # Use the runner's compilers, MPI, CMake and Python instead of building them: Spack
+      # should build only AMReX and ERF here.
+      - name: Register externals
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack compiler find
+          spack external find --all --not-buildable
+          spack config get packages | head -40
+
+      - name: Recipe checks
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack --version
+          spack audit packages erf
+          spack spec -I "$SPEC"
+
+      - name: spack install
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack install --verbose --fail-fast "$SPEC"
+
+      - name: Stand-alone tests
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack test run --alias erf-ci erf
+          spack test results -l erf-ci
