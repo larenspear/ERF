@@ -1,0 +1,70 @@
+name: Spack package
+
+# Builds ERF through its Spack recipe (spack/spack-packages: erf) so a change in ERF's
+# CMake that the recipe does not follow is caught here rather than at the next release.
+# Manual runs can point at a fork and branch of spack-packages to test a recipe change
+# before it is merged there.
+on:
+  workflow_dispatch:
+    inputs:
+      packages_repository:
+        description: spack-packages repository (owner/name)
+        default: spack/spack-packages
+      packages_ref:
+        description: spack-packages git ref
+        default: develop
+      spec:
+        description: spec to install
+        default: erf@develop +mpi+particles
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC, against spack-packages develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.sha }}-spack-package
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: spack install ${{ inputs.spec || 'erf@develop +mpi+particles' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    env:
+      SPEC: ${{ inputs.spec || 'erf@develop +mpi+particles' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        uses: ./.github/actions/free-space-ubuntu
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip
+
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          packages_repository: ${{ inputs.packages_repository || 'spack/spack-packages' }}
+          packages_ref: ${{ inputs.packages_ref || 'develop' }}
+
+      - name: Recipe checks
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack --version
+          spack audit packages erf
+          spack spec -I "$SPEC"
+
+      - name: spack install
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack install --verbose --fail-fast "$SPEC"
+
+      - name: Smoke run
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack load erf
+          erf_exec --help 2>&1 | head -5 || true
+          ls "$(spack location -i erf)/bin"
