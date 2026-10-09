@@ -101,13 +101,14 @@ function(add_test_r TEST_NAME TEST_DIR TEST_EXE PLTFILE)
     setup_test()
 
     set(RUNTIME_OPTIONS "${ADD_TEST_R_RUNTIME_OPTIONS}")
-    # Options every regression test gets, set at configure time; CI uses this to run the
-    # suite with AMReX's FPE traps and abort_on_unused_inputs on.
-    if(ERF_TEST_EXTRA_RUNTIME_OPTIONS)
-      string(APPEND RUNTIME_OPTIONS " ${ERF_TEST_EXTRA_RUNTIME_OPTIONS}")
-    endif()
     if(NOT "${ADD_TEST_R_INPUT_SOUNDING}" STREQUAL "")
       string(APPEND RUNTIME_OPTIONS "erf.input_sounding_file=${CURRENT_TEST_BINARY_DIR}/${ADD_TEST_R_INPUT_SOUNDING}")
+    endif()
+    # Options every regression test gets, set at configure time; CI uses this to run the
+    # suite with AMReX's FPE traps and abort_on_unused_inputs on. Appended last, with its
+    # own surrounding spaces: the per-test options above rely on trailing spaces.
+    if(ERF_TEST_EXTRA_RUNTIME_OPTIONS)
+      string(APPEND RUNTIME_OPTIONS " ${ERF_TEST_EXTRA_RUNTIME_OPTIONS} ")
     endif()
 
     resolve_test_exe("${TEST_DIR}" "${TEST_EXE}" TEST_EXE)

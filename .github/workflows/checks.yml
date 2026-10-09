@@ -144,6 +144,8 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ matrix.name }}-backtraces
-        path: build/Tests/**/Backtrace.*
+        name: ${{ matrix.name }}-logs
+        path: |
+          build/Tests/**/Backtrace.*
+          build/Tests/**/*.log
         if-no-files-found: ignore
