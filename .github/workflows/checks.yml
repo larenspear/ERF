@@ -41,6 +41,8 @@ jobs:
             cxx_flags: "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
             test_opts: ""
             malloc_perturb: ""
+            # ASan-instrumented compiles need several GB each; four at once ran the VM out of memory.
+            jobs: 2
           # Hardware FPE traps: a NaN or Inf aborts with a backtrace where it is produced
           # instead of propagating. abort_on_unused_inputs fails a case whose inputs file
           # names a parameter nothing reads (typos, dead parameters).
@@ -49,6 +51,7 @@ jobs:
             cxx_flags: ""
             test_opts: "amrex.fpe_trap_invalid=1 amrex.fpe_trap_zero=1 amrex.fpe_trap_overflow=1 amrex.abort_on_unused_inputs=1"
             malloc_perturb: ""
+            jobs: 4
           # Uninitialised memory and standard-library misuse: stack variables start as a
           # garbage pattern (GCC 12+), the heap likewise via MALLOC_PERTURB_, and libstdc++
           # debug mode checks iterators and container bounds.
@@ -57,6 +60,7 @@ jobs:
             cxx_flags: "-ftrivial-auto-var-init=pattern -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC"
             test_opts: ""
             malloc_perturb: "165"
+            jobs: 4
     env:
       # Open MPI leaks at shutdown by design; a leak report would fail every test.
       ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
@@ -111,7 +115,7 @@ jobs:
         ccache -z
         build_start=$(date +%s)
         set -o pipefail
-        cmake --build build --parallel "$(nproc)" 2>&1 | tee build-output.txt
+        cmake --build build --parallel ${{ matrix.jobs }} 2>&1 | tee build-output.txt
         ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s"
         echo '```' >> "$GITHUB_STEP_SUMMARY"
         ccache -s | tee -a "$GITHUB_STEP_SUMMARY"
