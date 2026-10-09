@@ -90,6 +90,11 @@ jobs:
         export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
         spack env create erf_netcdf
         spack env activate erf_netcdf
+        # Every job must install the identical spec. Spack concretizes for the host
+        # CPU by default (seen: x86_64_v4, icelake, zen2, one per runner type), which
+        # changes the hash, the install path, and with it every ccache key that
+        # includes mpi.h. x86_64_v3 (AVX2) runs on every GitHub runner.
+        spack config add "packages:all:require:target=x86_64_v3"
         spack add netcdf-c netcdf-fortran parallel-netcdf hdf5 openmpi
         spack concretize -f
         spack install --deprecated
