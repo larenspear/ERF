@@ -1,0 +1,200 @@
+name: RedDevelopment
+
+# Tells someone when development goes red, and says when it is green again.
+#
+# Merges land before their CI finishes, so a red development is normal for a
+# while and nobody is watching the Actions tab. This runs after each build
+# workflow completes on development:
+#   - on failure: comment on the merged PR naming the failing jobs and tests,
+#     and open (or add to) one "development is red" issue;
+#   - on success: if that issue is open and every workflow it names is now
+#     green at this commit, close it.
+# Only push runs on the default branch count; PR runs are ignored. A manual
+# dispatch with run_id re-processes one run (for testing, or to re-notify).
+#
+# Everything here runs on fork-reachable data (PR titles, branch names), so
+# the logic lives in github-script where the payload is data, not shell text.
+
+on:
+  workflow_run:
+    workflows:
+      - ERF CI
+      - Linux GCC
+      - Linux GCC NetCDF RRTMGP
+      - ERF CI (cuda)
+      - ERF CI (hip)
+      - ERF CI (sycl)
+      - MacOS
+      - Windows
+      - Windows MPI
+      - codespell
+      - Style
+    types: [completed]
+    branches: [development]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Workflow run id to process as if it had just completed"
+        required: true
+
+# One at a time: several workflows for one commit complete within minutes of
+# each other, and the find-or-create of the tracking issue must not race.
+concurrency:
+  group: red-development
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  notify:
+    name: Report development status
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/github-script@v9
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const MARKER = '<!-- erf-red-development -->';
+            const RED_PREFIX = '<!-- red:';           // one per workflow the issue tracks
+
+            // ---- which run are we looking at ----------------------------------
+            let run = context.payload.workflow_run;
+            if (!run) {
+              const { data } = await github.rest.actions.getWorkflowRun({
+                owner, repo, run_id: Number(process.env.RUN_ID),
+              });
+              run = data;
+            }
+            const defaultBranch = context.payload.repository.default_branch;
+            if (run.event !== 'push' || run.head_branch !== defaultBranch
+                || !run.head_repository || run.head_repository.full_name !== `${owner}/${repo}`) {
+              core.info(`Not a push to ${defaultBranch} of this repository (${run.event} on ${run.head_branch}); nothing to do.`);
+              return;
+            }
+            const sha = run.head_sha, short = sha.slice(0, 7);
+            const workflow = run.name;
+            core.info(`${workflow} at ${short}: ${run.conclusion}`);
+
+            // ---- the tracking issue --------------------------------------------
+            async function findIssue() {
+              const q = `repo:${owner}/${repo} is:issue is:open in:title "development is red"`;
+              const { data } = await github.rest.search.issuesAndPullRequests({ q, per_page: 5 });
+              return data.items.find(i => (i.body || '').includes(MARKER)) || null;
+            }
+            const trackedWorkflows = body => [...(body || '').matchAll(/<!-- red:(.*?) -->/g)].map(m => m[1]);
+
+            // ---- red -------------------------------------------------------------
+            if (run.conclusion === 'failure' || run.conclusion === 'timed_out') {
+              const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+                owner, repo, run_id: run.id, per_page: 100,
+              });
+              const failedJobs = jobsData.jobs.filter(j => j.conclusion === 'failure' || j.conclusion === 'timed_out');
+
+              // Pull the failing test names (ctest's "(Failed)"/"(Timeout)" lines) or the
+              // first compile error out of each failed job's log. Best effort only.
+              const details = [];
+              for (const job of failedJobs.slice(0, 6)) {
+                let lines = [];
+                try {
+                  const res = await github.request('GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs', {
+                    owner, repo, job_id: job.id,
+                  });
+                  const text = typeof res.data === 'string' ? res.data : '';
+                  lines = text.split('\n')
+                    .map(l => l.replace(/^\S+\s/, '').replace(/\s*\.{4,}\s*/g, ' ').trim())
+                    .filter(l => /\((Failed|Timeout|Not Run)\)|\*\*\*(Failed|Timeout|Exception)| error: |error #|AddressSanitizer|runtime error:/.test(l)
+                                 && !/lto-wrapper|Submodules\/(amrex|googletest)/.test(l));
+                  lines = [...new Set(lines)].slice(0, 8);
+                } catch (e) {
+                  core.info(`Could not read the log of job ${job.id}: ${e.message}`);
+                }
+                const steps = job.steps.filter(s => s.conclusion === 'failure').map(s => s.name).join(', ');
+                details.push({ job, steps, lines });
+              }
+
+              const lines = [`**${workflow}** failed on \`${defaultBranch}\` at ${short}: ${run.html_url}`, ''];
+              for (const d of details) {
+                lines.push(`- ${d.job.name}` + (d.steps ? ` (step: ${d.steps})` : '') + `: ${d.job.html_url}`);
+                for (const l of d.lines) lines.push('  - `' + l.slice(0, 160).replace(/`/g, "'") + '`');
+              }
+              if (failedJobs.length > details.length) lines.push(`- and ${failedJobs.length - details.length} more failed job(s)`);
+              const report = lines.join('\n');
+
+              // The PR that was merged in this commit, if any.
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha });
+              const pr = prs.find(p => p.merged_at) || prs[0];
+              if (pr) {
+                const tag = `<!-- erf-red-development run:${run.id} -->`;
+                const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
+                if (!comments.some(c => (c.body || '').includes(tag))) {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: pr.number,
+                    body: `${tag}\nAfter this was merged, ${report}\n\nIf this is yours, a follow-up fix is welcome; if it is not, say so here.`,
+                  });
+                  core.info(`Commented on PR #${pr.number}`);
+                }
+              }
+
+              const issue = await findIssue();
+              const redTag = `${RED_PREFIX}${workflow} -->`;
+              if (!issue) {
+                const { data: created } = await github.rest.issues.create({
+                  owner, repo,
+                  title: `development is red: ${workflow} at ${short}`,
+                  body: [MARKER, redTag, '',
+                         `Automatic tracker: ${defaultBranch} has at least one failing build workflow.`,
+                         'This issue closes itself when every workflow listed here is green again on a later commit.', '',
+                         report,
+                         pr ? `\nMerged in #${pr.number}.` : ''].join('\n'),
+                });
+                core.info(`Opened issue #${created.number}`);
+              } else {
+                if (!trackedWorkflows(issue.body).includes(workflow)) {
+                  await github.rest.issues.update({ owner, repo, issue_number: issue.number, body: issue.body + '\n' + redTag });
+                }
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: issue.number,
+                  body: report + (pr ? `\n\nMerged in #${pr.number}.` : ''),
+                });
+                core.info(`Added to issue #${issue.number}`);
+              }
+              return;
+            }
+
+            // ---- green -----------------------------------------------------------
+            if (run.conclusion !== 'success') {
+              core.info(`Conclusion ${run.conclusion}: nothing to do.`);
+              return;
+            }
+            const issue = await findIssue();
+            if (!issue) { core.info('No open tracker; nothing to do.'); return; }
+            const tracked = trackedWorkflows(issue.body);
+
+            // Close only when every workflow the tracker names has a green push run at
+            // this commit. Older commits cannot close it; a workflow that did not run
+            // for this commit (paths-ignore) keeps it open.
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+              owner, repo, head_sha: sha, event: 'push', per_page: 100,
+            });
+            const latestByName = {};
+            for (const r of runs) {
+              if (!latestByName[r.name] || new Date(r.created_at) > new Date(latestByName[r.name].created_at)) latestByName[r.name] = r;
+            }
+            const notGreen = tracked.filter(w => !latestByName[w] || latestByName[w].conclusion !== 'success');
+            if (notGreen.length > 0) {
+              core.info(`Still waiting on: ${notGreen.join(', ')}`);
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: issue.number,
+              body: `${defaultBranch} is green again at ${short} (${tracked.join(', ')}). Closing.`,
+            });
+            await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+            core.info(`Closed issue #${issue.number}`);
