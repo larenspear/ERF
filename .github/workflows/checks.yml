@@ -1,11 +1,14 @@
 name: Runtime checks
 
-# Merge tier. Two builds of the Linux GCC / OpenMPI DOUBLE configuration with runtime
+# Merge tier. Four builds of the Linux GCC / OpenMPI DOUBLE configuration with runtime
 # checking turned on, running the unit and regression suites:
-#   bound-check: AMReX_BOUND_CHECK=ON, every Array4(i,j,k) access in a kernel is checked
-#   sanitizers:  AddressSanitizer + UndefinedBehaviorSanitizer on the whole build
-# Both are slower than the plain build (roughly 2x on the tests), which is why they run
-# on merge to development rather than on every PR.
+#   bound-check:   AMReX_BOUND_CHECK=ON, every Array4(i,j,k) access in a kernel is checked
+#   sanitizers:    AddressSanitizer + UndefinedBehaviorSanitizer on the whole build
+#   fpe-traps:     hardware floating-point traps + abort on unused inputs
+#   uninit-stdlib: pattern-initialised memory + libstdc++ debug mode
+# All are slower than the plain build (roughly 2x on the tests), which is why they run
+# on merge to development rather than on every PR. workflow_dispatch can run one
+# variant by name.
 on:
   push:
     branches: [development]
@@ -14,6 +17,10 @@ on:
       - README.rst
       - license.txt
   workflow_dispatch:
+    inputs:
+      variant:
+        description: "Run only this matrix entry (bound-check, sanitizers, fpe-traps, uninit-stdlib); empty = all"
+        default: ""
 
 permissions:
   contents: read
@@ -23,25 +30,40 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 jobs:
-  check:
-    name: ${{ matrix.name }}
+  plan:
+    # The variant table lives here. On a workflow_dispatch with inputs.variant only
+    # that entry is kept. The check job receives the result as JSON because a matrix
+    # cannot be filtered in place: an include entry that no longer matches an axis
+    # value is simply added back as a new combination.
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        env:
+          VARIANT: ${{ github.event.inputs.variant }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, yaml
+          variants = yaml.safe_load('''
           - name: bound-check
             cmake_extra: -DAMReX_BOUND_CHECK:BOOL=ON
             cxx_flags: ""
+            rwdi_flags: "-O2 -g -DNDEBUG"
             test_opts: ""
             malloc_perturb: ""
+            jobs: 4
           - name: sanitizers
             cmake_extra: ""
             cxx_flags: "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+            # ASan-instrumented compiles need several GB each: four at once ran the 7 GB VM
+            # out of memory, and two at once still did at -O2 -g (runner shut down at 41%).
+            # -O1 keeps the sanitizer checks, -g1 keeps file:line in reports; both cut
+            # compile memory sharply.
+            rwdi_flags: "-O1 -g1 -DNDEBUG"
             test_opts: ""
             malloc_perturb: ""
-            # ASan-instrumented compiles need several GB each; four at once ran the VM out of memory.
             jobs: 2
           # Hardware FPE traps: a NaN or Inf aborts with a backtrace where it is produced
           # instead of propagating. abort_on_unused_inputs fails a case whose inputs file
@@ -49,6 +71,7 @@ jobs:
           - name: fpe-traps
             cmake_extra: ""
             cxx_flags: ""
+            rwdi_flags: "-O2 -g -DNDEBUG"
             test_opts: "amrex.fpe_trap_invalid=1 amrex.fpe_trap_zero=1 amrex.fpe_trap_overflow=1 amrex.abort_on_unused_inputs=1"
             malloc_perturb: ""
             jobs: 4
@@ -58,9 +81,28 @@ jobs:
           - name: uninit-stdlib
             cmake_extra: -DCMAKE_CXX_COMPILER=g++-12
             cxx_flags: "-ftrivial-auto-var-init=pattern -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC"
+            rwdi_flags: "-O2 -g -DNDEBUG"
             test_opts: ""
             malloc_perturb: "165"
             jobs: 4
+          ''')
+          want = os.environ.get('VARIANT', '')
+          picked = [v for v in variants if not want or v['name'] == want]
+          assert picked, f"no variant named {want!r}"
+          print("running:", ", ".join(v['name'] for v in picked))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write("include=" + json.dumps(picked) + "\n")
+          EOF
+
+  check:
+    name: ${{ matrix.name }}
+    needs: plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.include) }}
     env:
       # Open MPI leaks at shutdown by design; a leak report would fail every test.
       ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
@@ -97,6 +139,7 @@ jobs:
           -DAMReX_ASSERTIONS:BOOL=ON \
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}" \
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="${{ matrix.rwdi_flags }}" \
           -DERF_DIM:STRING=3 \
           -DERF_ENABLE_MPI:BOOL=ON \
           -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
