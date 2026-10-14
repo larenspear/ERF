@@ -6,16 +6,13 @@ name: Runtime checks
 #   sanitizers:    AddressSanitizer + UndefinedBehaviorSanitizer on the whole build
 #   fpe-traps:     hardware floating-point traps + abort on unused inputs
 #   uninit-stdlib: pattern-initialised memory + libstdc++ debug mode
-# All are slower than the plain build (roughly 2x on the tests), which is why they run
-# on merge to development rather than on every PR. workflow_dispatch can run one
-# variant by name.
+# All are slower than the plain build (roughly 2x on the tests) and together cost
+# about five runner-hours, so they run nightly against development rather than on
+# every merge; a merge that breaks one shows up the next morning. workflow_dispatch
+# can run one variant by name at any time.
 on:
-  push:
-    branches: [development]
-    paths-ignore:
-      - Docs/**
-      - README.rst
-      - license.txt
+  schedule:
+    - cron: '0 5 * * *'
   workflow_dispatch:
     inputs:
       variant:
