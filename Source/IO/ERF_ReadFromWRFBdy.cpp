@@ -973,7 +973,7 @@ read_and_convert_from_wrfbdy (const int itime, const std::string& nc_bdy_file,
             }
         }
 
-        long num_pts;
+        amrex::Long num_pts;
 
         // Now fill the data
         if (ParallelDescriptor::IOProcessor())

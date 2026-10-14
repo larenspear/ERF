@@ -160,9 +160,9 @@ SLM::writeNCHeader (ncutils::NCFile &nc_file, const amrex::Geometry &geom)
 
         amrex::Gpu::Device::synchronize();
 
-        nc_file.var("x").put(x_arr.p, {static_cast<unsigned long>(box.smallEnd()[0])}, {static_cast<unsigned long>(box.length()[0])});
-        nc_file.var("y").put(y_arr.p, {static_cast<unsigned long>(box.smallEnd()[1])}, {static_cast<unsigned long>(box.length()[1])});
-        nc_file.var("z").put(z_arr.p, {0}, {static_cast<unsigned long>(box.length()[2])});
+        nc_file.var("x").put(x_arr.p, {static_cast<size_t>(box.smallEnd()[0])}, {static_cast<size_t>(box.length()[0])});
+        nc_file.var("y").put(y_arr.p, {static_cast<size_t>(box.smallEnd()[1])}, {static_cast<size_t>(box.length()[1])});
+        nc_file.var("z").put(z_arr.p, {0}, {static_cast<size_t>(box.length()[2])});
     }
 
     amrex::ParallelDescriptor::Barrier();
@@ -314,11 +314,11 @@ void SLM::writeMFtoNC (ncutils::NCFile &nc_file, const MultiFab* mf,
 
             // TODO: this assumes z always start at 0.. handle box.smallEnd()[2] better for 2D/3D MFs
             std::vector<size_t> starts = {0,
-                                          static_cast<unsigned long>(box.smallEnd()[1]),
-                                          static_cast<unsigned long>(box.smallEnd()[0])};
-            std::vector<size_t> counts = {static_cast<unsigned long>(box.length()[2]),
-                                          static_cast<unsigned long>(box.length()[1]),
-                                          static_cast<unsigned long>(box.length()[0])};
+                                          static_cast<size_t>(box.smallEnd()[1]),
+                                          static_cast<size_t>(box.smallEnd()[0])};
+            std::vector<size_t> counts = {static_cast<size_t>(box.length()[2]),
+                                          static_cast<size_t>(box.length()[1]),
+                                          static_cast<size_t>(box.length()[0])};
 
             if (var_2d) {
                 starts.erase(starts.begin());

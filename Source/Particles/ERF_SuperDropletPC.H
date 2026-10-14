@@ -433,7 +433,7 @@ class SuperDropletPC : public ERFPC
 
         amrex::Real m_mass_change_cfl; /*!< CFL for phase change equation */
         SDMassChangeTIMethod m_mass_change_ti; /*!< time integrator for mass change ODE */
-        long m_num_unconverged_particles; /*!< total number of unconverged particles */
+        amrex::Long m_num_unconverged_particles; /*!< total number of unconverged particles */
 
         /* Ventilation factor for phase change (water species) */
         bool m_mass_change_ventilation; /*!< include ventilation factor in phase change */

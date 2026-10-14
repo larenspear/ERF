@@ -697,7 +697,7 @@ void SLM::init_from_inputs ()
         ncutils::NCVar rad_time = rad_forcing_ncf.var("time");
         num_rad_times = rad_time.shape()[0];
         rad_times.resize(num_rad_times);
-        rad_time.get(rad_times.dataPtr(), {0}, {static_cast<unsigned long>(num_rad_times)});
+        rad_time.get(rad_times.dataPtr(), {0}, {static_cast<size_t>(num_rad_times)});
 
         amrex::Real start_rad_time = rad_times[0];
         for (int i = 0; i < num_rad_times; i++)
@@ -742,11 +742,11 @@ void SLM::init_from_inputs ()
                 AMREX_ALWAYS_ASSERT(dataPtr != nullptr);
 
                 std::vector<size_t> starts = {0,
-                                              static_cast<unsigned long>(box.loVect()[1]),
-                                              static_cast<unsigned long>(box.loVect()[0])};
-                std::vector<size_t> counts = {static_cast<unsigned long>(num_rad_times),
-                                              static_cast<unsigned long>(box.length()[1]),
-                                              static_cast<unsigned long>(box.length()[0])};
+                                              static_cast<size_t>(box.loVect()[1]),
+                                              static_cast<size_t>(box.loVect()[0])};
+                std::vector<size_t> counts = {static_cast<size_t>(num_rad_times),
+                                              static_cast<size_t>(box.length()[1]),
+                                              static_cast<size_t>(box.length()[0])};
 
                 amrex::Print() << "  -- reading {" << counts[0] << "," << counts[1] << "," << counts[2] << "} at index {" << starts[0] << "," << starts[1] << "," << starts[2] << "}" << std::endl;
                 rad_var.get(dataPtr, starts, counts);

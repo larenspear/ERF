@@ -260,7 +260,7 @@ rrtmgp_initialize (gas_concs_t& gas_concs_k,
     const size_t ngpt = std::max(k_dist_sw_k->get_ngpt(),k_dist_lw_k->get_ngpt());
     const size_t ncol = gas_concs_k.ncol;
     const size_t nlay = gas_concs_k.nlay;
-    auto my_size_ref  = static_cast<unsigned long>(nvar * ncol * nlay * ngpt);
+    auto my_size_ref  = static_cast<size_t>(nvar * ncol * nlay * ngpt);
     pool_t::init(my_size_ref);
     pool_max_ncol = ncol;
     pool_max_nlay = nlay;
@@ -423,7 +423,7 @@ rrtmgp_main (const int ncol, const int nlay,
         const size_t ngpt = std::max(k_dist_sw_k->get_ngpt(), k_dist_lw_k->get_ngpt());
         const size_t new_max_ncol = std::max(pool_max_ncol, static_cast<size_t>(ncol));
         const size_t new_max_nlay = std::max(pool_max_nlay, static_cast<size_t>(nlay));
-        auto my_size_ref = static_cast<unsigned long>(pool_nvar * new_max_ncol * new_max_nlay * ngpt);
+        auto my_size_ref = static_cast<size_t>(pool_nvar * new_max_ncol * new_max_nlay * ngpt);
         pool_t::init(my_size_ref);
         pool_max_ncol = new_max_ncol;
         pool_max_nlay = new_max_nlay;
