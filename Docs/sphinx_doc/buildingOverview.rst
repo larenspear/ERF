@@ -155,9 +155,41 @@ For platform-specific build instructions, see :ref:`sec:build:hpc`.
 
 macOS is partially supported. Many users successfully build and run ERF on macOS, but the development team does not provide dedicated support.
 
-**Not Supported**
+**Windows**
 
-Windows is not officially supported. Continuous integration tests are performed, but user support is not provided. Windows executables are available through GitHub Actions: https://github.com/erf-model/ERF/actions/workflows/windows-mpi.yml
+Windows is supported for the C++ core of ERF, natively, with the Microsoft compiler.
+Continuous integration builds and tests it on every pull request: the regression and
+unit suites run without MPI on every PR, and under MS-MPI on every merge. The executables
+built with MS-MPI are published as artifacts of the ``Windows`` workflow on each merge,
+with installation notes.
+
+What the native Windows build covers:
+
+* the dynamical core, microphysics, particles and superdroplets, single and double precision;
+* MPI through MS-MPI (``mpiexec -n <ranks> erf_exec.exe <inputs>``).
+
+What it does not cover, and why:
+
+* NetCDF and HDF5 input and output, and so WRF, metgrid and boundary-plane driven cases:
+  not yet built on Windows (planned through vcpkg);
+* Noah-MP and the WSM6 and WDM6 Fortran bridges: they need a Fortran compiler that
+  interoperates with MSVC;
+* GPUs, and OpenMP;
+* AMReX's floating-point traps and backtraces, which use POSIX signals: a crash on Windows
+  gives less to go on than on Linux.
+
+For the full feature set on a Windows machine, use WSL2, which runs the Linux build of ERF
+unchanged, including Spack, NetCDF, Fortran and CUDA.
+
+To build natively: Visual Studio 2022 or newer with the C++ workload, CMake 3.25 or newer,
+Ninja, and for MPI the MS-MPI SDK and runtime. From a Developer PowerShell::
+
+   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DERF_ENABLE_MPI=ON
+   cmake --build build --parallel
+
+The CI workflow ``.github/workflows/windows.yml`` is the reference configuration. Support
+is best effort: bugs that are Windows-specific are welcome as issues, with the CI job that
+reproduces them if there is one.
 
 Build System Options
 --------------------
