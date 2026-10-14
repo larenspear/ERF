@@ -84,6 +84,11 @@ jobs:
           restore-keys: |
             ccache-${{ github.workflow }}-${{ github.job }}-DOUBLE-git-
 
+      # The checkout is owned by a different uid than the container's user, and git
+      # refuses to read it ("dubious ownership"); AMReX's buildInfo asks git for the hash.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Configure
         run: |
           cmake -S . -B build \
