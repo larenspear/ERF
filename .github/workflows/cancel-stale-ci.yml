@@ -34,7 +34,7 @@ on:
 jobs:
   CancelStaleCI:
     name: Cancel stale CI runs
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       actions: write
