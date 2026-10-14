@@ -113,12 +113,21 @@ jobs:
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack test run --alias erf-ci "$SPEC"
-          spack test results -l erf-ci
+
+      - name: Stand-alone test logs
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack test results -l erf-ci || true
 
       # Share the dependencies (not ERF itself, which changes with every commit).
+      # Build-only dependencies satisfied from the public cache were never installed
+      # here, so pushing them fails; link and run dependencies are what the next
+      # run needs.
       - name: Push dependencies to the build cache
         if: always()
         continue-on-error: true
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack buildcache push --unsigned --update-index --only dependencies erf-buildcache "$SPEC"
+          spack buildcache push --unsigned --update-index --only dependencies \
+            --without-build-dependencies erf-buildcache "$SPEC"
