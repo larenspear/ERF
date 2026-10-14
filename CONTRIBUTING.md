@@ -254,3 +254,25 @@ parenthesis of the parameter list (but not when simply calling the function). Fo
 ```
 These guidelines should be adhered to in new contributions to ERF, but
 please refrain from making stylistic changes to unrelated sections of code in your PRs.
+
+## Testing CI changes on your fork
+
+Every workflow in `.github/workflows` runs on your fork too, once you enable
+Actions there (the Actions tab, "I understand my workflows, go ahead and enable
+them"). A few things that are not obvious:
+
+- Keep your fork's `development` equal to upstream's. The per-variant compiler
+  caches are written only from `development`, and a branch restores the cache
+  of the `development` it was based on. Base test branches on `upstream/development`.
+- Run one workflow at a time with `gh workflow run <file> -R <you>/ERF --ref <branch>`
+  instead of pushing to `development`, which runs everything (about 14 runner-hours
+  per push). A workflow file that does not yet exist on your fork's default branch
+  cannot be dispatched from a branch; merge it into your fork's `development` first.
+- A pull request on your fork runs the PR tier exactly as upstream would, which is
+  the only way to test anything that depends on the `pull_request` event (the PR-tier
+  matrix, the stale-run canceller). GitHub silently runs nothing on a PR that has a
+  merge conflict with its base.
+- GitHub disables Actions on a fork after heavy use. Re-enable it in the fork's
+  Settings, Actions, General.
+- The ccache statistics for every build are in the job summary; "Hits" tells you
+  whether the cache was restored and how much of the build it covered.
