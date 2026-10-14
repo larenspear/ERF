@@ -1,0 +1,124 @@
+name: Spack package
+
+# Builds ERF through its Spack recipe (spack/spack-packages: erf) so a change in ERF's
+# CMake that the recipe does not follow is caught here rather than at the next release.
+# Two jobs: a concretization sweep over the whole variant product (minutes, no build),
+# and a build matrix of representative configurations. Manual runs can point at a fork
+# and branch of spack-packages to test a recipe change before it is merged there, and
+# build one spec instead of the matrix.
+on:
+  workflow_dispatch:
+    inputs:
+      packages_repository:
+        description: spack-packages repository (owner/name)
+        default: larenspear/spack-packages
+      packages_ref:
+        description: spack-packages git ref
+        default: erf-consolidated
+      spec:
+        description: build this one spec instead of the matrix (empty = the matrix)
+        default: ""
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.sha }}-spack-package
+  cancel-in-progress: false
+
+env:
+  PACKAGES_REPOSITORY: ${{ inputs.packages_repository || 'larenspear/spack-packages' }}
+  PACKAGES_REF: ${{ inputs.packages_ref || 'erf-consolidated' }}
+
+jobs:
+  concretize:
+    name: concretization sweep
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          packages_repository: ${{ env.PACKAGES_REPOSITORY }}
+          packages_ref: ${{ env.PACKAGES_REF }}
+      - name: Sweep
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack compiler find
+          spack audit packages erf
+          python3 .github/workflows/spack/erf_sweep.py
+
+  install:
+    name: spack install ${{ matrix.spec }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        # Representative builds: every variant that changes what is compiled, on the
+        # development branch, plus one pinned release. A manual run with a spec builds
+        # only that spec.
+        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop", "erf@develop ~mpi", "erf@develop +openmp +particles +tests +fcompare", "erf@develop +netcdf +noahmp +particles", "erf@develop +netcdf +rrtmgp", "erf@develop +netcdf +tools", "erf@develop +windfarm +wsm6_fort +wdm6_fort", "erf@develop precision=single +particles", "erf@develop +cuda cuda_arch=80", "erf@26.09 +netcdf +noahmp +particles +tests"]') }}
+    env:
+      SPEC: ${{ matrix.spec }}
+      GHCR_USER: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        uses: ./.github/actions/free-space-ubuntu
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip \
+            libopenmpi-dev openmpi-bin cmake pkg-config
+
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          packages_repository: ${{ env.PACKAGES_REPOSITORY }}
+          packages_ref: ${{ env.PACKAGES_REF }}
+
+      # Use the runner's compilers, MPI, CMake and Python instead of building them. ERF's
+      # other dependencies (AMReX above all) come from the project build cache on GHCR
+      # after the first run; ERF itself is always built.
+      - name: Register externals and the project build cache
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack compiler find
+          spack external find --all --not-buildable
+          spack mirror add --unsigned \
+            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
+            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+
+      - name: Recipe checks
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack --version
+          spack audit packages erf
+          spack spec -I "$SPEC"
+
+      - name: spack install
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack install --verbose --fail-fast "$SPEC"
+
+      - name: Stand-alone tests
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack test run --alias erf-ci "$SPEC"
+          spack test results -l erf-ci
+
+      # Share the dependencies (not ERF itself, which changes with every commit).
+      - name: Push dependencies to the build cache
+        if: always()
+        continue-on-error: true
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack buildcache push --unsigned --update-index --only dependencies erf-buildcache "$SPEC"
