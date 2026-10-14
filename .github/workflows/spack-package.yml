@@ -25,8 +25,10 @@ permissions:
   contents: read
   packages: write
 
+# Manual runs of different specs on the same commit run side by side; GitHub keeps one
+# pending run per group and cancels an older pending one.
 concurrency:
-  group: ${{ github.ref }}-${{ github.sha }}-spack-package
+  group: ${{ github.ref }}-${{ github.sha }}-spack-package-${{ inputs.spec }}
   cancel-in-progress: false
 
 env:
