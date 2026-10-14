@@ -25,24 +25,36 @@ def run(spec):
     t=time.time()
     r=subprocess.run(["spack","spec","--fresh","--format","{name}@{version}{variants}",spec], capture_output=True, text=True, timeout=900)
     err=(r.stderr+r.stdout).strip().split("\n")
-    msg=[l for l in err if re.search(r"Error|error|conflict|unsatisfiable|cannot|requires|needs", l, re.I)]
-    return spec, r.returncode, round(time.time()-t), (msg[-1] if msg else err[-1] if err else "")[:150]
-with cf.ThreadPoolExecutor(4) as ex:
+    msg=[l for l in err if re.search(r"Error|error|conflict|unsatisfiable|cannot|requires|needs|variant", l, re.I)]
+    return spec, r.returncode, round(time.time()-t), (msg[-1] if msg else err[-1] if err else "")[:150], r.stderr+r.stdout
+# One solve first so the bootstrap and the repository index are built once, then the rest
+# a few at a time: concurrent first solves have been killed without any output on a
+# 7 GB runner.
+run(POS[0])
+with cf.ThreadPoolExecutor(int(os.environ.get("ERF_SWEEP_JOBS", "3"))) as ex:
     res=list(ex.map(run, POS+NEG))
+# A positive spec that failed with no output at all was most likely killed; solve it
+# again on its own and show everything it says.
+for i,(spec,rc,dt,msg,full) in enumerate(res):
+    if i < len(POS) and rc != 0 and not full.strip():
+        print(f"## retrying {spec} alone (no output the first time)")
+        res[i] = run(spec)
+        if res[i][1] != 0:
+            print(res[i][4][-3000:])
 ok=0
 print("## positive (must concretize):")
-for spec,rc,dt,msg in res[:len(POS)]:
+for spec,rc,dt,msg,_ in res[:len(POS)]:
     st="ok  " if rc==0 else "FAIL"; ok+= rc==0
     print(f"   {st} {dt:4d}s  {spec:55s} {'' if rc==0 else msg}")
 print("## negative (must be refused with the recipe's message):")
-for spec,rc,dt,msg in res[len(POS):]:
+for spec,rc,dt,msg,_ in res[len(POS):]:
     st="ok  " if rc!=0 else "FAIL"; ok+= rc!=0
     print(f"   {st} {dt:4d}s  {spec:55s} {msg if rc!=0 else 'concretized (should have been refused)'}")
 print(f"## {ok}/{len(res)} as expected")
 if os.environ.get("GITHUB_STEP_SUMMARY"):
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
         f.write("### Concretization sweep\n\n| | spec | result |\n|---|---|---|\n")
-        for i,(spec,rc,dt,msg) in enumerate(res):
+        for i,(spec,rc,dt,msg,_) in enumerate(res):
             good = (rc==0) if i < len(POS) else (rc!=0)
             f.write(f"| {'ok' if good else 'FAIL'} | `{spec}` | {('concretized' if rc==0 else msg.replace('|','/'))} |\n")
         f.write(f"\n{ok}/{len(res)} as expected\n")
