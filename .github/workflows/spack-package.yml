@@ -109,13 +109,15 @@ jobs:
           . spack_install_dir/share/spack/setup-env.sh
           spack install --verbose --fail-fast "$SPEC"
 
+      # The stand-alone tests run the executable; GPU builds cannot on these runners.
       - name: Stand-alone tests
+        if: ${{ !contains(matrix.spec, '+cuda') && !contains(matrix.spec, '+rocm') && !contains(matrix.spec, '+sycl') }}
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack test run --alias erf-ci "$SPEC"
 
       - name: Stand-alone test logs
-        if: always()
+        if: ${{ always() && !contains(matrix.spec, '+cuda') && !contains(matrix.spec, '+rocm') && !contains(matrix.spec, '+sycl') }}
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack test results -l erf-ci || true
