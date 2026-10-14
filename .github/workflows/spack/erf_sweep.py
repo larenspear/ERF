@@ -16,11 +16,12 @@ POS = ["erf@develop", "erf@develop ~mpi", "erf@develop +openmp", "erf@develop +n
        "erf@develop +sycl", "erf@26.09", "erf@26.09 +netcdf +noahmp +particles +tests", "erf@26.06 +netcdf +rrtmgp",
        "erf@25.12 +netcdf +noahmp", "erf@25.10 +particles", "erf@24.10 +particles +tests", "erf@24.09",
        "erf@26.09 +netcdf +hdf5 +particles +fcompare +openmp", "erf@26.09 +netcdf +rrtmgp +cuda cuda_arch=80",
-       "erf@develop +netcdf ~hdf5", "erf@25.10 +netcdf +rrtmgp", "erf@26.05"]
+       "erf@develop +netcdf ~hdf5", "erf@25.10 +netcdf +rrtmgp", "erf@26.05", "erf@25.01 +fft",
+       "erf@24.02 +particles"]
 NEG = ["erf@develop +rrtmgp ~netcdf", "erf@develop +rrtmgp ~mpi", "erf@develop +cuda cuda_arch=80 +rocm amdgpu_target=gfx90a",
        "erf@develop +openmp +cuda cuda_arch=80", "erf@26.05 precision=single", "erf@26.01 +windfarm", "erf@25.11 +netcdf +noahmp",
        "erf@develop +netcdf ~mpi", "erf@develop +tools ~netcdf", "erf@26.09 +wsm6_fort precision=single",
-       "erf@25.11 +noahmp", "erf@25.06 +tools"]
+       "erf@25.11 +noahmp", "erf@25.06 +tools", "erf@25.03 ^amrex~eb", "erf@24.10 +fft", "erf@24.01 +particles"]
 def run(spec):
     t=time.time()
     r=subprocess.run(["spack","spec","--fresh","--format","{name}@{version}{variants}",spec], capture_output=True, text=True, timeout=900)
