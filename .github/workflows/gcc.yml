@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-linux-gcc
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
+permissions:
+  contents: read
+
 jobs:
   library:
     name: GNU@9.3 C++17 - Mesh ${{matrix.mesh_precision}} Particles ${{matrix.particles}} ${{matrix.particles_precision}}

@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-windows
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
+permissions:
+  contents: read
+
 jobs:
   windows:
     name: Windows MSVC - MPI ${{ matrix.mpi }} - Mesh ${{ matrix.mesh_precision }} Particles ${{ matrix.particles }} ${{ matrix.particles_precision }}

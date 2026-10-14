@@ -22,6 +22,9 @@ concurrency:
   group: cleanup-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   CleanUpCcacheCache:
     name: Clean Up Ccache Cache

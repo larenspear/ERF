@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-linux-gcc-rrtmgp
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
+permissions:
+  contents: read
+
 jobs:
   library:
     name: GNU@9.3 C++17 - NetCDF ${{matrix.netcdf}} - Particles ${{matrix.particles}} - RRTMGP ${{matrix.rrtmgp}}

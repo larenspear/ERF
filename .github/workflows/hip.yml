@@ -17,6 +17,9 @@ concurrency:
   group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-hip
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
+permissions:
+  contents: read
+
 jobs:
   # MPI_C is broken since HIP 4.1
   # https://gitlab.kitware.com/cmake/cmake/-/issues/21968

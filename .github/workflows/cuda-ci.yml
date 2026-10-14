@@ -17,6 +17,9 @@ concurrency:
   group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-cuda-ci
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
+permissions:
+  contents: read
+
 jobs:
   cuda-build:
     runs-on: ubuntu-22.04

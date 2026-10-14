@@ -12,6 +12,9 @@ on:
 # drop the PR's ccache entries, and cancel-stale-ci.yml to cancel whatever it
 # left running.
 
+permissions:
+  contents: read
+
 jobs:
   noop:
     runs-on: ubuntu-22.04
