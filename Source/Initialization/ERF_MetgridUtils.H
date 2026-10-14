@@ -635,7 +635,7 @@ interpolate_column_metgrid (const bool& metgrid_use_below_sfc,
         calc_p_isothermal(new_z_p[k], new_p_p[k]);
     }
 
-    amrex::GpuArray<amrex::Real,256> orig_z;
+    amrex::GpuArray<amrex::Real,256> orig_z{};
     amrex::Real* orig_z_p = orig_z.data();
     for (int k=0; k < kmax_orig; k++) {
         if (stag == 'M') {

@@ -11,6 +11,14 @@ concurrency:
   group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-linux-gcc
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
+# ubuntu-24.04's apt MPI packages are built on UCX, and on the Azure runner VMs UCX
+# tries the InfiniBand transport first and dies in MPI_Init ("ibv_create_srq()
+# failed: Operation not supported"; every unit test aborts). Keep it to shared
+# memory and TCP, which is all a 4-core runner has anyway.
+env:
+  UCX_TLS: tcp,sm,self
+  UCX_WARN_UNUSED_ENV_VARS: n
+
 jobs:
   library:
     name: GNU@9.3 C++17 - Mesh ${{matrix.mesh_precision}} Particles ${{matrix.particles}} ${{matrix.particles_precision}}
