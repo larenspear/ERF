@@ -14,6 +14,17 @@ function(set_erf_compile_flags target)
       # Avoid notes about -faligned-new with GCC > 7
       list(APPEND ERF_CXX_FLAGS "-faligned-new")
     endif()
+    if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12.0)
+      # GCC 12+ reports "array subscript -1 is below array bounds of 'int [3]'" for
+      # amrex::IntVect::operator[] wherever it is inlined (hundreds of times per
+      # build); AMReX's own CI turns the check off for the same reason.
+      list(APPEND ERF_CXX_FLAGS "-Wno-array-bounds")
+    endif()
+    if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0)
+      # GCC 13's -Wdangling-reference fires on ordinary 'const T& x = f(y)' patterns
+      # in AMReX headers; the GCC manual itself lists it as false-positive prone.
+      list(APPEND ERF_CXX_FLAGS "-Wno-dangling-reference")
+    endif()
   endif()
 
   # Add our extra flags according to language

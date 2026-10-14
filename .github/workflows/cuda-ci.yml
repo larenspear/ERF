@@ -53,6 +53,9 @@ jobs:
         uses: ./.github/actions/free-space-ubuntu
       - name: Prepare CUDA environment
         run: Submodules/AMReX/.github/workflows/dependencies/dependencies_nvcc.sh ${{matrix.cuda_ver}}
+      # ubuntu-24.04's default compiler is GCC 13; nvcc 12.2 refuses hosts newer than 12.
+      - name: Install the CUDA host compiler
+        run: sudo apt-get install -y --no-install-recommends g++-12
       - name: Install CCache
         run: Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
       # ccache per matrix variant, written only from development; see ci.yml for how it works.
@@ -79,6 +82,8 @@ jobs:
           which nvcc || echo "nvcc not in PATH!"
           cmake -Bbuild-${{matrix.cuda_pkg}} \
             -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
+            -DCMAKE_CXX_COMPILER=g++-12 \
+            -DCMAKE_CUDA_HOST_COMPILER=g++-12 \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache \
             -DAMReX_CUDA_ERROR_CROSS_EXECUTION_SPACE_CALL=ON \
