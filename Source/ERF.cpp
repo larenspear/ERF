@@ -4594,3 +4594,5 @@ ERF::has_surface_layer_inputs (const std::string& prefix) const
     }
     return false;
 }
+
+// gate test
