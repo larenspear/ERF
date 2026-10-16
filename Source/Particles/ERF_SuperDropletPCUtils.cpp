@@ -696,9 +696,9 @@ void SuperDropletPC::SplitParticlesForRefinement (int finest_level)
                 // conserved, so coalescence cannot drive super-droplets below
                 // one real droplet.
                 amrex::ParallelFor(n_copies, [=] AMREX_GPU_DEVICE (int i) {
-                    long xil  = static_cast<long>(copy_mult[i] + ParticleReal(0.5));
-                    long base = xil / kf;
-                    long rem  = xil - base * kf;
+                    amrex::Long xil  = static_cast<amrex::Long>(copy_mult[i] + ParticleReal(0.5));
+                    amrex::Long base = xil / kf;
+                    amrex::Long rem  = xil - base * kf;
                     int  p    = (i / nst) + 1;            // copy piece index (1..kf-1)
                     copy_mult[i] = static_cast<ParticleReal>(base + (p < rem ? 1 : 0));
                 });
@@ -708,9 +708,9 @@ void SuperDropletPC::SplitParticlesForRefinement (int finest_level)
                 const int dtag = daughter_tag;
                 amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE (int i) {
                     if (mask_d_ptr[i]) {
-                        long xil  = static_cast<long>(orig_mult[i] + ParticleReal(0.5));
-                        long base = xil / kf;
-                        long rem  = xil - base * kf;
+                        amrex::Long xil  = static_cast<amrex::Long>(orig_mult[i] + ParticleReal(0.5));
+                        amrex::Long base = xil / kf;
+                        amrex::Long rem  = xil - base * kf;
                         orig_mult[i]   = static_cast<ParticleReal>(base + (rem > 0 ? 1 : 0));
                         orig_active[i]  = dtag;
                     }
@@ -1077,9 +1077,9 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                 const int nst = n_ent_tile;
                 const int kf  = split_factor;
                 amrex::ParallelFor(n_copies, [=] AMREX_GPU_DEVICE (int i) {
-                    long xil  = static_cast<long>(copy_mult[i] + ParticleReal(0.5));
-                    long base = xil / kf;
-                    long rem  = xil - base * kf;
+                    amrex::Long xil  = static_cast<amrex::Long>(copy_mult[i] + ParticleReal(0.5));
+                    amrex::Long base = xil / kf;
+                    amrex::Long rem  = xil - base * kf;
                     int  p    = (i / nst) + 1;            // copy piece index (1..kf-1)
                     copy_mult[i] = static_cast<ParticleReal>(base + (p < rem ? 1 : 0));
                 });
@@ -1088,9 +1088,9 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                 auto* orig_active = soa.GetIntData(active_idx).data();
                 amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE (int i) {
                     if (ent_mask[i]) {
-                        long xil  = static_cast<long>(orig_mult[i] + ParticleReal(0.5));
-                        long base = xil / kf;
-                        long rem  = xil - base * kf;
+                        amrex::Long xil  = static_cast<amrex::Long>(orig_mult[i] + ParticleReal(0.5));
+                        amrex::Long base = xil / kf;
+                        amrex::Long rem  = xil - base * kf;
                         orig_mult[i]   = static_cast<ParticleReal>(base + (rem > 0 ? 1 : 0));
                         orig_active[i]  = flev_native;
                     }

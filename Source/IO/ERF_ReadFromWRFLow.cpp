@@ -145,7 +145,7 @@ read_from_wrflow (const int itime, const std::string& nc_low_file, const Box& do
             // dims: (Time, south_north, west_east)
             int ns2 = tslice[iv].get_vshape()[2];
 
-            long num_pts  = low_data_zlo[itime][iv].box().numPts();
+            amrex::Long num_pts  = low_data_zlo[itime][iv].box().numPts();
             int ioff      = low_data_zlo[itime][iv].smallEnd()[0];
             int joff      = low_data_zlo[itime][iv].smallEnd()[1];
 

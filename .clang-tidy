@@ -7,6 +7,7 @@ Checks: >
      clang-analyzer-*,
        -clang-analyzer-optin.mpi.MPI-Checker,
      clang-diagnostic-*,
+     google-runtime-int,
      cppcoreguidelines-*,
        -cppcoreguidelines-avoid-c-arrays,
        -cppcoreguidelines-avoid-goto,
