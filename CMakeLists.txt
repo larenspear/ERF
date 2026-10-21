@@ -9,6 +9,9 @@ list(APPEND CMAKE_MESSAGE_CONTEXT "ERF")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 include(CrayCompilerDetection)
 
+# Declared here because project() below needs it to decide whether to enable Fortran.
+option(ERF_ENABLE_MORR_FORT "Enable Morrison two-moment Fortran microphysics" OFF)
+
 if(ERF_ENABLE_MORR_FORT OR ERF_ENABLE_WSM6_FORT OR ERF_ENABLE_WDM6_FORT OR ERF_ENABLE_NOAHMP)
   project(ERF CXX C Fortran)
 else()
@@ -204,6 +207,14 @@ endif()
 
 #Option to build tools
 option(ERF_ENABLE_TOOLS "Enable building of additional tools" OFF)
+
+# Read in CMake/BuildERFExe.cmake, CMake/SetAmrexOptions.cmake and Tests/; declared so
+# they show up in cmake -LH and ccmake.
+option(ERF_ENABLE_FFT "Enable the AMReX FFT Poisson solver (ERF_USE_FFT)" OFF)
+option(ERF_ENABLE_MULTIBLOCK "Build the multiblock constructor (ERF_USE_MULTIBLOCK)" OFF)
+option(ERF_ENABLE_IMPLICIT_W "Include w in the implicit vertical diffusion solve (ERF_IMPLICIT_W)" OFF)
+option(ERF_ENABLE_TINY_PROFILE "Enable AMReX tiny profiling" OFF)
+option(ERF_BUILD_LIBRARY_ONLY "Build only erf_srclib, no executables (superbuild mode)" OFF)
 
 #Options for C++
 set(CMAKE_CXX_STANDARD 17)
