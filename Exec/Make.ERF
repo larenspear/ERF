@@ -947,7 +947,7 @@ $(ERF_BUILDINFO_SRC): $(filter-out $(ERF_BUILDINFO_OBJ),$(objForExecs))
           --amrex_home "$(AMREX_HOME)" \
           --COMP "$(COMP)" --COMP_VERSION "$(COMP_VERSION)" \
           --CXX_comp_name "$(CXX)" \
-          --CXX_flags "$(CXXFLAGS) $(CXXFLAGS) $(CPPFLAGS) $(includes)" \
+          --CXX_flags "$(CXXFLAGS) $(CPPFLAGS) $(includes)" \
           --link_flags "$(LINKFLAGS) $(CPPFLAGS) $(includes) $(LDFLAGS)" \
           --libraries "$(FINAL_LIBS)" \
           --MODULES "$(MNAMES)" \
