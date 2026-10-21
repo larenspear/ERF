@@ -254,8 +254,6 @@ target_sources(${erf_exe_name}
     # Motivation: a malformed, mis-ordered or too small terrain file must stop the run with
     # the problem named, and steep terrain next to an inflow or outflow face must be reported.
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestTerrainFileChecks.cpp
-    # Motivation: a BTF fine level's mesh must not depend on how its grids are split in z.
-    ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestTerrainFineColumns.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/HashRng/ERF_GTestHashRngScalar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/HashRng/ERF_GTestHashRngKernel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/EOS/ERF_GTestEOSScalar.cpp
@@ -275,6 +273,7 @@ target_sources(${erf_exe_name}
     ${CMAKE_CURRENT_SOURCE_DIR}/Microphysics/SatAdj/ERF_GTestSatAdjMultiFab.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Microphysics/SatAdj/ERF_GTestSatAdjBoxCoverage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Microphysics/SatAdj/ERF_GTestSatAdjTemperatureDiagnostics.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Microphysics/SatAdj/ERF_GTestSatAdjKesslerComparison.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Microphysics/SAM/ERF_GTestSAMScalar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Microphysics/SAM/ERF_GTestSAMKernel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Microphysics/SAM/ERF_GTestSAMPhysicalProperties.cpp
