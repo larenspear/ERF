@@ -421,6 +421,12 @@ endif
 
 ifeq ($(USE_WW3_COUPLING), TRUE)
     DEFINES += -DERF_USE_WW3_COUPLING
+    # ERF::read_waves and ERF::send_to_ww3 live here (CMake compiles the file
+    # unconditionally; its body is #ifdef ERF_USE_WW3_COUPLING).
+    ERF_COUPLING_DIR = $(ERF_SOURCE_DIR)/Coupling
+    include $(ERF_COUPLING_DIR)/Make.package
+    VPATH_LOCATIONS   += $(ERF_COUPLING_DIR)
+    INCLUDE_LOCATIONS += $(ERF_COUPLING_DIR)
 endif
 
 ERF_LSM_DIR = $(ERF_SOURCE_DIR)/LandSurfaceModel
