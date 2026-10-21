@@ -16,6 +16,15 @@ else()
 endif()
 
 message(STATUS "Configuring ERF")
+
+# The AMReX submodule supplies a Release default when it is added, but with
+# ERF_USE_INTERNAL_AMREX=OFF nothing does, and an empty build type compiles
+# ERF with no optimization flags at all.
+get_property(ERF_IS_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT ERF_IS_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING
+      "Choose the build type, e.g. Release, Debug, or RelWithDebInfo." FORCE)
+endif()
 message(VERBOSE "Source directory: ${PROJECT_SOURCE_DIR}")
 message(VERBOSE "Build directory: ${PROJECT_BINARY_DIR}")
 
