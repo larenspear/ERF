@@ -781,13 +781,28 @@ if (ERF_ENABLE_CUDA)
    setup_target_for_cuda_compilation(erf_api)
 endif ()
 target_link_libraries(erf_api PUBLIC erf_srclib)
-add_library(${PROJECT_NAME}::erf_api ALIAS erf_srclib)
+# generate_buildinfo() links buildInfoerf_srclib only through $<BUILD_INTERFACE:>
+# and never installs it, so put its objects into erf_api itself; otherwise an
+# installed erf_api has undefined amrex::buildInfoGet*() symbols.
+if (TARGET buildInfoerf_srclib)
+  target_sources(erf_api PRIVATE $<TARGET_OBJECTS:buildInfoerf_srclib>)
+endif ()
+add_library(${PROJECT_NAME}::erf_api ALIAS erf_api)
 
-# Collect all headers and make them installable with the target
-file(GLOB_RECURSE ERF_INCLUDES "${PROJECT_SOURCE_DIR}/Source/*.H")
-
-set_target_properties(
-  erf_srclib PROPERTIES PUBLIC_HEADER "${ERF_INCLUDES}")
+# Headers are installed with their Source/ layout (below). Sources include them
+# both flat (<ERF.H>) and by subdirectory ("Prob/ERF_CloudChamber.H",
+# "Simple/ERF_RadiationSimple.H"), so export include/ and every header subdir.
+file(GLOB_RECURSE ERF_INCLUDES RELATIVE "${PROJECT_SOURCE_DIR}/Source"
+     "${PROJECT_SOURCE_DIR}/Source/*.H")
+set(ERF_INSTALL_INCLUDE_SUBDIRS)
+foreach(_hdr IN LISTS ERF_INCLUDES)
+  get_filename_component(_dir "${_hdr}" DIRECTORY)
+  if (_dir)
+    list(APPEND ERF_INSTALL_INCLUDE_SUBDIRS "$<INSTALL_INTERFACE:include/${_dir}>")
+  endif ()
+endforeach()
+list(REMOVE_DUPLICATES ERF_INSTALL_INCLUDE_SUBDIRS)
+target_include_directories(erf_srclib INTERFACE ${ERF_INSTALL_INCLUDE_SUBDIRS})
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   # Install ERF
@@ -798,14 +813,13 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     ARCHIVE       DESTINATION lib
     LIBRARY       DESTINATION lib
     INCLUDES      DESTINATION include
-    PUBLIC_HEADER DESTINATION include
     )
 
-  # Install all headers in include directories
-  #install(
-  #  DIRECTORY ${ERF_INCLUDE_DIRECTORIES}
-  #  DESTINATION include
-  #  FILES_MATCHING PATTERN "*.H")
+  # Install all headers, keeping the Source/ layout
+  install(
+    DIRECTORY ${PROJECT_SOURCE_DIR}/Source/
+    DESTINATION include
+    FILES_MATCHING PATTERN "*.H")
 
   # Make ERF discoverable using `find_package`
   install(
