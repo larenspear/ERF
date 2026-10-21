@@ -136,10 +136,8 @@ jobs:
           '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
           -DERF_ENABLE_PARTICLES:BOOL=${{matrix.particles}} \
           -DERF_ENABLE_NETCDF:BOOL=${{matrix.netcdf}} \
-          -DERF_ENABLE_KOKKOS:BOOL=ON \
           -DHDF5_ROOT=${HDF5_ROOT} \
           -DNETCDF_ROOT=${NETCDF_ROOT} \
-          -DERF_ENABLE_EKAT:BOOL=${{matrix.rrtmgp}} \
           -DERF_ENABLE_RRTMGP:BOOL=${{matrix.rrtmgp}} \
           -DERF_ENABLE_TESTS:BOOL=ON \
           -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
