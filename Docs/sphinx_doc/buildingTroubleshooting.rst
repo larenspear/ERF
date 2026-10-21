@@ -232,7 +232,7 @@ Then reconfigure in a **fresh** build directory, not the one that failed — ERF
    The default ``cray-mpich`` advances with the CPE release, so a system default that worked before an upgrade can start requiring a newer CUDA runtime than the pinned toolkit provides. This is why the machine profiles pin both halves explicitly; scripts that load ``cray-mpich`` without a version are exposed to the default moving underneath them.
 
 .. tip::
-   If a build does not need EKAT/SHOC, ``-DERF_ENABLE_EKAT=OFF`` removes the Kokkos constraint entirely and allows the newer CUDA plus newer Cray MPICH pairing. AMReX guards these same three CUDA APIs on ``CUDART_VERSION >= 13000``, so the AMReX-only path builds against either toolkit.
+   If a build does not need EKAT/SHOC, leave ``ERF_ENABLE_RRTMGP`` and ``ERF_ENABLE_EAMXX_SHOC`` OFF; that removes the Kokkos constraint entirely (``ERF_ENABLE_EKAT`` is set from those two and cannot be turned off by hand) and allows the newer CUDA plus newer Cray MPICH pairing. AMReX guards these same three CUDA APIs on ``CUDART_VERSION >= 13000``, so the AMReX-only path builds against either toolkit.
 
 .. _troubleshoot-memory:
 

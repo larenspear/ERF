@@ -409,11 +409,26 @@ list(POP_BACK CMAKE_MESSAGE_CONTEXT)
 
 ########################## EKAT ##################################
 
+# ERF_ENABLE_EKAT is derived, not a user switch: EKAT (and the Kokkos it provides)
+# is built exactly when RRTMGP or EAMxx SHOC is on.
 if(ERF_ENABLE_RRTMGP OR ERF_ENABLE_EAMXX_SHOC)
-  set(ERF_ENABLE_EKAT ON)
+  set(_erf_need_ekat ON)
 else()
-  set(ERF_ENABLE_EKAT OFF)
+  set(_erf_need_ekat OFF)
 endif()
+if(DEFINED CACHE{ERF_ENABLE_EKAT})
+  set(_erf_user_ekat OFF)
+  if("$CACHE{ERF_ENABLE_EKAT}")
+    set(_erf_user_ekat ON)
+  endif()
+  if(NOT _erf_user_ekat STREQUAL _erf_need_ekat)
+    message(WARNING "Ignoring ERF_ENABLE_EKAT=$CACHE{ERF_ENABLE_EKAT}: EKAT is ${_erf_need_ekat} "
+                    "because it follows ERF_ENABLE_RRTMGP and ERF_ENABLE_EAMXX_SHOC")
+  endif()
+  unset(_erf_user_ekat)
+endif()
+set(ERF_ENABLE_EKAT ${_erf_need_ekat})
+unset(_erf_need_ekat)
 
 if(ERF_ENABLE_EKAT)
   list(APPEND CMAKE_MESSAGE_CONTEXT "EKAT")
