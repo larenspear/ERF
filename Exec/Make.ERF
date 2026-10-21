@@ -818,6 +818,27 @@ INCLUDE_LOCATIONS += $(AMREX_HOME)/Tools/C_scripts
 
 include $(AMREX_HOME)/Tools/GNUMake/Make.rules
 
+# Make.rules generates AMReX_Config.H only when it is missing, and an object
+# depends only on its source and that header. A switch that only adds a -D and
+# is not part of optionsSuffix (USE_WINDFARM, USE_MULTIBLOCK,
+# USE_TERRAIN_VELOCITY, USE_WDM6_F32_LITERALS, ...) would therefore recompile
+# only the files whose own source is new and link them against stale objects
+# built with a different ERF.H class layout. Record the preprocessor flags in a
+# stamp, rewrite it only when they differ from the last build in this object
+# tree, and make the header -- and through it every object -- depend on it.
+ERF_CPPFLAGS_STAMP := $(srcTempDir)/ERF_CPPFLAGS.stamp
+ERF_CPPFLAGS_NOW   := $(strip $(CPPFLAGS))
+ERF_CPPFLAGS_LAST  := $(strip $(shell cat $(ERF_CPPFLAGS_STAMP) 2>/dev/null))
+ifneq ($(ERF_CPPFLAGS_NOW),$(ERF_CPPFLAGS_LAST))
+$(ERF_CPPFLAGS_STAMP): FORCE
+endif
+ERF_SQ := '
+$(ERF_CPPFLAGS_STAMP):
+	@mkdir -p $(srcTempDir)
+	@printf '%s\n' '$(subst $(ERF_SQ),$(ERF_SQ)\$(ERF_SQ)$(ERF_SQ),$(ERF_CPPFLAGS_NOW))' > $@
+
+$(srcTempDir)/AMReX_Config.H: $(ERF_CPPFLAGS_STAMP)
+
 # Prebuild targets are feature-gated. In particular, all should not build EKAT
 # unless GNUmakefile selected a Kokkos-using feature, directly or indirectly.
 ERF_PREBUILD_TARGETS :=
