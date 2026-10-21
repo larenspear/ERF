@@ -55,6 +55,6 @@ else
   LDFLAGS += -Wl,--no-as-needed,-rpath=$(TORCH_LIBPATH) $(TORCH_LIBS)
 endif
 
-ERF_HOME := ../../..
+ERF_HOME := ../..
 ERF_PROBLEM_DIR = $(ERF_HOME)/.Exec_dev/ML_Init_HSE
 include $(ERF_HOME)/Exec/Make.ERF
