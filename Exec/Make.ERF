@@ -960,6 +960,16 @@ clean::
 ifeq ($(USE_NOAHMP), TRUE)
 	$(MAKE) -C $(NOAHMP_HOME)/drivers/erf -f Makefile clean_noahmp
 endif
+# clean removes only this configuration's EKAT build, and only when this build
+# owns it; the other keyed configurations (and the trees other directories such
+# as .Exec_dev/* link against) stay. realclean wipes every bundled EKAT build.
+ifeq ($(USE_KOKKOS), TRUE)
+ifeq ($(BUILD_EKAT), TRUE)
+	rm -rf $(EKAT_BUILD_DIR)
+endif
+endif
+
+realclean::
 ifeq ($(USE_KOKKOS), TRUE)
 	rm -rf $(EKAT_SOURCE_DIR)/build/*
 endif
