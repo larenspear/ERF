@@ -1419,37 +1419,6 @@ add_test_box_parity(PBLH_FinePatch_BoxParity PBLH_FinePatch "plt00004"
 endif()
 endif()
 
-# Debug regression test with lower tolerance
-function(add_test_d TEST_NAME TEST_DIR TEST_EXE PLTFILE)
-    set(options )
-    set(oneValueArgs "INPUT_SOUNDING" "RUNTIME_OPTIONS")
-    set(multiValueArgs )
-    cmake_parse_arguments(ADD_TEST_D "${options}" "${oneValueArgs}"
-        "${multiValueArgs}" ${ARGN})
-
-    setup_test()
-
-    set(RUNTIME_OPTIONS "${ADD_TEST_D_RUNTIME_OPTIONS}")
-    if(NOT "${ADD_TEST_D_INPUT_SOUNDING}" STREQUAL "")
-      string(APPEND RUNTIME_OPTIONS "erf.input_sounding_file=${CURRENT_TEST_BINARY_DIR}/${ADD_TEST_D_INPUT_SOUNDING}")
-    endif()
-
-    resolve_test_exe("${TEST_DIR}" "${TEST_EXE}" TEST_EXE)
-    set(FCOMPARE_TOLERANCE "-r 3.0e-9 --abs_tol 3.0e-9")
-    set(FCOMPARE_FLAGS "--abort_if_not_all_found -a ${FCOMPARE_TOLERANCE}")
-    set(test_command sh -c "${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/${TEST_NAME}.i ${RUNTIME_OPTIONS} > ${TEST_NAME}.log && ${MPI_FCOMP_COMMANDS} ${FCOMPARE_EXE} ${FCOMPARE_FLAGS} ${PLOT_GOLD} ${CURRENT_TEST_BINARY_DIR}/${PLTFILE}")
-
-    add_test(${TEST_NAME} ${test_command})
-    set_tests_properties(${TEST_NAME}
-        PROPERTIES
-        TIMEOUT 600
-        PROCESSORS ${NP}
-        WORKING_DIRECTORY "${CURRENT_TEST_BINARY_DIR}/"
-        LABELS "regression"
-        ATTACHED_FILES_ON_FAIL "${CURRENT_TEST_BINARY_DIR}/${TEST_NAME}.log"
-    )
-endfunction(add_test_d)
-
 # Stationary test -- compare with time 0
 function(add_test_0 TEST_NAME TEST_DIR TEST_EXE PLTFILE)
     set(options )
@@ -1467,7 +1436,7 @@ function(add_test_0 TEST_NAME TEST_DIR TEST_EXE PLTFILE)
 
     resolve_test_exe("${TEST_DIR}" "${TEST_EXE}" TEST_EXE)
     set(FCOMPARE_TOLERANCE "-r 1e-14 --abs_tol 1.0e-14")
-    set(FCOMPARE_FLAGS "-a ${FCOMPARE_TOLERANCE}")
+    set(FCOMPARE_FLAGS "--abort_if_not_all_found -a ${FCOMPARE_TOLERANCE}")
     set(test_command sh -c "${MPI_COMMANDS} ${TEST_EXE} ${CURRENT_TEST_BINARY_DIR}/${TEST_NAME}.i erf.input_sounding_file=${CURRENT_TEST_BINARY_DIR}/input_sounding ${RUNTIME_OPTIONS} > ${TEST_NAME}.log && ${MPI_FCOMP_COMMANDS} ${FCOMPARE_EXE} ${FCOMPARE_FLAGS} ${CURRENT_TEST_BINARY_DIR}/plt00000 ${CURRENT_TEST_BINARY_DIR}/${PLTFILE}")
 
     add_test(${TEST_NAME} ${test_command})
@@ -1722,9 +1691,9 @@ add_test_r(ScalarAdvDiff_order4              ""  "erf_exec" "plt00020")
 add_test_r(ScalarAdvDiff_order5              ""  "erf_exec" "plt00020")
 add_test_r(ScalarAdvDiff_order6              ""  "erf_exec" "plt00020")
 add_test_r(ScalarAdvDiff_weno3               ""  "erf_exec" "plt00020")
-add_test_d(ScalarAdvDiff_weno3z              ""  "erf_exec" "plt00020")
+add_test_r(ScalarAdvDiff_weno3z              ""  "erf_exec" "plt00020")
 add_test_r(ScalarAdvDiff_weno5               ""  "erf_exec" "plt00020")
-add_test_d(ScalarAdvDiff_weno5z              ""  "erf_exec" "plt00020")
+add_test_r(ScalarAdvDiff_weno5z              ""  "erf_exec" "plt00020")
 add_test_r(ScalarAdvDiff_wenomzq3            ""  "erf_exec" "plt00020")
 add_test_r(ScalarDiffusionGaussian           ""  "erf_exec" "plt00020")
 add_test_r(ScalarDiffusionSine               ""  "erf_exec" "plt00020")
