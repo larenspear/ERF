@@ -6,8 +6,33 @@
 #include "ERF_SurfaceTemperature.H"
 #include "ERF_SurfaceMoisture.H"
 #include "ERF_TerrainMetrics.H"
+#include "ERF_Wstar.H"
 
 using namespace amrex;
+
+namespace {
+
+/**
+ * The column of a box nearest (i,j).  A planar surface field whose source carries no
+ * lateral ghost cells fills its own ghost cells from the edge of its grid with this, and
+ * then lets fill_planar_boundary replace the ones that another grid or a periodic image
+ * holds.
+ */
+struct NearestColumn
+{
+    int ilo, ihi, jlo, jhi;
+
+    explicit NearestColumn (const Box& b)
+        : ilo(b.smallEnd(0)), ihi(b.bigEnd(0)), jlo(b.smallEnd(1)), jhi(b.bigEnd(1)) {}
+
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    int i (int ii) const noexcept { return amrex::min(amrex::max(ii, ilo), ihi); }
+
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    int j (int jj) const noexcept { return amrex::min(amrex::max(jj, jlo), jhi); }
+};
+
+} // namespace
 
 /**
  * Wrapper to update ustar and tstar for Monin Obukhov similarity theory.
@@ -799,7 +824,8 @@ SurfaceLayer::impose_SurfaceLayer_bcs (const int& lev,
                                        MultiFab* xqv_flux,
                                        MultiFab* yqv_flux,
                                        MultiFab* zqv_flux,
-                                       const MultiFab* z_phys)
+                                       const MultiFab* z_phys,
+                                       MultiFab* mf_surface_fluxes)
 {
     if (flux_type == FluxCalcType::MOENG) {
         amrex::Real wsmin = most_min_wind_speed; // TODO: change for different faces
@@ -809,32 +835,32 @@ SurfaceLayer::impose_SurfaceLayer_bcs (const int& lev,
         compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
                                  xheat_flux, yheat_flux, zheat_flux,
                                  xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
+                                 z_phys, flux_comp, mf_surface_fluxes);
     } else if (flux_type == FluxCalcType::ROTATE) {
         rotate_flux flux_comp;
         compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
                                  xheat_flux, yheat_flux, zheat_flux,
                                  xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
+                                 z_phys, flux_comp, mf_surface_fluxes);
     } else if (flux_type == FluxCalcType::RICO) {
         rico_flux flux_comp(rico_theta_z0, rico_qsat_z0);
         compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
                                  xheat_flux, yheat_flux, zheat_flux,
                                  xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
+                                 z_phys, flux_comp, mf_surface_fluxes);
     } else if (flux_type == FluxCalcType::BULK_COEFF) {
         bulk_coeff_flux flux_comp(m_Cd, m_Ch, m_Cq);
         compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
                                  xheat_flux, yheat_flux, zheat_flux,
                                  xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
+                                 z_phys, flux_comp, mf_surface_fluxes);
     } else if (flux_type == FluxCalcType::CUSTOM) {
         const bool fluxes_include_rho = specified_rho_surf || m_use_sfc_fluxes;
         custom_flux flux_comp(fluxes_include_rho);
         compute_SurfaceLayer_bcs(lev, mfs, Tau_lev,
                                  xheat_flux, yheat_flux, zheat_flux,
                                  xqv_flux, yqv_flux, zqv_flux,
-                                 z_phys, flux_comp);
+                                 z_phys, flux_comp, mf_surface_fluxes);
     } else {
         amrex::Abort("Unknown surface layer flux calculation type");
     }
@@ -902,7 +928,8 @@ SurfaceLayer::compute_SurfaceLayer_bcs (const int& lev,
                                         MultiFab* yqv_flux,
                                         MultiFab* zqv_flux,
                                         const MultiFab* z_phys,
-                                        const FluxCalc& flux_comp)
+                                        const FluxCalc& flux_comp,
+                                        MultiFab* mf_surface_fluxes)
 {
     bool rotate = m_rotate;
 
@@ -1099,6 +1126,11 @@ SurfaceLayer::compute_SurfaceLayer_bcs (const int& lev,
         //============================================================================
         const bool is_low_face = m_face.isLow();
 
+        amrex::Array4<amrex::Real> surface_flux_arr;
+        if (mf_surface_fluxes != nullptr) {
+            surface_flux_arr = mf_surface_fluxes->array(mfi);
+        }
+
         ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
         {
             // Valid theta flux from LSM and over land. The LSM writes the
@@ -1113,8 +1145,14 @@ SurfaceLayer::compute_SurfaceLayer_bcs (const int& lev,
                 // LSM flux MultiFabs store kinematic fluxes for MOST parameter
                 // updates. The applied hfx array stores the conservative RHS flux.
                 Tflux = cons_arr(i,j,k,Rho_comp) * t_flux_arr(i,j,0);
+                if(surface_flux_arr) {
+                    surface_flux_arr(i,j,0,0) = Tflux;
+                }
             } else if (is_land == 2) { // no temperature flux within buildings
                 Tflux = zero;
+                if(surface_flux_arr) {
+                    surface_flux_arr(i,j,0,0) = Tflux;
+                }
             } else {
                 Tflux = flux_comp.compute_t_flux(i, j, k, dir,
                                                  cons_arr, velx_arr, vely_arr, velz_arr,
@@ -1124,6 +1162,9 @@ SurfaceLayer::compute_SurfaceLayer_bcs (const int& lev,
                 // Doing so flips a sentinel (water/unprocessed) cell to "valid LSM"
                 // on the next step, so a MOST-derived value is re-read as an LSM flux
                 // Only Noah-MP should populate the LSM cache.
+                if (surface_flux_arr) {
+                    surface_flux_arr(i,j,0,0) = Tflux;
+                }
             }
 
             if (soil_t_flux_arr && is_land == 1) {
@@ -1182,8 +1223,14 @@ SurfaceLayer::compute_SurfaceLayer_bcs (const int& lev,
                     // LSM flux MultiFabs store kinematic fluxes for MOST parameter
                     // updates. The applied qfx array stores the conservative RHS flux.
                     Qflux = cons_arr(i,j,k,Rho_comp) * q_flux_arr(i,j,0);
+                    if(surface_flux_arr) {
+                        surface_flux_arr(i,j,0,1) = Qflux;
+                    }
                 } else if (is_land == 2) { // no moisture flux within buildings
                     Qflux = zero;
+                    if(surface_flux_arr) {
+                        surface_flux_arr(i,j,0,1) = Qflux;
+                    }
                 } else {
                     Qflux = flux_comp.compute_q_flux(i, j, k, dir,
                                                      cons_arr, velx_arr, vely_arr, velz_arr,
@@ -1191,6 +1238,9 @@ SurfaceLayer::compute_SurfaceLayer_bcs (const int& lev,
                                                      q_star_arr, q_surf_arr);
                     // NOTE: no writeback into lsm_q_flux_arr -- see the matching
                     // t_flux note above.
+                    if (surface_flux_arr) {
+                        surface_flux_arr(i,j,0,1) = Qflux;
+                    }
                 }
 
                 // Do scalar flux rotations?
@@ -1731,8 +1781,13 @@ SurfaceLayer::compute_sfc_params_from_lsm_fluxes (const int& lev,
         ParallelFor(vbx, [=] AMREX_GPU_DEVICE(int i, int j, int /*k*/) noexcept
         {
             int is_land = (lmask_arr) ? lmask_arr(i,j,0) : 1;
-            // Skip cells the LSM did not have a valid flux (lsm_undefined).
-            if (is_land && lsm_t_flux_arr && lsm_t_flux_arr(i,j,0) < lsm_undefined) {
+            // Skip cells where the LSM does not have a valid value (finite and below
+            // lsm_undefined) for every one of the four fluxes; these keep the MOST values.
+            if (is_land && lsm_t_flux_arr &&
+                is_valid_lsm_value(lsm_t_flux_arr(i,j,0)) &&
+                is_valid_lsm_value(lsm_q_flux_arr(i,j,0)) &&
+                is_valid_lsm_value(lsm_tau13_arr (i,j,0)) &&
+                is_valid_lsm_value(lsm_tau23_arr (i,j,0))) {
                 Real rho = cons_arr(i,j,klo,Rho_comp);
                 Real Thd = cons_arr(i,j,klo,RhoTheta_comp) / rho;
                 Real qv  = (has_moisture) ? cons_arr(i,j,klo,RhoQ1_comp) / rho : zero;
@@ -1827,7 +1882,13 @@ SurfaceLayer::fill_tsurf_with_sst_and_tsk (const int& lev,
                                                   Array4<int> {};
 
         if (use_tsk) {
-            const auto tsk_arr = m_tsk_lev[lev][n_time_lo]->const_array(mfi);
+            // TSK carries the SST from the low file over water (update_sst_tsk), so it is
+            // interpolated in time between the same two slices as the SST.  Written as
+            // lo + alpha * (hi - lo) so that a cell whose TSK is the same in both slices,
+            // as it is over land, keeps exactly that value.
+            const auto tsk_lo_arr = m_tsk_lev[lev][n_time_lo]->const_array(mfi);
+            const auto tsk_hi_arr = (m_tsk_lev[lev][n_time_hi]) ? m_tsk_lev[lev][n_time_hi]->const_array(mfi)
+                                                                : tsk_lo_arr;
             ParallelFor(gtbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
             {
                 int is_land = (lmask_arr) ? lmask_arr(i,j,k) : 1;
@@ -1835,7 +1896,8 @@ SurfaceLayer::fill_tsurf_with_sst_and_tsk (const int& lev,
                     t_surf_arr(i,j,k) = oma   * sst_lo_arr(i,j,k)
                                       + alpha * sst_hi_arr(i,j,k);
                 } else {
-                    t_surf_arr(i,j,k) = tsk_arr(i,j,k);
+                    t_surf_arr(i,j,k) = tsk_lo_arr(i,j,k)
+                                      + alpha * (tsk_hi_arr(i,j,k) - tsk_lo_arr(i,j,k));
                 }
             });
         } else {
@@ -2149,9 +2211,7 @@ SurfaceLayer::get_lsm_tsurf (const int& lev)
         //       This copies the valid box into the ghost cells.
         //       Fillboundary is called after this to pick up the
         //       interior ghost and periodic directions.
-        Box vbx  = mfi.validbox();
-        int i_lo = vbx.smallEnd(0); int i_hi = vbx.bigEnd(0);
-        int j_lo = vbx.smallEnd(1); int j_hi = vbx.bigEnd(1);
+        const NearestColumn col(mfi.validbox());
 
         auto t_surf_arr = t_surf[lev]->array(mfi);
         auto lmask_arr  = (m_lmask_lev[lev][0]) ? m_lmask_lev[lev][0]->array(mfi) :
@@ -2167,9 +2227,7 @@ SurfaceLayer::get_lsm_tsurf (const int& lev)
         {
             int is_land = (lmask_arr) ? lmask_arr(i,j,k) : 1;
             if (is_land) {
-                int li = amrex::min(amrex::max(i, i_lo), i_hi);
-                int lj = amrex::min(amrex::max(j, j_lo), j_hi);
-                const Real lsm_value = lsm_arr(li,lj,lsm_khi);
+                const Real lsm_value = lsm_arr(col.i(i),col.j(j),lsm_khi);
                 if (amrex::Math::isfinite(lsm_value) && lsm_value > Real(0.0) &&
                     lsm_value < lsm_undefined) {
                     t_surf_arr(i,j,k) = lsm_value;
@@ -2590,12 +2648,103 @@ SurfaceLayer::update_pblh (const int& lev,
     }
 }
 
+/**
+ * Store the PBL height a PBL scheme (MRF, YSU, YSUNew) has diagnosed.
+ *
+ * pblh_in has no ghost cells, so the ghost cells of pblh are filled here: those that
+ * another grid of this level or a periodic image holds by fill_planar_boundary; those at a
+ * coarse/fine boundary from the next coarser level (the same injection as
+ * fill_pblh_from_coarser), so that they agree with the coarse state the other surface
+ * fields there are computed from; those outside a non-periodic domain from the nearest
+ * column of the domain (after fill_planar_boundary, so that a corner beside another grid
+ * takes that grid's height); and the rest -- where the coarser level has no height yet --
+ * from the nearest column of their own grid.
+ *
+ * @param[in] lev     Current level
+ * @param[in] pblh_in PBL height, on the grids of the eddy diffusivities (3D, no ghost cells)
+ */
 void
 SurfaceLayer::set_pblh (const int& lev, const amrex::MultiFab& pblh_in)
 {
-    AMREX_ASSERT(pblh[lev]);
-    amrex::MultiFab::Copy(*pblh[lev], pblh_in, 0, 0, 1, 0);
-    fill_planar_boundary(lev, *pblh[lev]);
+    // NOTE: pblh[lev] is a 2D MF (except with EB)
+    //       pblh_in   is a 3D MF built off the eddydiffs BA
+    AMREX_ALWAYS_ASSERT(pblh[lev]);
+    MultiFab& dst = *pblh[lev];
+
+    // The boxes of the two are paired by index below
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        pblh_in.size() == dst.size() && pblh_in.DistributionMap() == dst.DistributionMap(),
+        "SurfaceLayer::set_pblh: the PBL height must be on the grids of the surface layer");
+
+    std::unique_ptr<MultiFab> crse;
+    if (lev > 0 && pblh[lev-1]) {
+        crse = std::make_unique<MultiFab>(dst.boxArray(), dst.DistributionMap(), 1, dst.nGrowVect());
+        inject_pblh_from_coarser(lev, *crse);
+    }
+    // Only the columns inside the domain (or a periodic image of it) take the coarse height
+    const Geometry& geom = m_geom[lev];
+    const NearestColumn in_domain(geom.Domain());
+    const bool per_x = geom.isPeriodic(0);
+    const bool per_y = geom.isPeriodic(1);
+
+#ifdef _OPENMP
+#pragma omp parallel if (Gpu::notInLaunchRegion())
+#endif
+    for (MFIter mfi(dst, TilingIfNotGPU()); mfi.isValid(); ++mfi)
+    {
+        const Box gtbx = mfi.growntilebox();
+        const Box& vbx = mfi.validbox();
+        const Box& sbx = pblh_in.box(mfi.index());
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            sbx.smallEnd(0) == vbx.smallEnd(0) && sbx.bigEnd(0) == vbx.bigEnd(0) &&
+            sbx.smallEnd(1) == vbx.smallEnd(1) && sbx.bigEnd(1) == vbx.bigEnd(1),
+            "SurfaceLayer::set_pblh: the PBL height must be on the grids of the surface layer");
+
+        // Clamp to the source box, which is the one we read
+        const NearestColumn col(sbx);
+        const int klo = sbx.smallEnd(2);
+        const int khi = sbx.bigEnd(2);
+
+        const Array4<      Real> pblh_dst = dst.array(mfi);
+        const Array4<const Real> pblh_src = pblh_in.const_array(mfi);
+        const Array4<const Real> pblh_crse = (crse) ? crse->const_array(mfi) : Array4<const Real>{};
+        ParallelFor(gtbx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            const int li = col.i(i);
+            const int lj = col.j(j);
+            const int lk = amrex::min(amrex::max(k, klo), khi);
+            Real h = pblh_src(li,lj,lk);
+            const bool inside = (per_x || in_domain.i(i) == i) && (per_y || in_domain.j(j) == j);
+            if (pblh_crse && inside && (li != i || lj != j) && pblh_is_diagnosed(pblh_crse(i,j,k))) {
+                h = pblh_crse(i,j,k);
+            }
+            pblh_dst(i,j,k) = h;
+        });
+    }
+    fill_planar_boundary(lev, dst);
+
+    // A ghost cell outside a non-periodic domain but beside another grid of this level (a
+    // corner) was left above with the nearest column of its own grid, which fill_planar_boundary
+    // does not overwrite; give it the nearest column of the domain, which is inside this fab and
+    // now holds the height of the grid that owns it
+    if (!per_x || !per_y) {
+#ifdef _OPENMP
+#pragma omp parallel if (Gpu::notInLaunchRegion())
+#endif
+        for (MFIter mfi(dst, TilingIfNotGPU()); mfi.isValid(); ++mfi)
+        {
+            const Box gtbx = mfi.growntilebox();
+            const Array4<Real> pblh_dst = dst.array(mfi);
+            ParallelFor(gtbx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                const int ci = (per_x) ? i : in_domain.i(i);
+                const int cj = (per_y) ? j : in_domain.j(j);
+                if (ci != i || cj != j) {
+                    pblh_dst(i,j,k) = pblh_dst(ci,cj,k);
+                }
+            });
+        }
+    }
 }
 
 /**
@@ -2806,14 +2955,28 @@ SurfaceLayer::define_pblh_columns (const int& lev,
 void
 SurfaceLayer::fill_pblh_from_coarser (const int& lev)
 {
-    AMREX_ALWAYS_ASSERT(lev > 0 && pblh[lev] && pblh[lev-1]);
+    AMREX_ALWAYS_ASSERT(lev > 0 && pblh[lev]);
+    inject_pblh_from_coarser(lev, *pblh[lev]);
+    fill_planar_boundary(lev, *pblh[lev]);
+}
+
+/**
+ * Write into fine, a MultiFab on the grids of pblh[lev], the PBL height of the next coarser
+ * level over all of its cells, ghost cells included (see fill_pblh_from_coarser).
+ *
+ * @param[in]  lev  Current level (> 0)
+ * @param[out] fine PBL height of level lev-1, injected onto the grids of level lev
+ */
+void
+SurfaceLayer::inject_pblh_from_coarser (const int& lev, MultiFab& fine) const
+{
+    AMREX_ALWAYS_ASSERT(lev > 0 && pblh[lev-1]);
     const Geometry& geom_f = m_geom[lev];
     const Geometry& geom_c = m_geom[lev-1];
     const IntVect rr(AMREX_D_DECL(static_cast<int>(std::lround(geom_c.CellSize(0) / geom_f.CellSize(0))),
                                   static_cast<int>(std::lround(geom_c.CellSize(1) / geom_f.CellSize(1))),
                                   1));
 
-    MultiFab& fine = *pblh[lev];
     const MultiFab& crse = *pblh[lev-1];
 
     // Each fine column takes the height of the coarse column that holds it (injection, no
@@ -2852,7 +3015,6 @@ SurfaceLayer::fill_pblh_from_coarser (const int& lev)
             f(i,j,k) = c(amrex::coarsen(i,rx), amrex::coarsen(j,ry), k);
         });
     }
-    fill_planar_boundary(lev, fine);
 }
 
 /**

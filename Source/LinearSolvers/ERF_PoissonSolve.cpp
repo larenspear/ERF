@@ -246,6 +246,16 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
         // to the extrapolation in VelocityToMomentum (or the boundary fill in the time step).
         AMREX_ALWAYS_ASSERT(mom_mf[IntVars::xmom].nGrowVect()[2] >= 1 &&
                             mom_mf[IntVars::ymom].nGrowVect()[2] >= 1);
+        // Where the level stops inside the domain in z there is no fine box to copy from: take
+        // those faces from the coarse level first, in the projected scaling, built from coarse
+        // data only.  FillBoundary below then overwrites the faces that a neighbouring fine box
+        // does cover.  The same call returns the coarse Omega for the level's top and bottom.
+        MultiFab cf_omega_t;
+        Vector<int> cf_slab_box;
+        if (lev > 0) {
+            set_cf_zghost_projection(lev, l_time, mom_mf[IntVars::xmom], mom_mf[IntVars::ymom],
+                                     cf_omega_t, cf_slab_box);
+        }
         mom_mf[IntVars::xmom].FillBoundary(IntVect(0,0,1), geom[lev].periodicity());
         mom_mf[IntVars::ymom].FillBoundary(IntVect(0,0,1), geom[lev].periodicity());
 
@@ -274,6 +284,12 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
                 }
             });
         } // mfi
+
+        // Where the level stops inside the domain in z, the flux through its top and bottom
+        // faces comes from the coarse level's Omega (see ERF_CoarseFineFaces.cpp)
+        if (lev > 0) {
+            set_cf_zface_omega(lev, mom_mf[IntVars::zmom], cf_omega_t, cf_slab_box);
+        }
     }
 
     // ****************************************************************************
@@ -719,9 +735,7 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
 
         if (solverChoice.terrain_type != TerrainType::EB) {
 
-#ifdef ERF_USE_FFT
         Box my_region(subdomains[lev][isub].minimalBox());
-#endif
 
         // ****************************************************************************
         // No terrain or grid stretching
@@ -740,6 +754,14 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
         // Grid stretching (flat terrain)
         // ****************************************************************************
         else if (solverChoice.mesh_type == MeshType::StretchedDz) {
+            // Only the hybrid FFT solver handles a stretched mesh, and it is tridiagonal in z.
+            // A subdomain whose RHS is already zero was skipped above, so this stops only a
+            // projection that would have to do something (issue #4281).
+            if (geom[lev].isPeriodic(2)) {
+                amrex::Abort("The projection (erf.anelastic or erf.project_initial_velocity) on a "
+                             "stretched mesh (erf.grid_stretching_ratio, erf.initial_dz or "
+                             "erf.terrain_z_levels) needs a non-periodic z direction");
+            }
 #ifndef ERF_USE_FFT
             amrex::Abort("Rebuild with USE_FFT = TRUE so you can use the FFT solver");
 #else
@@ -759,16 +781,48 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
         // General terrain
         // ****************************************************************************
         else if (solverChoice.mesh_type == MeshType::VariableDz) {
-#ifdef ERF_USE_FFT
             bool boxes_make_rectangle = (my_region.numPts() == subdomains[lev][isub].numPts());
-            if (!boxes_make_rectangle) {
-                amrex::Abort("FFT preconditioner for GMRES won't work unless the union of boxes is rectangular");
+            if (solverChoice.terrain_poisson_solver != TerrainPoissonSolver::gmres_fft) {
+                // amrex::MLTerrainPoisson, multigrid alone or under GMRES; no FFT needed
+                if (!boxes_make_rectangle) {
+                    amrex::Abort("erf.terrain_poisson_solver = mlmg or gmres_mlmg needs the boxes of each "
+                                 "region of a level to make a rectangle");
+                }
+                // Regions of one level that meet across a periodic boundary would each get a
+                // Neumann face there, and the correction could not cross it.  They meet when
+                // the other region, shifted by one period, shares a face with this one.
+                for (int dir = 0; dir < 2; ++dir) {
+                    if (!geom[lev].isPeriodic(dir)) { continue; }
+                    const bool at_lo = (my_region.smallEnd(dir) == domain.smallEnd(dir));
+                    const bool at_hi = (my_region.bigEnd(dir)   == domain.bigEnd(dir));
+                    if (at_lo == at_hi) { continue; }
+                    const Box grown = amrex::grow(my_region, dir, 1);
+                    for (int jsub = 0; jsub < subdomains[lev].size(); ++jsub) {
+                        if (jsub == isub) { continue; }
+                        const Box other = subdomains[lev][jsub].minimalBox();
+                        const int period = domain.length(dir);
+                        const Box shifted = amrex::shift(other, dir, at_lo ? -period : period);
+                        if (grown.intersects(shifted)) {
+                            amrex::Abort("erf.terrain_poisson_solver = mlmg or gmres_mlmg: a refined level "
+                                         "crosses a periodic boundary; refine on one side of it");
+                        }
+                    }
+                }
+                solve_with_terrain_mlmg(lev, my_region, rhs_sub[0], phi_sub[0], fluxes_sub[0],
+                                        ax_sub, ay_sub, az_sub, dJ_sub, znd_sub,
+                                        solverChoice.terrain_poisson_solver == TerrainPoissonSolver::gmres_mlmg);
             } else {
-                solve_with_gmres(lev, my_region, rhs_sub[0], phi_sub[0], fluxes_sub[0], ax_sub, ay_sub, az_sub, dJ_sub, znd_sub);
-            }
+#ifdef ERF_USE_FFT
+                if (!boxes_make_rectangle) {
+                    amrex::Abort("FFT preconditioner for GMRES won't work unless the union of boxes is rectangular");
+                } else {
+                    solve_with_gmres(lev, my_region, rhs_sub[0], phi_sub[0], fluxes_sub[0], ax_sub, ay_sub, az_sub, dJ_sub, znd_sub);
+                }
 #else
-            amrex::Abort("Rebuild with USE_FFT = TRUE so you can use the FFT preconditioner for GMRES");
+                amrex::Abort("Rebuild with USE_FFT = TRUE so you can use the FFT preconditioner for GMRES, "
+                             "or set erf.terrain_poisson_solver = mlmg");
 #endif
+            } // gmres_fft
 
             //
             // The lateral fluxes carry the map factor, as the divergence does

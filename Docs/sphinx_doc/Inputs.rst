@@ -641,15 +641,16 @@ Notes
    **amr.refine_grid_layout_x/_y/_z**; if a per-direction flag is also
    specified it takes precedence in that direction
 
--  **erf.regrid_level_0_on_restart** re-makes the level-0 grids after the
-   checkpoint has been read.  The same thing happens automatically, without the
-   flag, when the restart runs on more ranks than level 0 has boxes in the
-   checkpoint -- that is, when a run is continued on more ranks than it was
-   written with.  Re-making the level rebuilds it from the same code a fresh
-   start uses, which knows nothing about the checkpoint, so state that only the
-   checkpoint carries would be lost.  ERF stops in that case and names what
-   would have been lost; restart on the number of ranks the checkpoint was
-   written with to keep the level-0 grids as they were.
+-  **erf.regrid_level_0_on_restart** lets a restart continue on level-0 grids
+   other than the ones the checkpoint was written on, re-made from
+   **amr.max_grid_size** as a fresh start would make them.  The same thing
+   happens automatically, without the flag, when the restart runs on more ranks
+   than level 0 has boxes in the checkpoint -- that is, when a run is continued
+   on more ranks than it was written with.  Every field the checkpoint carries,
+   including the state of the land-surface models, two-stream radiation and
+   spectral bin microphysics, is read on the grids in the file and
+   redistributed onto the new ones, so the run continues as it would have on
+   the original grids.
 
 .. _examples-of-usage-4:
 
@@ -881,7 +882,8 @@ List of Parameters
 |                                      | -- see ``vert_implicit_fac`` below                       |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.vert_implicit**                | Do vertical implicit solve for diffusion of u, v, theta, | Boolean            | true              |
-|                                      | KE, and qv with default time-centering in each stage     |                    |                   |
+|                                      | KE, and moisture with default time-centering in each     |                    |                   |
+|                                      | stage                                                    |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.vert_implicit_fac**            | time-centering factor for the vertical diffusive terms,  | 1 or 3 Reals in    | 1.0 1.0 0.0       |
 |                                      | where 0 is fully explicit and 1 is fully implicit.       | [0,1]              |                   |
@@ -894,7 +896,8 @@ List of Parameters
 |                                      | diffusion                                                |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.implicit_moisture_diffusion**  | include the implicit contribution to vertical moisture   | Boolean            | true              |
-|                                      | diffusion                                                |                    |                   |
+|                                      | diffusion of every moisture species (qv only with SBM,   |                    |                   |
+|                                      | whose liquid is owned by the spectral solver)            |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.implicit_ke_diffusion**        | include the implicit contribution to vertical turbulent  | Boolean            | true              |
 |                                      | kinetic energy diffusion                                 |                    |                   |
@@ -912,7 +915,10 @@ List of Parameters
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.cfl**                          | CFL number used to compute level 0 dt                    | Real > 0 and <= 1  | 0.8               |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
-| **erf.substepping_cfl**              | CFL number used to compute the number of substeps        | Real > 0 and <= 1  | 1.0               |
+| **erf.substepping_cfl**              | CFL number used to compute the number of substeps:       | Real > 0 and <= 1  | 0.7               |
+|                                      | the horizontal acoustic Courant number of one substep    |                    |                   |
+|                                      | (the vertical is excluded with implicit substepping);    |                    |                   |
+|                                      | values near 1 are unstable                               |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.fixed_dt**                     | set level 0 dt as this value regardless of cfl or other  | Real > 0           | unused if not set |
 |                                      | settings                                                 |                    |                   |
@@ -927,13 +933,13 @@ List of Parameters
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.change_max**                   | factor by which dt can grow in subsequent steps          | Real >= 1          | 1.1               |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
-| **erf.diffusive_dt_check**           | warn when dt times the largest explicit eddy-diffusion   | Boolean            | false             |
-|                                      | rate exceeds erf.diffusive_cfl (see Notes); does not     |                    |                   |
-|                                      | change dt or the answer                                  |                    |                   |
+| **erf.diffusive_dt_check**           | warn when dt times the largest explicit diffusion rate   | Boolean            | false             |
+|                                      | (eddy and molecular) exceeds erf.diffusive_cfl (see      |                    |                   |
+|                                      | Notes); does not change dt or the answer                 |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.diffusive_dt_limit**           | also limit an adaptive dt to erf.diffusive_cfl divided   | Boolean            | false             |
-|                                      | by that rate; aborts with erf.fixed_dt or without an     |                    |                   |
-|                                      | eddy-diffusivity closure                                 |                    |                   |
+|                                      | by that rate; aborts with erf.fixed_dt, or with neither  |                    |                   |
+|                                      | an eddy-diffusivity closure nor molecular diffusion      |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.diffusive_cfl**                | diffusive Fourier number used by the check and the       | Real > 0 and <= 1  | 0.5               |
 |                                      | limit; aborts if given with both off                     |                    |                   |
@@ -959,6 +965,18 @@ List of Parameters
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 | **erf.poisson_reltol**               | relative tolerance for the Poisson solve; raised to      | Real > 0           | 1.e-8             |
 |                                      | 1.e-6 in single precision builds                         |                    |                   |
++--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
+| **erf.terrain_poisson_solver**       | solver for the projection on a terrain-fitted mesh       | "gmres_fft",       | "gmres_fft"       |
+|                                      | (anelastic, and the initial projection). ``gmres_fft``:  | "mlmg",            |                   |
+|                                      | GMRES with ERF's terrain operator and an FFT             | "gmres_mlmg"       |                   |
+|                                      | preconditioner (needs the FFT build). ``mlmg``:          |                    |                   |
+|                                      | ``amrex::MLTerrainPoisson`` with multigrid, no FFT       |                    |                   |
+|                                      | needed. ``gmres_mlmg``: GMRES with that multigrid as     |                    |                   |
+|                                      | preconditioner. The three solve the same equations and   |                    |                   |
+|                                      | agree to the solver tolerance. Each region of a level    |                    |                   |
+|                                      | must be a rectangle. No effect on flat or stretched      |                    |                   |
+|                                      | meshes, which still need the FFT build. See              |                    |                   |
+|                                      | :ref:`subsec:TerrainMLMG`.                               |                    |                   |
 +--------------------------------------+----------------------------------------------------------+--------------------+-------------------+
 
 Notes
@@ -1035,11 +1053,18 @@ Notes
      range covered by both of the cell columns adjacent to it, so the two grids sharing that
      seam obtain the same answer.
 
--  | With an eddy-diffusivity closure, **erf.diffusive_dt_check** estimates on every level, at
-     the start of every coarse step, the largest explicit eddy-diffusion rate over the cells, from
-     the eddy diffusivities of the previous step.  Those are zero before the first step and on
-     the first step after a restart (they are not checkpointed); molecular diffusion is not
-     included.  For momentum the rate is the largest of the u, v and w rows,
+-  | **erf.diffusive_dt_check** estimates on every level, at the start of every coarse step,
+     the largest explicit diffusion rate over the cells, from the eddy diffusivities of the
+     previous step plus the molecular ones of **erf.molec_diff_type**.  The eddy diffusivities
+     are zero before the first step and on the first step after a restart (they are not
+     checkpointed).  The molecular ones are added to both the horizontal and the vertical
+     diffusivities, as the diffusion operators use them.  For momentum that is
+     **erf.dynamic_viscosity** with ``Constant`` and **erf.dynamic_viscosity** /
+     **erf.rho0_trans** times the largest density around the cell with ``ConstantAlpha`` (the
+     stresses take twice it, as they take twice the eddy viscosity).  For theta it is
+     **erf.alpha_T**, and for moisture and the advected scalar **erf.alpha_C**, times
+     **erf.rho0_trans** with ``Constant`` and times the largest density around the cell with
+     ``ConstantAlpha``.  Turbulent kinetic energy has none.  For momentum the rate is the largest of the u, v and w rows,
      :math:`\mu_h (2a+b) + e_{uv}\mu_v/\Delta z^2`, :math:`\mu_h (a+2b) + e_{uv}\mu_v/\Delta z^2`
      and :math:`\mu_v (a+b) + 2 e_w \mu_v/\Delta z^2` (the horizontal diffusion of w uses
      :math:`\mu_v`: :math:`\tau_{31}` and :math:`\tau_{32}` carry the same edge-averaged
@@ -1079,9 +1104,10 @@ Notes
      Euler) give :math:`e = 0`, and ``0 0 0``, anelastic RK2 (no implicit solve), ``1 0 0``,
      ``0 0 1`` or ``0.995 0.1 0.0666`` (whose last stage amplifies by 1.0008) give :math:`e = 1`.
      The vertical diffusion of w is explicit (:math:`e_w = 1`) unless ERF is built with
-     ``ERF_IMPLICIT_W``; only the first moisture variable is in the implicit solve, so the
-     moisture term has :math:`e = 1` when other moist species are carried, and the advected
-     scalar always does.  If dt times this rate
+     ``ERF_IMPLICIT_W``; every moisture variable is in the implicit solve (with SBM only qv,
+     the one the host diffuses), so the moisture term has :math:`e = 1` only when a
+     microphysics model also carries non-water species (packed directly after the water
+     species, these diffuse explicitly), and the advected scalar always does.  If dt times this rate
      exceeds **erf.diffusive_cfl** a warning is printed, repeated on a level only when the
      Fourier number has grown by half.  The default 0.5 is the forward-Euler bound; the
      three-stage scheme is stable to about 0.63 for a pure diffusion.  With
@@ -1145,9 +1171,10 @@ Notes
          the fast timestep will be the slow timestep divided by **fixed_mri_dt_ratio.**
 
      * | If neither **erf.fixed_mri_dt_ratio** nor **erf.fixed_fast_dt** is specified, then the fast timestep
-         will be computed using the CFL condition for compressible flow, then adjusted (reduced if necessary)
-         as above so that the ratio of slow timestep to fine timestep is an even integer.
-         If **erf.substepping_cfl** is specified, that CFL value will be used.  If not, the default value will be used.
+         will be computed using the CFL condition for compressible flow with **erf.substepping_cfl**
+         (default 0.7).  The ratio of slow timestep to fast timestep is rounded up, so the fast timestep
+         never exceeds that limit, and then increased to the next even integer (or, if
+         **erf.force_stage1_single_substep** = 0, to the next multiple of 6).
 
 .. _examples-of-usage-6:
 
@@ -1336,9 +1363,15 @@ Examples of Usage
      prints certain integral quantities, such as total mass, momentum
      and energy in the domain every **erf.sum_interval** level-0 steps.
      In this example the code will print these quantities every two
-     coarse time steps. The print statements have the form
-   | TIME= 1.91717746 MASS= 1.792410279e+34
-   | for example. If this line is commented out then it will not compute
+     coarse time steps (with **erf.v** :math:`\geq 1`). The print statements have the form
+   | TIME= 1.91717746
+   |  MASS       = 1.7924102790000001e+34
+   | for example, with a line each for the mass, :math:`\rho\theta`, the scalar and the total
+     moisture. With more than one level each line holds two values, ``SL/ML``: the integral
+     over level 0 alone and the composite one, which uses the finest data available. Each cell
+     is weighted by its volume, :math:`\det J/(m_x m_y)`, so these are the quantities the
+     discretization conserves, and they are printed with every digit of the working
+     precision. If this line is commented out then it will not compute
      and print these quantities.
 
 .. _inputs-diagnostic-outputs:
@@ -2202,6 +2235,9 @@ If we set ``erf.molec_diff_type`` to ``ConstantAlpha``, then
 
 - ``erf.alpha_C`` is multiplied by the instantaneous local density :math:`\rho` to form the coefficient for an advected scalar.
 
+With either type, the coefficient formed from ``erf.alpha_C`` also applies to every moisture species of the
+microphysics model, number concentrations included, but not to non-moist species a model appends after them.
+
 Parameters for LES can either be set with one value that applies across all levels, or set with a number of values
 equal to the number of levels, allowing unique values of the parameter to be set for each level.
 
@@ -2501,6 +2537,22 @@ required; ERF does not assume a unit-spacing grid when metadata is absent.
      - Prescribed leaf potential temperature [K]; required and positive when heat exchange is enabled
      - Real [K]
      - None
+   * - **erf.forest_canopy_tke**
+     - Add the canopy wake production, short-circuit dissipation and length scale cap to the k-eqn RANS model; needs a forest and ``erf.rans_type = kEqn`` on every level, and at least one of the three coefficients below nonzero; with ``erf.forest_canopy_length_alpha`` > 0 it needs ``erf.implicit_tke_dissipation = true`` on every level (see :ref:`sec:Forest`)
+     - Boolean
+     - false
+   * - **erf.forest_canopy_beta_p**
+     - Fraction of the drag work that becomes TKE, :math:`\beta_p`; must be in [0, 1]; ignored, with a warning, unless ``erf.forest_canopy_tke = true``
+     - Real
+     - 1.0
+   * - **erf.forest_canopy_beta_d**
+     - Short-circuit dissipation coefficient :math:`\beta_d`; must be finite and not negative; ignored, with a warning, unless ``erf.forest_canopy_tke = true``
+     - Real
+     - 4.0
+   * - **erf.forest_canopy_length_alpha**
+     - Dimensionless :math:`\alpha` of the length scale cap :math:`L \le \alpha / f` in the canopy, with :math:`f = C_d \, \mathrm{LAD}` [1/m]; must be in [0, 1], 0 disables the cap; ignored, with a warning, unless ``erf.forest_canopy_tke = true``
+     - Real
+     - 0.04
 
 ``erf.forest_biophysics_heat = true`` requires
 ``erf.forest_biophysics = true`` and a positive
@@ -3194,6 +3246,11 @@ Notes
 
 - If both interval controls are set, output occurs when either criterion is met.
 - Output is written for the finest level that fully contains the requested box.
+- In a moist run the ``temperature`` planes hold the moist temperature, computed with qv, and
+  the reader converts them back to potential temperature with the ``qv`` planes.  A moist run
+  that writes ``temperature`` must therefore also write ``qv``, and a run that reads
+  ``temperature`` from planes that include ``qv`` must also read ``qv``; otherwise ERF stops.
+  ``theta`` planes need no qv.
 
 .. _sec:NumericalStability:
 
@@ -3271,7 +3328,9 @@ to rather than here: ``erf.init_vels_from_checkpoint`` reuses the velocity field
 from a checkpoint while re-initializing the rest of the state (see
 :ref:`sec:Initialization`), ``erf.prob_name`` selects the built-in problem setup,
 ``erf.nc_low_file`` supplies the low-resolution NetCDF data used by
-:ref:`sec:HindCast`, ``erf.buildings_file_name`` supplies the building geometry
+:ref:`sec:HindCast` (and, with ``erf.init_type = WRFInput``, the wrflowinp SST for level 0;
+``erf.nc_low_file_<lev>`` gives a finer level its own, see :ref:`subsec:wrflow-per-level`),
+``erf.buildings_file_name`` supplies the building geometry
 used by the immersed-forcing path (see :ref:`Forcings`), and
 ``erf.cloud_chamber_budget_interval`` controls the budget output of the cloud
 chamber case (see :ref:`CloudChamber`).
@@ -3524,7 +3583,8 @@ List of Parameters
 |                                  | "interpolate" is used). Ignored when                     |                    |                  |
 |                                  | ``terrain_smoothing`` = 0.                               |                    |                  |
 +----------------------------------+----------------------------------------------------------+--------------------+------------------+
-| **erf.terrain_file_name**        | filename                                                 | String             | NONE             |
+| **erf.terrain_file_name**        | text file of terrain heights in ERF order (y varies      | String             | NONE             |
+|                                  | fastest); see the format and the start-up checks below   |                    |                  |
 +----------------------------------+----------------------------------------------------------+--------------------+------------------+
 | **erf.terrain_file_name_nc**     | NetCDF terrain filename                                  | String             | NONE             |
 +----------------------------------+----------------------------------------------------------+--------------------+------------------+
@@ -3534,8 +3594,9 @@ List of Parameters
 | **erf.use_rotate_surface_flux**  | rotate the MOST surface stresses to be normal to the     | Boolean            | false            |
 |                                  | terrain surface; requires that terrain be used           |                    |                  |
 +----------------------------------+----------------------------------------------------------+--------------------+------------------+
-| **erf.terrain_file_name_USGS**   | text file of terrain heights in USGS format; an          | String             | None             |
-|                                  | alternative to ``erf.terrain_file_name``                 |                    |                  |
+| **erf.terrain_file_name_USGS**   | text file of terrain heights in USGS format (x varies    | String             | None             |
+|                                  | fastest); an alternative to ``erf.terrain_file_name``,   |                    |                  |
+|                                  | checked at start-up as described below                   |                    |                  |
 +----------------------------------+----------------------------------------------------------+--------------------+------------------+
 | **prob.custom_terrain_type**     | selects the problem-specific terrain initialization; any | String             | None             |
 |                                  | value other than ``None`` calls                          |                    |                  |
@@ -3600,12 +3661,65 @@ interfaces.
     the surface; if the fine grids are chopped in the vertical the run aborts and asks you
     to raise ``amr.max_grid_size_z`` or to use ``"interpolate"`` instead.
 
--  When setting **erf.terrain_file_name**, the format of the file is expected to
-    be (in raw text): the integer nx on the first line, the integer ny on the second line,
-    then the nx values of the x-coordinate, then the ny values of
-    the y-coordinate, then the (nx times ny) values of the z-coordinate associated
-    with the (x,y) values we have just read in.  Note that the z-values are in the
-    order z(x1,y1), z(x1,y2), z(x1,y3), ... which is contrary to standard Fortran ordering
+-  When setting **erf.terrain_file_name** (or **erf.buildings_file_name**, which uses the
+    same reader), the file is plain text with **one value per line**: the integer nx on
+    the first line, the integer ny on the second line, then the nx values of the
+    x-coordinate, then the ny values of the y-coordinate, then the nx times ny heights.
+    The heights are in the order h(x1,y1), h(x1,y2), h(x1,y3), ..., h(x2,y1), ..., that is
+    **y varies fastest** and height n sits at (x[n / ny], y[n % ny]).  This is contrary to
+    standard Fortran ordering; a file written with x varying fastest is read transposed.
+    nx or ny may be 1: a single value in a direction makes the surface constant in that
+    direction (for example a ridge profile in x with ny = 1 for a run periodic in y).
+    The USGS format of **erf.terrain_file_name_USGS** is: longitude and latitude of the
+    origin on the first line, nx and ny on the second, then nx times ny lines of
+    ``x y height`` with **x varying fastest**; nx and ny must be at least 2, and every point
+    of a row has the y of the row.  Blank lines are skipped in this format.  Each file is
+    read once per run, however many levels and regrids use it.
+
+-  Both text formats are checked when the file is read, and the run stops with a message
+    naming the file if
+
+    * nx or ny is smaller than 1 (ERF format) or 2 (USGS format);
+    * a line is missing or is not a number (``nan`` and ``inf`` included); a line has text
+      after its value (ERF format) or does not hold exactly ``x y height`` (USGS format,
+      including a truncated last line); or the file has more values than nx and ny ask for;
+    * (USGS format) the y value changes within a row of nx points;
+    * the x or y values do not increase strictly (USGS format: the x values of each row,
+      and y from row to row);
+    * the table does not cover the domain: in x and in y, each end of the table may stop
+      at most one table spacing inside **geometry.prob_lo** or **geometry.prob_hi**, which
+      allows the common layout of one height per cell starting at prob_lo (with an allowance
+      of 1e-3 of that spacing for coordinates written with few digits).  Beyond the table
+      the reader only extends the heights from its edge: linearly before the first point,
+      and in the ERF format by holding the last value after the last point (the USGS
+      format extends linearly at both ends).  A direction with a single value is not
+      checked.
+
+    A table larger than the domain is accepted.  For each valid file ERF prints once the
+    size and extent of the table, the order its heights are read in, where the lowest and
+    highest heights sit, and the largest slopes \|dh/dx\| and \|dh/dy\| between
+    neighbouring table points with where they sit.  A transposed file shows up there: the
+    highest point or the steepest slope is not where the terrain should have it.
+
+-  On a terrain-fitted mesh (**erf.terrain_type** = StaticFittedMesh or MovingFittedMesh)
+    without real-data lateral boundaries, ERF prints a WARNING when the
+    terrain slope \|grad h\| exceeds 0.3 (about 17 degrees) in the cells next to an
+    inflow or outflow face (Inflow, Outflow, InflowOutflow, HO_Outflow or Open; not
+    periodic faces and not walls), for terrain from any source.  The cells checked are
+    those whose stencils read the face's ghost cells: the solver's ghost-cell width, 2 to
+    4 cells depending on the advection schemes and numerical diffusion.  The slope includes
+    the map factors, as in the diffusive limits.  Each level that reaches the face is
+    checked on its own mesh whenever it has a new set of grids: at initialisation, on the
+    first step after a restart, and after a regrid, so a fine level created later is
+    checked too; each level and face is reported at most once.  A MovingFittedMesh surface
+    is checked only at those times, not as it moves.  No warning is printed when
+    **erf.implicit_terrain_metric** or **erf.diffusive_dt_limit** is on, nor on a level
+    where **erf.smag2d_slope_limiter** or **erf.smag2d_kh_cap** is on; these options
+    limit the terrain-metric diffusion on steep cells and need an eddy-diffusivity
+    closure (the first two Smagorinsky2D, **erf.implicit_terrain_metric** the implicit
+    vertical solve).  None of them changes the terrain at the face; flattening the
+    terrain within those cells of the face does.  The warning is a prompt to look: it
+    does not change the run.
 
 .. _sec:ImmersedForcingInputs:
 

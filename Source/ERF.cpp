@@ -22,6 +22,7 @@
 #include "ERF_PlotfileSelection.H"
 #include "ERF_Utils.H"
 #include "ERF_TerrainMetrics.H"
+#include "ERF_TerrainFileChecks.H"
 #include "ERF_SrcHeaders.H"
 //#include "ERF_BuoyancyUtils.H"
 
@@ -59,7 +60,7 @@ double ERF::low_time_interval  = std::numeric_limits<double>::max();
 
 // Time step control
 Real ERF::cfl            = Real(0.8);
-Real ERF::sub_cfl        = one;
+Real ERF::sub_cfl        = Real(0.7);
 Real ERF::init_shrink    = one;
 Real ERF::change_max     = Real(1.1);
 double ERF::dt_max_initial = static_cast<double>(bogus_large_value);
@@ -119,6 +120,7 @@ std::string ERF::nc_bdy_file; // Must provide via input
 
 // NetCDF wrflow (bottom boundary) file
 std::string ERF::nc_low_file; // Must provide via input
+Vector<std::string> ERF::nc_low_file_at_level;
 
 // 1D NetCDF output (for ingestion by AMR-Wind)
 int  ERF::output_1d_column = 0;
@@ -856,7 +858,12 @@ ERF::post_timestep (int nstep, double time, double dt_lev0)
         MultiFab mf_cc_vel(grids[levc], dmap[levc], AMREX_SPACEDIM, IntVect(0,0,0));
         average_face_to_cellcenter(mf_cc_vel,0,{AMREX_D_DECL(&U_new,&V_new,&W_new)},0);
 
-        HurricaneEyeTracker(solverChoice, mf_cc_vel);
+        int hurricane_eye_i_glob, hurricane_eye_j_glob;
+        Real hurricane_eye_latitude, hurricane_eye_longitude;
+
+        HurricaneEyeTracker(solverChoice, mf_cc_vel,
+                            hurricane_eye_i_glob, hurricane_eye_j_glob,
+                            hurricane_eye_latitude, hurricane_eye_longitude);
 
         HurricaneMaxVelTracker(geom[levc],
                                mf_cc_vel,
@@ -867,11 +874,18 @@ ERF::post_timestep (int nstep, double time, double dt_lev0)
                                     vars_new[levc][Vars::cons],
                                     t_new[0]);
 
+        HurricaneSurfaceFluxesTracker(hurricane_eye_i_glob,
+                                      hurricane_eye_j_glob,
+                                      hurricane_eye_latitude,
+                                      hurricane_eye_longitude,
+                                      t_new[0]);
+
         std::string filename_tracker = MakeVTKFilename_TrackerCircle(nstep);
         std::string filename_xy      = MakeVTKFilename_EyeTracker_xy(nstep);
         std::string filename_latlon  = MakeFilename_EyeTracker_latlon(nstep);
         std::string filename_maxvel  = MakeFilename_EyeTracker_maxvel(nstep);
         std::string filename_minpressure  = MakeFilename_EyeTracker_minpressure(nstep);
+        std::string filename_surface_fluxes = MakeFilename_EyeTracker_surface_fluxes(nstep);
 
         if (ParallelDescriptor::IOProcessor()) {
             WriteVTKPolyline(filename_tracker, hurricane_tracker_circle);
@@ -879,9 +893,9 @@ ERF::post_timestep (int nstep, double time, double dt_lev0)
             WriteLinePlot(filename_latlon, hurricane_eye_track_latlon);
             WriteLinePlot(filename_maxvel, hurricane_maxvel_vs_time);
             WriteLinePlot(filename_minpressure, hurricane_minpressure_vs_time);
+            WriteLinePlot(filename_surface_fluxes, hurricane_surface_fluxes_vs_time);
         }
     }
-
 } // post_timestep
 
 // This is called from main.cpp and handles all initialization, whether from start or restart
@@ -950,6 +964,54 @@ ERF::InitData_pre ()
     }
 
     solverChoice.check_params(max_level,geom,phys_bc_type);
+}
+
+/**
+ * Warn when the terrain next to an inflow or outflow face of level lev is steep and no
+ * steep-terrain option is on (erf.smag2d_slope_limiter and erf.smag2d_kh_cap per level).
+ * ComputeDt calls it whenever a level has a new set of grids (at initialisation, on the
+ * first step after a restart, and after a regrid), so a fine level created later that
+ * reaches a face is checked too; each level and face is reported at most once.  Only on a
+ * terrain-fitted mesh without real-data lateral boundaries; the band is the cells whose
+ * stencils read the face's ghost cells (ComputeGhostCells).
+ *
+ * @param[in] lev level
+ */
+void
+ERF::WarnSteepTerrainAtOpenFaces (int lev)
+{
+    if (solverChoice.terrain_type != TerrainType::StaticFittedMesh &&
+        solverChoice.terrain_type != TerrainType::MovingFittedMesh) { return; }
+    if (solverChoice.use_real_bcs) { return; }
+    if (solverChoice.implicit_terrain_metric || diffusive_dt_limit) { return; }
+    const TurbChoice& tc = solverChoice.turbChoice[lev];
+    if (tc.smag2d_slope_limiter || tc.smag2d_kh_cap > zero) { return; }
+
+    // faces in the order xlo, xhi, ylo, yhi
+    Array<bool,4> open;
+    Array<std::string,4> names;
+    bool any_open = false;
+    for (int f = 0; f < 4; ++f) {
+        const Orientation ori(f/2, (f%2 == 0) ? Orientation::low : Orientation::high);
+        const ERF_BC bc = phys_bc_type[ori];
+        open[f] = !geom[0].isPeriodic(ori.coordDir()) &&
+                  (bc == ERF_BC::inflow  || bc == ERF_BC::outflow || bc == ERF_BC::inflow_outflow ||
+                   bc == ERF_BC::ho_outflow || bc == ERF_BC::open);
+        names[f] = domain_bc_type[ori];
+        any_open = any_open || open[f];
+    }
+    if (!any_open) { return; }
+
+    openface_warned.resize(finest_level+1, Array<bool,4>{false, false, false, false});
+    const int band = ComputeGhostCells(solverChoice);
+    auto slopes = erf_terrain_file::FaceBandSlopes(*z_phys_nd[lev], *mapfac[lev][MapFacType::m_x],
+                                                   *mapfac[lev][MapFacType::m_y], geom[lev], band);
+    // a face already reported on this level is not reported again
+    for (int f = 0; f < 4; ++f) {
+        if (openface_warned[lev][f]) { slopes[f] = Real(-1.); }
+        if (open[f] && slopes[f] > erf_terrain_file::open_face_slope_warn) { openface_warned[lev][f] = true; }
+    }
+    Print() << erf_terrain_file::OpenFaceSlopeWarning(lev, band, slopes, open, names);
 }
 
 void
@@ -1179,12 +1241,17 @@ ERF::InitData_post ()
                     var_fab.clear();
                 }
 
-                update_sst_tsk(itime, geom[lev], ba2d[lev],
+                update_sst_tsk(lev, itime, geom[lev], ba2d[lev],
                                sst_lev[lev], tsk_lev[lev],
                                m_SurfaceLayer[Orientation(Direction::z, Orientation::low)], low_data_zlo,
                                vars_new[lev][Vars::cons], *mf_PSFC[lev],
                                solverChoice.rdOcp, lmask_lev[lev][0], use_moist);
             } // itime
+
+            // The finer levels that read their own init files, coarsest first
+            for (int flev = 1; flev <= finest_level; ++flev) {
+                init_fine_low_slices(flev, /*restarting=*/ true);
+            }
         }
 #endif
 #ifdef ERF_USE_FFT
@@ -2432,6 +2499,17 @@ ERF::has_own_init_file (int lev) const
 }
 
 //
+// Did the user supply a wrflowinp file of its own for this level (erf.nc_low_file_<lev>)?
+// Level 0 reads erf.nc_low_file, so this is only ever true for lev > 0.
+//
+bool
+ERF::has_own_low_file (int lev) const
+{
+    if (lev < 1 || lev >= static_cast<int>(nc_low_file_at_level.size())) { return false; }
+    return !nc_low_file_at_level[lev].empty();
+}
+
+//
 // Fill the map scale factors at lev by interpolation from lev-1.
 //
 // init_stuff() (re)builds mapfac[lev] and sets it to 1 every time a level is created or
@@ -2748,63 +2826,25 @@ ERF::Interp2DArrays (int lev, const BoxArray& my_ba2d, const DistributionMapping
                               rr2d, &cell_cons_interp,
                               domain_bcs_type, BCVars::cons_bc);
     }
-    if (sst_lev[lev-1][0]) {
-        if (sst_lev[lev].size() < sst_lev[lev-1].size()) {
-            sst_lev[lev].resize(sst_lev[lev-1].size());
-        }
+    //
+    // The SST and TSK time slices needed now: made and interpolated from the parent if
+    // they do not exist yet, and (for a level with no init file of its own) given a halo
+    // from the parent.  Later slices are filled as level 0 reads them (see
+    // Interp2DTimeSlice and ERF::timeStep).
+    //
+    for (auto* field_lev : {&sst_lev, &tsk_lev}) {
+        if (!(*field_lev)[lev-1][0] && !(*field_lev)[lev][0]) { continue; }
 #ifdef ERF_USE_NETCDF
         double time_since_start_low = t_new[0] + start_time - start_low_time;
         int n_time_old = static_cast<int>(time_since_start_low /  low_time_interval);
-        int ntimes_to_interp = std::min(n_time_old+3, static_cast<int>(sst_lev[lev-1].size()));
+        int ntimes_to_interp = std::min(n_time_old+3, static_cast<int>((*field_lev)[lev-1].size()));
 #else
-        // TODO: Fix if SST is provided without NETCDF
+        // TODO: Fix if SST/TSK is provided without NETCDF
         int n_time_old       = 0;
         int ntimes_to_interp = 1;
 #endif
-        auto ngv = sst_lev[lev-1][0]->nGrowVect(); ngv[2] = 0;
-
         for (int n = n_time_old; n < ntimes_to_interp; n++) {
-            if (!sst_lev[lev-1][n]) { continue; }
-            if (!sst_lev[lev][n]) {
-                sst_lev[lev][n] = std::make_unique<MultiFab>(my_ba2d,my_dm,1,ngv);
-                // DO fill the ghost cells outside the domain: SurfaceLayer populates t_surf
-                // on grown tileboxes, so it reads the sea surface temperature past a
-                // non-periodic domain face.  As for the Coriolis factors above, the coarse
-                // level has those ghost cells filled (update_sst_tsk fills the grown box).
-                InterpFromCoarseLevel(*sst_lev[lev][n], ngv, ngv,
-                                      *sst_lev[lev-1][n], 0, 0, 1,
-                                      geom[lev-1], geom[lev],
-                                      rr2d, &cell_cons_interp,
-                                      domain_bcs_type, BCVars::cons_bc);
-            }
-        }
-    }
-    if (tsk_lev[lev-1][0]) {
-        if (tsk_lev[lev].size() < tsk_lev[lev-1].size()) {
-            tsk_lev[lev].resize(tsk_lev[lev-1].size());
-        }
-#ifdef ERF_USE_NETCDF
-        double time_since_start_low = t_new[0] + start_time - start_low_time;
-        int n_time_old = static_cast<int>(time_since_start_low /  low_time_interval);
-        int ntimes_to_interp = std::min(n_time_old+3, static_cast<int>(tsk_lev[lev-1].size()));
-#else
-        // TODO: Fix if TSK is provided without NETCDF
-        int n_time_old       = 0;
-        int ntimes_to_interp = 1;
-#endif
-        auto ngv = tsk_lev[lev-1][0]->nGrowVect(); ngv[2] = 0;
-
-        for (int n = n_time_old; n < ntimes_to_interp; n++) {
-            if (!tsk_lev[lev-1][n]) { continue; }
-            if (!tsk_lev[lev][n]) {
-                tsk_lev[lev][n] = std::make_unique<MultiFab>(my_ba2d,my_dm,1,ngv);
-                // DO fill the ghost cells outside the domain -- see the note on sst_lev
-                InterpFromCoarseLevel(*tsk_lev[lev][n], ngv, ngv,
-                                      *tsk_lev[lev-1][n], 0, 0, 1,
-                                      geom[lev-1], geom[lev],
-                                      rr2d, &cell_cons_interp,
-                                      domain_bcs_type, BCVars::cons_bc);
-            }
+            Interp2DTimeSlice(lev, n, *field_lev, my_ba2d, my_dm);
         }
     }
 
@@ -2878,54 +2918,72 @@ ERF::Interp2DArrays (int lev, const BoxArray& my_ba2d, const DistributionMapping
                            rr2d, mapper, domain_bcs_type,
                            BCVars::cons_bc);
     } // cosPhi
-    if (sst_lev[lev][0]) {
+}
+
+/**
+ * Fill time slice n of a 2D time-series field (sst_lev or tsk_lev) at lev from lev-1.
+ *
+ * The slice is made and interpolated from the parent only if it does not exist at lev yet.
+ * Unless lev has an init file of its own, its halo is then filled from the parent and from
+ * the other grids at lev -- see the notes in Interp2DArrays for both steps.
+ *
+ * @param[in]     lev       level to fill (> 0)
+ * @param[in]     n         time slice
+ * @param[in,out] field_lev sst_lev or tsk_lev
+ * @param[in]     my_ba2d   2D BoxArray at lev
+ * @param[in]     my_dm     DistributionMapping at lev
+ */
+void
+ERF::Interp2DTimeSlice (int lev, int n, Vector<Vector<std::unique_ptr<MultiFab>>>& field_lev,
+                        const BoxArray& my_ba2d, const DistributionMapping& my_dm)
+{
+    AMREX_ALWAYS_ASSERT(lev > 0);
+
+    auto& crse = field_lev[lev-1];
+    auto& fine = field_lev[lev];
+
+    // As in Interp2DArrays: a ratio of 1 in z, since these fields have no vertical extent
+    const IntVect rr2d(refRatio(lev-1)[0], refRatio(lev-1)[1], 1);
+
+    if (crse[0]) {
+        if (fine.size() < crse.size()) {
+            fine.resize(crse.size());
+        }
+        if (n < static_cast<int>(crse.size()) && crse[n] && !fine[n]) {
+            auto ngv = crse[0]->nGrowVect(); ngv[2] = 0;
+            fine[n] = std::make_unique<MultiFab>(my_ba2d,my_dm,1,ngv);
+            // DO fill the ghost cells outside the domain: SurfaceLayer populates t_surf
+            // on grown tileboxes, so it reads the sea surface temperature past a
+            // non-periodic domain face.  As for the Coriolis factors in Interp2DArrays, the
+            // coarse level has those ghost cells filled (update_sst_tsk fills the grown box).
+            InterpFromCoarseLevel(*fine[n], ngv, ngv,
+                                  *crse[n], 0, 0, 1,
+                                  geom[lev-1], geom[lev],
+                                  rr2d, &cell_cons_interp,
+                                  domain_bcs_type, BCVars::cons_bc);
+        }
+    }
+
+    // A level that read its own init file keeps its own halo (see Interp2DArrays)
+    if (has_own_init_file(lev)) { return; }
+
+    if (fine[0] && n < static_cast<int>(fine.size()) && n < static_cast<int>(crse.size()) &&
+        fine[n] && crse[n])
+    {
+        Real time_for_fp = 0.0; // This is not actually used
+        Vector<Real> ftime    = {static_cast<Real>(time_for_fp), static_cast<Real>(time_for_fp)};
+        Vector<Real> ctime    = {static_cast<Real>(time_for_fp), static_cast<Real>(time_for_fp)};
         // Call FillPatchTwoLevels which ASSUMES that all ghost cells at lev-1 have already been filled
-#ifdef ERF_USE_NETCDF
-        double time_since_start_low = t_new[0] + start_time - start_low_time;
-        int n_time_old = static_cast<int>(time_since_start_low /  low_time_interval);
-        int ntimes_to_interp = std::min(n_time_old+3, static_cast<int>(sst_lev[lev-1].size()));
-#else
-        // TODO: Fix if SST is provided without NETCDF
-        int n_time_old       = 0;
-        int ntimes_to_interp = 1;
-#endif
-        for (int n = n_time_old; n < ntimes_to_interp; n++) {
-            if (!sst_lev[lev][n] || !sst_lev[lev-1][n]) { continue; }
-            Vector<MultiFab*> fmf = {sst_lev[lev  ][n].get(), sst_lev[lev  ][n].get()};
-            Vector<MultiFab*> cmf = {sst_lev[lev-1][n].get(), sst_lev[lev-1][n].get()};
-            IntVect ngv = sst_lev[lev][n]->nGrowVect(); ngv[2] = 0;
-            Interpolater* mapper = &cell_cons_interp;
-            FillPatchTwoLevels(*sst_lev[lev][n].get(), ngv, IntVect(0,0,0),
-                               time_for_fp, cmf, ctime, fmf, ftime,
-                               0, 0, 1, geom[lev-1], geom[lev],
-                               rr2d, mapper, domain_bcs_type,
-                               BCVars::cons_bc);
-        } // ntimes
-    } // sst_lev
-    if (tsk_lev[lev][0]) {
-        // Call FillPatchTwoLevels which ASSUMES that all ghost cells at lev-1 have already been filled
-#ifdef ERF_USE_NETCDF
-        double time_since_start_low = t_new[0] + start_time - start_low_time;
-        int n_time_old = static_cast<int>(time_since_start_low /  low_time_interval);
-        int ntimes_to_interp = std::min(n_time_old+3, static_cast<int>(tsk_lev[lev-1].size()));
-#else
-        // TODO: Fix if TSK is provided without NETCDF
-        int n_time_old       = 0;
-        int ntimes_to_interp = 1;
-#endif
-        for (int n = n_time_old; n < ntimes_to_interp; n++) {
-            if (!tsk_lev[lev][n] || !tsk_lev[lev-1][n]) { continue; }
-            Vector<MultiFab*> fmf = {tsk_lev[lev  ][n].get(), tsk_lev[lev  ][n].get()};
-            Vector<MultiFab*> cmf = {tsk_lev[lev-1][n].get(), tsk_lev[lev-1][n].get()};
-            IntVect ngv = tsk_lev[lev][n]->nGrowVect(); ngv[2] = 0;
-            Interpolater* mapper = &cell_cons_interp;
-            FillPatchTwoLevels(*tsk_lev[lev][n].get(), ngv, IntVect(0,0,0),
-                               time_for_fp, cmf, ctime, fmf, ftime,
-                               0, 0, 1, geom[lev-1], geom[lev],
-                               rr2d, mapper, domain_bcs_type,
-                               BCVars::cons_bc);
-        } // ntimes
-    } // tsk_lev
+        Vector<MultiFab*> fmf = {fine[n].get(), fine[n].get()};
+        Vector<MultiFab*> cmf = {crse[n].get(), crse[n].get()};
+        IntVect ngv = fine[n]->nGrowVect(); ngv[2] = 0;
+        Interpolater* mapper = &cell_cons_interp;
+        FillPatchTwoLevels(*fine[n].get(), ngv, IntVect(0,0,0),
+                           time_for_fp, cmf, ctime, fmf, ftime,
+                           0, 0, 1, geom[lev-1], geom[lev],
+                           rr2d, mapper, domain_bcs_type,
+                           BCVars::cons_bc);
+    }
 }
 
 // Initialize microphysics object
@@ -2950,6 +3008,12 @@ ERF::initializeMicrophysics (const int& a_nlevsmax /*!< number of AMR levels */)
         Abort("Lagrangian microphysics can be used when compiled with ERF_USE_PARTICLES");
 #endif
     }
+
+    // The moist species (RhoQ1_comp onward) are the ones whose vertical diffusion is
+    // split between the explicit and implicit parts; non-water species follow them
+    solverChoice.diffChoice.n_qstate_moist = micro->Get_Qstate_Moist_Size();
+    AMREX_ALWAYS_ASSERT(solverChoice.diffChoice.n_qstate_moist >= 0 &&
+                        solverChoice.diffChoice.n_qstate_moist <= NMOIST_max);
 
     qmoist.resize(a_nlevsmax);
     precip.resize(a_nlevsmax);
@@ -3357,6 +3421,16 @@ ERF::ReadParameters ()
         // NetCDF wrflow lateral boundary file
         if (pp.queryAdd("nc_low_file", nc_low_file)) {
             Print() << "Reading NC low file name " << nc_low_file << std::endl;
+        }
+
+        // NetCDF wrflow files for the finer levels, one per level (erf.nc_low_file_<lev>)
+        nc_low_file_at_level.resize(max_level+1);
+        for (int lev = 1; lev <= max_level; lev++) {
+            const std::string nc_low_name = Concatenate("nc_low_file_",lev,1);
+            if (pp.query(nc_low_name.c_str(), nc_low_file_at_level[lev])) {
+                Print() << "Reading NC low file name at level " << lev << " : "
+                        << nc_low_file_at_level[lev] << std::endl;
+            }
         }
 
 #endif
@@ -3887,6 +3961,17 @@ ERF::ReadParameters ()
                   "forest_lai_file, forest_height_file, and forest_cd or forest_cd_file.");
         }
 
+        bool keqn_on_every_level = true;
+        bool implicit_diss_on_every_level = true;
+        for (int lev = 0; lev <= max_level; ++lev) {
+            keqn_on_every_level = keqn_on_every_level &&
+                                  (solverChoice.turbChoice[lev].rans_type == RANSType::kEqn);
+            implicit_diss_on_every_level = implicit_diss_on_every_level &&
+                                           solverChoice.turbChoice[lev].implicit_tke_dissipation;
+        }
+        solverChoice.canopyTurb.check_config(solverChoice.do_forest_drag, keqn_on_every_level,
+                                             implicit_diss_on_every_level);
+
     }
 
     // If init from WRFInput or Metgrid make sure a valid file name is present at level zero
@@ -3921,6 +4006,42 @@ ERF::ReadParameters ()
 
     if (!nc_low_file.empty() && !FileSystem::Exists(nc_low_file)) {
         Abort("Could not find the file \"" + nc_low_file + "\" given as erf.nc_low_file");
+    }
+
+    // A wrflow file for a level > 0 replaces, for that level, the SST/TSK it would otherwise
+    // take from its parent, so it needs level 0's file to be in use and an init file of its
+    // own to say where the level is; its times are checked against level 0's when it is read
+    for (int lev = 1; lev < static_cast<int>(nc_low_file_at_level.size()); lev++) {
+        const std::string& fname = nc_low_file_at_level[lev];
+        if (fname.empty()) { continue; }
+        const std::string key = "erf.nc_low_file_" + std::to_string(lev);
+        if (!FileSystem::Exists(fname)) {
+            Abort("Could not find the file \"" + fname + "\" given as " + key);
+        }
+        if (nc_low_file.empty()) {
+            Abort(key + " is given but erf.nc_low_file (the wrflow file for level 0) is not");
+        }
+        if (solverChoice.init_type != InitType::WRFInput || !has_own_init_file(lev)) {
+            Abort(key + " requires erf.init_type = WRFInput and erf.nc_init_file_" +
+                  std::to_string(lev) + " for that level");
+        }
+        if (nc_init_file[lev].size() != 1) {
+            Abort(key + " is only supported for a level with a single init file (erf.nc_init_file_" +
+                  std::to_string(lev) + " has " + std::to_string(nc_init_file[lev].size()) + ")");
+        }
+    }
+
+    // A level that reads its own init file but has no wrflow file of its own takes every SST/TSK
+    // time slice from its parent, starting with the first -- replacing what it read from its file
+    if (!nc_low_file.empty() && solverChoice.init_type == InitType::WRFInput) {
+        for (int lev = 1; lev <= max_level; lev++) {
+            if (has_own_init_file(lev) && !has_own_low_file(lev)) {
+                Print() << "WARNING: no wrflow file was provided for level " << lev
+                        << " (erf.nc_low_file_" << lev << "): its SST and TSK will be interpolated from level "
+                        << lev-1 << " at every time, starting at the beginning of the run, instead of being "
+                        << "taken from erf.nc_init_file_" << lev << std::endl;
+            }
+        }
     }
 
     // What type of land surface model to use
@@ -3965,9 +4086,9 @@ ERF::ParameterSanityChecks ()
         for (int lev = 0; lev <= max_level; ++lev) {
             any_kturb = any_kturb || solverChoice.turbChoice[lev].use_kturb;
         }
-        if (!any_kturb) {
-            Abort("erf.diffusive_dt_limit = true needs an eddy-diffusivity closure "
-                  "(erf.les_type, erf.rans_type or erf.pbl_type)");
+        if (!any_kturb && solverChoice.diffChoice.molec_diff_type == MolecDiffType::None) {
+            Abort("erf.diffusive_dt_limit = true needs diffusion to limit: an eddy-diffusivity "
+                  "closure (erf.les_type, erf.rans_type or erf.pbl_type) or erf.molec_diff_type");
         }
     }
 

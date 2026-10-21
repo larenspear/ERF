@@ -283,7 +283,8 @@ public:
                                               hurricane_eye_track_latlon,
                                               hurricane_maxvel_vs_time,
                                               hurricane_minpressure_vs_time,
-                                              hurricane_tracker_circle;
+                                              hurricane_tracker_circle,
+                                              hurricane_surface_fluxes_vs_time;
     amrex::Vector<amrex::MultiFab> weather_forecast_data_1, weather_forecast_data_2;
     amrex::Vector<amrex::Vector<amrex::MultiFab>> forecast_state_1,
                                                   forecast_state_2,
@@ -294,12 +295,16 @@ public:
 
     amrex::Vector<amrex::Vector<amrex::MultiFab>> bckgnd_state;
 
+    amrex::Vector<amrex::MultiFab> mfvec_surface_fluxes;
+
     std::string MakeVTKFilename (int nstep);
     std::string MakeVTKFilename_TrackerCircle (int nstep);
     std::string MakeVTKFilename_EyeTracker_xy (int nstep);
     std::string MakeFilename_EyeTracker_latlon (int nstep);
     std::string MakeFilename_EyeTracker_maxvel (int nstep);
     std::string MakeFilename_EyeTracker_minpressure (int nstep);
+    std::string MakeFilename_EyeTracker_surface_fluxes (int nstep);
+
     void WriteVTKPolyline (const std::string& filename,
                            amrex::Vector<std::array<amrex::Real, 2>>& points_xy);
 
@@ -307,18 +312,28 @@ public:
                         amrex::Vector<std::array<amrex::Real, 2>>& points_xy);
 
     void HurricaneEyeTracker (const SolverChoice& solverChoice,
-                              const amrex::MultiFab& mf_cc_vel);
+                              const amrex::MultiFab& mf_cc_vel,
+                              int& hurricane_eye_i_glob,
+                              int& hurricane_eye_j_glob,
+                              amrex::Real& hurricane_eye_latitude,
+                              amrex::Real& hurricane_eye_longitude);
 
     void HurricaneEyeTrackerInitial (const SolverChoice& sc,
                                      const amrex::Geometry& geom,
                                      const amrex::Vector<amrex::MultiFab>& S_data,
-                                     const amrex::Real& hurricane_eye_latitude,
-                                     const amrex::Real& hurricane_eye_longitude);
+                                     int& hurricane_eye_i_glob,
+                                     int& hurricane_eye_j_glob,
+                                     amrex::Real& hurricane_eye_latitude,
+                                     amrex::Real& hurricane_eye_longitude);
 
     void HurricaneEyeTrackerNotInitial (const SolverChoice& sc,
                                         const amrex::Geometry& geom,
                                         const amrex::MultiFab& mf_cc_vel,
-                                        const amrex::Vector<amrex::MultiFab>& S_data);
+                                        const amrex::Vector<amrex::MultiFab>& S_data,
+                                        int& hurricane_eye_i_glob,
+                                        int& hurricane_eye_j_glob,
+                                        amrex::Real& hurricane_eye_latitude,
+                                        amrex::Real& hurricane_eye_longitude);
 
     void ComputeGlobalMinLocation (const SolverChoice& sc,
                                    const amrex::Geometry& geom,
@@ -328,7 +343,9 @@ public:
                                    int* d_j_min_ptr,
                                    amrex::Real& global_val_min,
                                    int& global_i_min,
-                                   int& global_j_min);
+                                   int& global_j_min,
+                                   amrex::Real& hurricane_eye_latitude,
+                                   amrex::Real& hurricane_eye_longitude);
 
     void HurricaneMaxVelTracker (const amrex::Geometry& geom,
                                  const amrex::MultiFab& mf_cc_vel,
@@ -338,6 +355,12 @@ public:
                                       const amrex::Geometry& geom,
                                       const amrex::MultiFab& mf_cons_var,
                                       const double& time);
+
+    void HurricaneSurfaceFluxesTracker (const int& hurricane_eye_i_glob,
+                                        const int& hurricane_eye_j_glob,
+                                        const amrex::Real& hurricane_eye_latitude,
+                                        const amrex::Real& hurricane_eye_longitude,
+                                        const amrex::Real time);
 
     void HurricaneTrackerCircle ();
 
@@ -355,6 +378,11 @@ public:
     // Interpolate 2D arrays lat_m, lon_m, sinPhi, cosPhi
     void Interp2DArrays (int lev, const amrex::BoxArray& my_ba2d, const amrex::DistributionMapping& my_dm);
 
+    // Fill one time slice of a 2D time-series field (sst_lev or tsk_lev) at lev from lev-1
+    void Interp2DTimeSlice (int lev, int n,
+                            amrex::Vector<amrex::Vector<std::unique_ptr<amrex::MultiFab>>>& field_lev,
+                            const amrex::BoxArray& my_ba2d, const amrex::DistributionMapping& my_dm);
+
     // Fill the map factors at lev by interpolation from lev-1
     void interp_mapfac_from_coarse (int lev);
 
@@ -367,6 +395,21 @@ public:
     // True if this level read its own initialization file, so its map factors
     //     came from that file rather than from its parent
     bool has_own_init_file (int lev) const;
+
+    // Did the user supply a wrflowinp file for this level (erf.nc_low_file_<lev>, lev > 0)?
+    bool has_own_low_file (int lev) const;
+
+    // Fill the coarse/fine ghost cells of the state (rho and the given components) and momenta
+    // used by an implicit vertical solve with coarse data at the given time; all other cells
+    // are left alone.  Public because it launches device lambdas (CUDA requires it)
+    void FillCoarseFineGhostsForImplicit (int lev, double time,
+                                          amrex::MultiFab& cons,
+                                          const amrex::Vector<int>& cons_comps,
+                                          const amrex::Vector<amrex::MultiFab*>& mom);
+
+    // Average the coarse level's recorded coarse/fine face fluxes over one substep of level lev
+    // (ERF_CFFluxHistory.cpp).  Public because it launches device lambdas (CUDA requires it)
+    void cf_flux_history_targets (int lev, amrex::Real t_beg, amrex::Real t_end);
 
     void WriteMyEBSurface ();
 
@@ -383,6 +426,20 @@ public:
     void project_initial_velocity (int lev, double time, double dt);
     void project_momenta (int lev, double l_time, double l_dt, amrex::Vector<amrex::MultiFab >& vars);
 
+    // A refined level that stops inside the domain in z (ERF_CoarseFineFaces.cpp)
+    bool cf_zface_coarse_data (int lev, double time, bool conserved_rho,
+                               amrex::MultiFab& omega_t, amrex::MultiFab& rhou_g, amrex::MultiFab& rhov_g,
+                               amrex::Vector<int>& slab_box);
+    void set_cf_zghost_projection (int lev, double time, amrex::MultiFab& xmom, amrex::MultiFab& ymom,
+                                   amrex::MultiFab& omega_t, amrex::Vector<int>& slab_box);
+    void set_cf_zface_omega (int lev, amrex::MultiFab& omega, const amrex::MultiFab& omega_t,
+                             const amrex::Vector<int>& slab_box);
+    void FillSetMomentaCF (int lev, double time, amrex::MultiFab& xmom, amrex::MultiFab& ymom,
+                           amrex::MultiFab& zmom);
+    void fill_surface_nodes (int lev, amrex::MultiFab& znd_surf);
+    // The stretched dz of a solve region's own layers
+    amrex::Gpu::DeviceVector<amrex::Real> make_sub_dz (int lev, const amrex::Box& subdomain);
+
     // Project the velocities to be divergence-free with a thin body
     void project_velocity_tb (int lev, double dt, amrex::Vector<amrex::MultiFab >& vars);
 
@@ -397,6 +454,13 @@ public:
                          amrex::MultiFab& rhs, amrex::MultiFab& p,
                          amrex::Array<amrex::MultiFab,AMREX_SPACEDIM>& fluxes);
 #endif
+    void solve_with_terrain_mlmg (int lev, const amrex::Box& subdomain,
+                                  amrex::MultiFab& rhs, amrex::MultiFab& p,
+                                  amrex::Array<amrex::MultiFab,AMREX_SPACEDIM>& fluxes,
+                                  amrex::MultiFab& ax_sub, amrex::MultiFab& ay_sub,
+                                  amrex::MultiFab& az_sub,
+                                  amrex::MultiFab& dJ_sub, amrex::MultiFab& znd_sub,
+                                  bool use_gmres);
     void solve_with_gmres (int lev, const amrex::Box& subdomain,
                            amrex::MultiFab& rhs, amrex::MultiFab& p,
                            amrex::Array<amrex::MultiFab,AMREX_SPACEDIM>& fluxes,
@@ -595,13 +659,18 @@ public:
     // compute dt from CFL considerations
     double estTimeStep (int lev, long& dt_fast_ratio) const;
 
-    // largest explicit eddy-diffusion rates (1/s) on level lev, momentum and scalars, for the
+    // largest explicit diffusion rates (eddy and molecular, 1/s) on level lev, momentum and scalars, for the
     // diffusive time-step check (erf.diffusive_dt_check / erf.diffusive_dt_limit)
     void ComputeDiffusiveRates (int lev, amrex::Real& rate_mom, amrex::Real& rate_scal) const;
 
     // print the largest terrain slope factor alpha = h dx/dz on level lev: always when force is
     // true (new grids), otherwise only if it changed by more than 1 % since the last report
     void ReportTerrainSlopeFactor (int lev, bool force);
+
+    // on a terrain-fitted mesh, warn when the terrain next to an inflow or outflow face of
+    // level lev is steeper than erf_terrain_file::open_face_slope_warn and no steep-terrain
+    // option is on; called by ComputeDt for every new set of grids
+    void WarnSteepTerrainAtOpenFaces (int lev);
 
 #ifdef ERF_USE_WW3_COUPLING
     //amrex::Print() <<  " About to call send_to_ww3 from ERF.H" << std::endl;
@@ -925,8 +994,10 @@ public:
     // has_surface_layer_inputs).
     std::set<std::string> user_specified_inputs;
 
-    void fill_from_bndryregs (const amrex::Vector<amrex::MultiFab*>& mfs,
-                              double time);
+    void fill_from_bndryregs (int lev,
+                              const amrex::Vector<amrex::MultiFab*>& mfs,
+                              double time,
+                              bool cons_only = false);
 
 #ifdef ERF_USE_NETCDF
     // Version in which we always set the velocity values but don't set theta
@@ -1222,6 +1293,22 @@ private:
 
     amrex::Vector<amrex::Vector<amrex::FArrayBox>> low_data_zlo;
 
+    // SST/TSK time slices at a level > 0 that read its own init file, when level 0 reads a
+    // wrflowinp file: from the level's own wrflowinp file if it has one, else from its parent
+    void init_fine_low_slices (int lev, bool restarting);
+
+    // Read time slice itime of this level's own wrflowinp file into sst_lev[lev], tsk_lev[lev]
+    void read_own_low_slice (int lev, int itime, std::unique_ptr<SurfaceLayer>& SurfLayer);
+
+    // Check that this level's wrflowinp file has the same times as level 0's
+    void check_own_low_file_times (int lev);
+
+    // Re-read the surface pressure of a level > 0 from its own init file (it is not checkpointed)
+    void read_psfc_from_own_init_file (int lev);
+
+    // The cells at a level > 0 that its own init file covers, as ERF::ErrorEst places them
+    amrex::Box nest_box_from_own_init_file (int lev);
+
     // Maximum value of terrain read in from wrfinput at level 0
     amrex::Real z_top = zero;
 
@@ -1478,6 +1565,49 @@ private:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   detJ_cc;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   ax;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   ay;
+
+    // Layout of the coarse/fine z-face data of each level that stops inside the domain in z
+    // (cf_zface_layout), kept until the level's grids or distribution change, so that every
+    // fill reuses the same plane BoxArrays and DistributionMapping (and their copy patterns)
+    struct CFZFaceLayout {
+        amrex::BoxArray fba;                                // the grids it was made for
+        amrex::DistributionMapping fdm;
+        std::map<int, amrex::Vector<amrex::Box>> patches;   // coarse/fine w-faces, per box
+        amrex::Vector<int> slab_box;                        // box of the level each slab belongs to
+        amrex::DistributionMapping sdm;                     // the slabs' (and planes') distribution
+        amrex::BoxArray ba_r, ba_ru, ba_rv, ba_rw, ba_rz;   // coarse planes: cells, faces, nodes
+        amrex::BoxArray ba_mu, ba_mv;                       // coarse planes: map factors (2D)
+        amrex::BoxArray ba_cf, ba_cx, ba_cy;                // coarse Omega, (rho u), (rho v)
+        amrex::BoxArray ba_f, ba_x, ba_y;                   // fine slabs
+    };
+    const CFZFaceLayout& cf_zface_layout (int lev);
+    std::map<int, CFZFaceLayout> m_cf_zface_cache;
+
+    // The coarse level's fluxes through the coarse/fine faces of level lev over each acoustic
+    // substep of its last RK stage (ERF_CFFluxHistory.cpp).  The fast step of level lev takes
+    // their average over each of its own substeps, so that what crosses its boundary adds up to
+    // what the coarse level moved across it.
+    struct CFFluxHistory {
+        amrex::BoxArray fba;                                    // the grids it was made for
+        amrex::DistributionMapping fdm;
+        amrex::Array<amrex::BoxArray, AMREX_SPACEDIM> sba;      // coarse face slabs, per direction
+        amrex::Array<amrex::DistributionMapping, AMREX_SPACEDIM> sdm;
+        amrex::Array<amrex::Vector<int>, AMREX_SPACEDIM> slab_box;           // box of level lev of each slab
+        amrex::Array<amrex::Vector<amrex::Box>, AMREX_SPACEDIM> slab_faces;  // its coarse/fine faces (fine index)
+        amrex::Array<amrex::Vector<amrex::MultiFab>, AMREX_SPACEDIM> flux;   // per coarse substep
+        amrex::Vector<amrex::MultiFab> rho_w;                   // (rho w), Omega with terrain, at the substep times
+        amrex::Vector<amrex::Real> time;                        // the coarse substep times
+        bool complete = false;
+        amrex::Array<amrex::MultiFab, AMREX_SPACEDIM> tgt;      // the fine faces' fluxes (CFFaceFluxes)
+        amrex::MultiFab tgt_w;
+    };
+    amrex::Vector<CFFluxHistory> m_cf_flux_hist;
+    bool cf_flux_history_active (int crse_lev) const;
+    CFFluxHistory& cf_flux_history (int lev);
+    void cf_flux_history_record (int crse_lev, int fast_step, int n_sub,
+                                 amrex::Real t_beg, amrex::Real t_end,
+                                 const amrex::Array<amrex::MultiFab, AMREX_SPACEDIM>& rec,
+                                 const amrex::MultiFab& rho_w_old, const amrex::MultiFab& rho_w_new);
     amrex::Vector<std::unique_ptr<amrex::MultiFab>>   az;
 
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> z_phys_nd_src;
@@ -1632,6 +1762,10 @@ private:
     amrex::Vector<amrex::Real> diffusive_fourier_warned;
     // grids on which, and value at which, the terrain slope factor was last reported, per level
     amrex::Vector<amrex::BoxArray> slope_report_grids;
+    // grids on which the open-face terrain slope was last checked, and the faces already
+    // reported, per level (WarnSteepTerrainAtOpenFaces)
+    amrex::Vector<amrex::BoxArray> openface_grids;
+    amrex::Vector<amrex::Array<bool,4>> openface_warned;
     amrex::Vector<amrex::Real> slope_report_alpha;
 
     // Fixed dt at each level (only used if positive)
@@ -1874,6 +2008,10 @@ private:
 
     // NetCDF initialization of zlo boundary values
     static std::string nc_low_file;
+
+    // Per-level wrflowinp files (erf.nc_low_file_<lev>) for levels > 0 that read their own
+    // init file; entry 0 is unused (level 0 always uses nc_low_file)
+    static amrex::Vector<std::string> nc_low_file_at_level;
 
     // Options for vertical interpolation of met_em*.nc data.
     bool        metgrid_debug_quiescent{false};

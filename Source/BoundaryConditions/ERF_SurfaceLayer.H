@@ -896,7 +896,8 @@ public:
                                 amrex::MultiFab* xqv_flux,
                                 amrex::MultiFab* yqv_flux,
                                 amrex::MultiFab* zqv_flux,
-                                const amrex::MultiFab* z_phys);
+                                const amrex::MultiFab* z_phys,
+                                amrex::MultiFab* mf_surface_fluxes=nullptr);
 
   /**
    * Impose surface-layer boundary conditions for embedded-boundary terrain.
@@ -947,7 +948,8 @@ public:
                                  amrex::MultiFab* yqv_flux,
                                  amrex::MultiFab* zqv_flux,
                                  const amrex::MultiFab* z_phys,
-                                 const FluxCalc& flux_comp);
+                                 const FluxCalc& flux_comp,
+                                 amrex::MultiFab* mf_surface_fluxes=nullptr);
 
   /**
    * Compute embedded-boundary surface-layer flux boundary conditions.
@@ -1110,6 +1112,15 @@ public:
    * @param[in] lev Current level (> 0)
    */
   void fill_pblh_from_coarser (const int& lev);
+
+  /**
+   * The PBL height of the next coarser level, injected onto the grids of this level over all
+   * of their cells, ghost cells included.  Public because it launches a device lambda.
+   *
+   * @param[in]  lev  Current level (> 0)
+   * @param[out] fine MultiFab on the grids of pblh[lev]
+   */
+  void inject_pblh_from_coarser (const int& lev, amrex::MultiFab& fine) const;
 
   /**
    * Compute planetary-boundary-layer height with the selected estimator.
@@ -1528,6 +1539,7 @@ public:
    * @param[in] sst_ptr sea-surface-temperature field pointer
    */
   void update_sst_ptr (const int lev, const int itime, amrex::MultiFab* sst_ptr) {
+      AMREX_ALWAYS_ASSERT(itime >= 0 && itime < static_cast<int>(m_sst_lev[lev].size()));
       m_sst_lev[lev][itime] = sst_ptr;
   }
 
@@ -1539,6 +1551,7 @@ public:
    * @param[in] tsk_ptr skin-temperature field pointer
    */
   void update_tsk_ptr (const int lev, const int itime, amrex::MultiFab* tsk_ptr) {
+      AMREX_ALWAYS_ASSERT(itime >= 0 && itime < static_cast<int>(m_tsk_lev[lev].size()));
       m_tsk_lev[lev][itime] = tsk_ptr;
   }
 

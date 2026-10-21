@@ -161,7 +161,12 @@ target_sources(${erf_exe_name}
     # the implicit vertical solves on the interior faces and take the same compact term out of
     # the explicit fluxes, and nothing on the bottom and top faces.
     ${CMAKE_CURRENT_SOURCE_DIR}/Diffusion/ERF_GTestTerrainImplicitMetric.cpp
+    # Motivation: the implicit vertical momentum solve must close a no-slip z wall with the
+    # second-order one-sided gradient the explicit strain uses, or the steady state of a
+    # wall-bounded flow (PoiseuilleFlow) drifts at the wall cells.
+    ${CMAKE_CURRENT_SOURCE_DIR}/Diffusion/ERF_GTestImplicitWallStencil.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/LinearSolvers/ERF_GTestTerrainPoisson.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/LinearSolvers/ERF_GTestTerrainMLMG.cpp
     # Motivation: the opt-in WRF Smagorinsky-2D limits must reproduce WRF's smag2d_km numbers
     # (slope factor, deformation threshold, cap and their order), limit K_h before the scalar
     # diffusivities are derived from it, and the diffusive time-step rates must follow their
@@ -171,6 +176,9 @@ target_sources(${erf_exe_name}
     ${CMAKE_CURRENT_SOURCE_DIR}/Diagnostics/ERF_GTestSurfaceFluxDiagnostics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Diagnostics/ERF_GTestSeaLevelPressure.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SourceTerms/ERF_GTestCanopyBiophysics.cpp
+    # Motivation: the k-eqn RANS canopy terms must keep the kynema-sgf
+    # formulas, cap L only inside the forest and never remove more than k.
+    ${CMAKE_CURRENT_SOURCE_DIR}/SourceTerms/ERF_GTestCanopyTurbulence.cpp
     # Motivation: buoyancy dispatch must preserve selector semantics, active
     # anelastic formulations, and neutral dry type-4 primitive-theta behavior.
     ${CMAKE_CURRENT_SOURCE_DIR}/SourceTerms/ERF_GTestBuoyancy.cpp
@@ -243,6 +251,9 @@ target_sources(${erf_exe_name}
     # Motivation: erf.initial_dz without a stretching ratio must solve for the ratio that
     # closes the grid on prob_hi, and an explicit ratio must not be solved for.
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestInitZLevels.cpp
+    # Motivation: a malformed, mis-ordered or too small terrain file must stop the run with
+    # the problem named, and steep terrain next to an inflow or outflow face must be reported.
+    ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestTerrainFileChecks.cpp
     # Motivation: a BTF fine level's mesh must not depend on how its grids are split in z.
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestTerrainFineColumns.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/HashRng/ERF_GTestHashRngScalar.cpp
@@ -506,6 +517,23 @@ if(TARGET erf_exec AND ERF_DIM STREQUAL "3" AND
         -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}
         -P ${PROJECT_SOURCE_DIR}/Tests/test_files/SBM/RunM3RestartEquivalence.cmake)
     set_tests_properties(SBM_M3_StaticTerrain_Restart_Equivalence PROPERTIES
+      LABELS "integration;sbm"
+      RUN_SERIAL TRUE
+      TIMEOUT 180)
+
+    # The same across a restart that re-makes the level-0 grids (issue 4225): the spectrum
+    # is read on the checkpoint's 2x2 grids and redistributed onto the restart's 4x4, and
+    # the run must continue as the straight run did.
+    add_test(NAME SBM_M3_StaticTerrain_RegridOnRestart
+      COMMAND ${CMAKE_COMMAND}
+        -DERF_EXECUTABLE=$<TARGET_FILE:erf_exec>
+        -DCOMPARE_EXECUTABLE=$<TARGET_FILE:erf_sbm_checkpoint_compare>
+        -DINPUT_FILE=${PROJECT_SOURCE_DIR}/Tests/test_files/SBM/inputs_periodic_static_terrain
+        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}
+        "-DRESTART_ARGS=erf.regrid_level_0_on_restart=1|amr.max_grid_size_x=2|amr.max_grid_size_y=2"
+        -DALLOW_DIFF_GRIDS=ON
+        -P ${PROJECT_SOURCE_DIR}/Tests/test_files/SBM/RunM3RestartEquivalence.cmake)
+    set_tests_properties(SBM_M3_StaticTerrain_RegridOnRestart PROPERTIES
       LABELS "integration;sbm"
       RUN_SERIAL TRUE
       TIMEOUT 180)

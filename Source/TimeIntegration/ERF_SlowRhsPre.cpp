@@ -97,6 +97,7 @@ void erf_slow_rhs_pre (int level, int finest_level,
                        MultiFab* Q1fx1, MultiFab* Q1fx2,
                        MultiFab* Q1fx3, MultiFab* Q2fx3,
                        MultiFab* /*Diss*/,
+                       MultiFab* mf_surface_fluxes,
                        MultiFab* Hfx3_EB,
                        const Geometry geom,
                        const SolverChoice& solverChoice,
@@ -176,8 +177,8 @@ void erf_slow_rhs_pre (int level, int finest_level,
 
     const bool l_anelastic_rk2 = (solverChoice.anelastic_type[level] == AnelasticType::RK2);
 
-    const bool l_reflux = ( (solverChoice.coupling_type == CouplingType::TwoWay) && (finest_level > 0) &&
-                            ( (l_anelastic && nrk == 1) || (!l_anelastic && nrk == 2) ) );
+    const bool l_reflux = IsRefluxStage(solverChoice, level, finest_level, nrk);
+    const Real l_reflux_dt = RefluxStageWeight(solverChoice, level, finest_level, nrk) * static_cast<Real>(dt);
 
     const bool l_use_eb = (solverChoice.terrain_type == TerrainType::EB);
 
@@ -267,7 +268,8 @@ void erf_slow_rhs_pre (int level, int finest_level,
                         SurfLayer[ori]->impose_SurfaceLayer_bcs(level, mfs, Tau_lev,
                                                                             Hfx1, Hfx2, Hfx3,
                                                                             Q1fx1, Q1fx2, Q1fx3,
-                                                                            &z_phys_nd);
+                                                                            &z_phys_nd,
+                                                                            mf_surface_fluxes);
                     }
                 }
 
@@ -692,7 +694,7 @@ void erf_slow_rhs_pre (int level, int finest_level,
                                        mf_my, mf_uy, mf_vy,
                                        hfx_x, hfx_y, hfx_z, q1fx_x, q1fx_y, q1fx_z, q2fx_z,
                                        mu_turb, solverChoice, level,
-                                       bc_ptr_d, l_apply_surface_layer_fluxes_in_diffusion, SurfLayer, l_vert_implicit_fac);
+                                       bc_ptr_d, bc_ptr_h, l_apply_surface_layer_fluxes_in_diffusion, SurfLayer, l_vert_implicit_fac);
             } else if (l_use_eb) {
                 DiffusionSrcForState_EB(bx, domain, n_start, n_comp, u, v,
                                        cell_data, cell_prim, cell_rhs,
@@ -955,7 +957,8 @@ void erf_slow_rhs_pre (int level, int finest_level,
 
         {
         BL_PROFILE("slow_rhs_pre_fluxreg");
-        // We only add to the flux registers in the final RK step
+        // We add to the flux registers only in the stages whose fluxes the step's update applies,
+        // weighted as in that update (RefluxStageWeight)
         // NOTE: for now we are only refluxing density not (rho theta) since the latter seems to introduce
         //       a problem at top and bottom boundaries -- except when rho is held fixed, in which case
         //       there is no density flux to reflux and we reflux (rho theta) instead.
@@ -966,12 +969,12 @@ void erf_slow_rhs_pre (int level, int finest_level,
             int  num_comp_reflux = 1;
             if (level < finest_level) {
                 fr_as_crse->CrseAdd(mfi, {{AMREX_D_DECL(&(flux[0]), &(flux[1]), &(flux[2]))}},
-                                    dx, static_cast<Real>(dt), strt_comp_reflux, strt_comp_reflux,
+                                    dx, l_reflux_dt, strt_comp_reflux, strt_comp_reflux,
                                     num_comp_reflux, RunOn::Device);
             }
             if (level > 0) {
                 fr_as_fine->FineAdd(mfi, {{AMREX_D_DECL(&(flux[0]), &(flux[1]), &(flux[2]))}},
-                                    dx, static_cast<Real>(dt), strt_comp_reflux, strt_comp_reflux,
+                                    dx, l_reflux_dt, strt_comp_reflux, strt_comp_reflux,
                                     num_comp_reflux, RunOn::Device);
             }
 

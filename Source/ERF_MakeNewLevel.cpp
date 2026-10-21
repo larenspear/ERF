@@ -797,8 +797,11 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
     }
 
     // Update Surface Model arrays for this new level
-    if (solverChoice.lsm_type != LandSurfaceType::None ||
-        (solverChoice.urban_type != UrbanType::None && solverChoice.urban_enabled_lev[lev] == 1)) {
+    //
+    // Every level is added to the surface model, even one without surface physics (provider
+    // mode None), so that it always holds finest_level+1 levels: ClearLevel removes levels
+    // unconditionally, and level loops and the checkpoint index every level that exists.
+    if (m_SurfaceModel) {
         m_SurfaceModel->initialize_for_level(lev, grids[lev], geom[lev], dmap[lev], lmask_lev[lev], domain_bcs_type, refRatio());
 
         if (solverChoice.lsm_type != LandSurfaceType::None) {
@@ -1332,16 +1335,11 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     // ********************************************************************************************
     // NOTE: 2D MFs must be filled before SurfaceLayer is defined since SL class uses sst/tsk
     // Clear the 2D arrays
-    if (sst_lev[lev][0]) {
-        for (int n = 0; n < sst_lev[lev].size(); n++) {
-            sst_lev[lev][n].reset();
-        }
-    }
-    if (tsk_lev[lev][0]) {
-        for (int n = 0; n < tsk_lev[lev].size(); n++) {
-            tsk_lev[lev][n].reset();
-        }
-    }
+    // Every slice, not only when slice 0 exists: a level made part-way through a run, or
+    // given later slices as level 0 reads them, can hold slices > 0 without slice 0, and
+    // those must not survive onto the new grids.
+    for (auto& sst : sst_lev[lev]) { sst.reset(); }
+    for (auto& tsk : tsk_lev[lev]) { tsk.reset(); }
     if (lat_m[lev]) {
         lat_m[lev].reset();
     }
@@ -1361,6 +1359,13 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     // Note that ba2d is constructed already in init_stuff, but we have not yet defined dmap[lev]
     //     so we must explicitly pass dm.
     Interp2DArrays(lev,ba2d[lev],dm);
+
+#ifdef ERF_USE_NETCDF
+    // A level with a wrflow file of its own takes its SST/TSK slices from it again
+    if (has_own_low_file(lev) && !nc_low_file.empty()) {
+        init_fine_low_slices(lev, /*restarting=*/ false);
+    }
+#endif
 
     if (precip[lev] && old_precip) {
         IntVect ngv = precip[lev]->nGrowVect(); ngv[2] = 0;
@@ -1396,10 +1401,9 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     // restart() regrids level 0 (which lands here) whenever there are more ranks than boxes, and
     // only after restart() returns does InitData_post construct the surface model.  In that case
     // InitData_post initializes every level against the post-regrid (ba,dm), so there is nothing
-    // for us to update yet.
-    if (m_SurfaceModel &&
-        (solverChoice.lsm_type != LandSurfaceType::None ||
-         (solverChoice.urban_type != UrbanType::None && solverChoice.urban_enabled_lev[lev] == 1))) {
+    // for us to update yet.  As in MakeNewLevelFromCoarse, every level is (re)initialized,
+    // including those without surface physics.
+    if (m_SurfaceModel) {
         m_SurfaceModel->initialize_for_level(lev, grids[lev], geom[lev], dmap[lev], lmask_lev[lev], domain_bcs_type, refRatio());
     }
 
@@ -1592,16 +1596,11 @@ ERF::ClearLevel (int lev)
     advflux_reg[lev].reset();
 
     // Clears the 2D arrays
-    if (sst_lev[lev][0]) {
-        for (int n = 0; n < sst_lev[lev].size(); n++) {
-            sst_lev[lev][n].reset();
-        }
-    }
-    if (tsk_lev[lev][0]) {
-        for (int n = 0; n < tsk_lev[lev].size(); n++) {
-            tsk_lev[lev][n].reset();
-        }
-    }
+    // Every slice, not only when slice 0 exists: a level made part-way through a run, or
+    // given later slices as level 0 reads them, can hold slices > 0 without slice 0, and
+    // those must not survive onto the new grids.
+    for (auto& sst : sst_lev[lev]) { sst.reset(); }
+    for (auto& tsk : tsk_lev[lev]) { tsk.reset(); }
     if (lat_m[lev]) {
         lat_m[lev].reset();
     }
@@ -1633,6 +1632,12 @@ ERF::ClearLevel (int lev)
     // builds the level next is responsible for setting this again.
     if (lev < static_cast<int>(rad_interp_from_coarse_pending.size())) {
         rad_interp_from_coarse_pending[lev] = 0;
+    }
+
+    // Drop the level from the surface model too, so its level count (used by its
+    // checkpoint) matches finest_level once regridding has removed levels.
+    if (m_SurfaceModel) {
+        m_SurfaceModel->clear_level(lev);
     }
 }
 

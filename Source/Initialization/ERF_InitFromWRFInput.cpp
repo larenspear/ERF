@@ -535,9 +535,6 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
         }
     }
     int nvar = NC_names.size();
-    Vector<Vector<FArrayBox>> NC_fab_var;
-    NC_fab_var.resize(num_boxes_at_level[lev]);
-    for (int idx(0); idx < num_boxes_at_level[lev]; ++ idx) { NC_fab_var[idx].resize(nvar); }
 
     auto& lev_new = vars_new[lev];
 
@@ -627,6 +624,48 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
 
     const Real l_rdOcp = solverChoice.rdOcp;
 
+    // **************************************************************************
+    // Each rank reads from the file only the part of each field that its own grids
+    // need, so that no rank (not even the I/O rank) ever holds a whole field.  The
+    // consumers below fill the valid and ghost cells of this level's MultiFabs, in
+    // places clamping the index to the domain, so a rank needs the cells covered by
+    // its own boxes grown by the largest ghost width any of those MultiFabs carries.
+    // **************************************************************************
+    IntVect ng_read(0);
+    for (int d = 0; d < 2; ++d) {
+        ng_read[d] = amrex::max(ng[d], ngz[d], mapfac[lev][MapFacType::m_x]->nGrowVect()[d]) + 1;
+    }
+    const int myproc = ParallelDescriptor::MyProc();
+
+    // The part of typed_fill (a box with the index type of the variable being read)
+    // that this rank needs.  A rank with no boxes here still gets a single column, so
+    // that every rank reads (and holds) something.
+    auto local_region = [&] (const Box& typed_fill) -> Box
+    {
+        Box region;
+        for (int i = 0; i < ba.size(); ++i) {
+            if (dm[i] != myproc) { continue; }
+            Box b = amrex::grow(ba[i], ng_read);
+            b = amrex::convert(b, typed_fill.ixType());
+            b.setRange(2, typed_fill.smallEnd(2), typed_fill.length(2));
+            b &= typed_fill;
+            if (b.ok()) { region = (region.ok()) ? region.minBox(b) : b; }
+        }
+        if (!region.ok()) {
+            region = typed_fill;
+            region.setBig(0, region.smallEnd(0));
+            region.setBig(1, region.smallEnd(1));
+        }
+        return region;
+    };
+
+    // How many ranks may read the file at the same time
+    int wrfinput_max_readers = 256;
+    {
+        ParmParse pp("erf");
+        pp.query("wrfinput_max_readers", wrfinput_max_readers);
+    }
+
     Print() << (read_atmos_state ? "Loading initial data" : "Loading surface data")
             << " from NetCDF file at level " << lev << "\n";
     for (int idx = 0; idx < num_boxes_at_level[lev]; idx++) {
@@ -643,6 +682,9 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
         Box subdomain_to_fill = boxes_at_level[lev][idx];
         Print() << "Box to fill " << subdomain_to_fill << "\n";
 
+        int use_theta_m;
+        check_wrfinput_geometry(lev, nc_init_file[lev][idx], geom[lev], use_theta_m);
+
         for (int ivar = 0; ivar < nvar; ++ ivar) {
             auto var_name = NC_names[ivar];
 
@@ -655,12 +697,17 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
 
             Print() << "Checking for " << var_name << " ...";
 
-            int success, use_theta_m;
-            read_from_wrfinput(lev, subdomain_to_read, nc_init_file[lev][idx],
-                               NC_fab_var[idx][ivar], var_name, geom[lev],
-                               use_theta_m, success);
+            // Only the box the variable covers in the file is found here; the data is
+            // read below, each rank reading just the part its own grids need.
+            Box file_box;
+            int success = wrfinput_var_box(subdomain_to_read, nc_init_file[lev][idx], var_name, file_box);
+            Print() << (success ? " Reading  " : " Skipping ") << var_name << std::endl;
 
-            auto& var_fab_from_file = NC_fab_var[idx][ivar];
+            // Holds this rank's part of the variable as read from the file; it is
+            // released at the end of this iteration once its data has been copied into
+            // this level's MultiFabs.
+            FArrayBox var_fab_from_file;
+
             bool has_fallback_behavior =
                 (var_name == "U")       || (var_name == "V")       || (var_name == "W")      ||
                 (var_name == "THM")     || (var_name == "QVAPOR")  || (var_name == "QCLOUD") ||
@@ -686,29 +733,33 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
             if (success) {
                 // This shift occurs only when the coarser grid is at least at level 1,
                 // because the indices are always given relative to that coarser "domain"
+                IntVect shift_by(0);
                 if (lev > 1) {
                     Box shift_by_box(subdomains[lev][0].minimalBox());
-                    IntVect shift_by(shift_by_box.smallEnd());
+                    shift_by = shift_by_box.smallEnd();
                     for (int i = 0; i < AMREX_SPACEDIM; i++) {
-                        shift_by[i] -= var_fab_from_file.box().smallEnd(i);
+                        shift_by[i] -= file_box.smallEnd(i);
                     }
                     // The fab just read lives on the file's vertical grid, so when this level
                     // is refined in the vertical the z part of the shift has to be expressed
                     // there too rather than in this level's index space.
                     if (rr_z > 1) {
                         shift_by[2] = amrex::coarsen(shift_by_box.smallEnd(2), rr_z)
-                                    - var_fab_from_file.box().smallEnd(2);
+                                    - file_box.smallEnd(2);
                     }
-                    var_fab_from_file.shift(shift_by);
                 }
+
+                // The box the whole variable covers, in this level's index space
+                Box var_box(file_box);
+                var_box.shift(shift_by);
 
 
                 // In the case where the array is 1D in the z-direction, the destination box needs to also
                 //    be 1D in the z-direction, but with (i,j) corresponding to the low corner of the box
                 //    to be filled
-                int nx = var_fab_from_file.box().length(0);
-                int ny = var_fab_from_file.box().length(1);
-                int nz = var_fab_from_file.box().length(2);
+                int nx = var_box.length(0);
+                int ny = var_box.length(1);
+                int nz = var_box.length(2);
                 Box subdomain_tmp(subdomain_to_fill);
                 if (nx == 1 and ny == 1) {
                     subdomain_tmp.setBig(0,subdomain_tmp.smallEnd(0));
@@ -719,7 +770,10 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
                     subdomain_tmp.setBig(2,subdomain_tmp.smallEnd(2));
                 }
 
-                Box subdomain_to_fill_typed(convert(subdomain_tmp,var_fab_from_file.box().ixType()));
+                Box subdomain_to_fill_typed(convert(subdomain_tmp,var_box.ixType()));
+
+                // Only the part of the box to fill that this rank's own grids need
+                Box local_to_fill = local_region(subdomain_to_fill_typed);
 
                 // *********************************************************************
                 // Decide whether this particular field has to be interpolated in the
@@ -735,7 +789,7 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
                                           var_name == "DZS");
                 const bool refine_in_z = (rr_z > 1) && (nz > 1) && !is_soil_var;
 
-                Box subdomain_crse(subdomain_to_fill_typed);
+                Box subdomain_crse(local_to_fill);
                 if (refine_in_z) {
                     subdomain_crse.coarsen(IntVect(1,1,rr_z));
                     //
@@ -750,16 +804,16 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
                     //
                     subdomain_crse.grow(2,1);
                     subdomain_crse.setSmall(2, amrex::max(subdomain_crse.smallEnd(2),
-                                                          var_fab_from_file.box().smallEnd(2)));
+                                                          var_box.smallEnd(2)));
                     subdomain_crse.setBig  (2, amrex::min(subdomain_crse.bigEnd(2),
-                                                          var_fab_from_file.box().bigEnd(2)));
+                                                          var_box.bigEnd(2)));
                 }
 
 #ifdef AMREX_USE_GPU
-                var_fab.resize(subdomain_to_fill_typed, 1, amrex::The_Pinned_Arena());
+                var_fab.resize(local_to_fill, 1, amrex::The_Pinned_Arena());
                 if (refine_in_z) { var_fab_crse.resize(subdomain_crse, 1, amrex::The_Pinned_Arena()); }
 #else
-                var_fab.resize(subdomain_to_fill_typed, 1);
+                var_fab.resize(local_to_fill, 1);
                 if (refine_in_z) { var_fab_crse.resize(subdomain_crse, 1); }
 #endif
 
@@ -767,6 +821,20 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
                 // grid is refined relative to the file, and straight into the destination
                 // otherwise.
                 FArrayBox& read_fab = (refine_in_z) ? var_fab_crse : var_fab;
+
+                // Read the columns of the file under read_fab, over the file's whole
+                // vertical extent.  A field that is a single column in the file is read
+                // whole, since it is spread over every (i,j) below.
+                Box region_to_read(var_box);
+                if (nx > 1 || ny > 1) {
+                    for (int d = 0; d < 2; ++d) {
+                        region_to_read.setRange(d, read_fab.box().smallEnd(d), read_fab.box().length(d));
+                    }
+                }
+                region_to_read.shift(-shift_by);
+                read_region_from_wrfinput(nc_init_file[lev][idx], var_name, file_box, region_to_read,
+                                          var_fab_from_file, wrfinput_max_readers);
+                if (var_fab_from_file.box().ok()) { var_fab_from_file.shift(shift_by); }
 
                 Box intersection = read_fab.box() & var_fab_from_file.box();
                 if (intersection.ok()) {
@@ -1294,7 +1362,9 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
 
           // Initialize MapFac U
           if ( var_name == "MAPFAC_U" ) {
+              // Each rank holds only its own part of the field, so the test is made on the whole of it
               Real max_val = var_fab.template max<RunOn::Device>();
+              ParallelDescriptor::ReduceRealMax(max_val);
               if (std::fabs(max_val) < std::numeric_limits<Real>::epsilon()) {
                   Print() << "MAPFAC_U cannot be 0, resetting to 1!\n";
                   var_fab.template setVal<RunOn::Device>(1);
@@ -1326,7 +1396,9 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
 
           // Initialize MapFac V
           if ( var_name == "MAPFAC_V" ) {
+              // Each rank holds only its own part of the field, so the test is made on the whole of it
               Real max_val = var_fab.template max<RunOn::Device>();
+              ParallelDescriptor::ReduceRealMax(max_val);
               if (std::fabs(max_val) < std::numeric_limits<Real>::epsilon()) {
                   Print() << "MAPFAC_V cannot be 0, resetting to 1!\n";
                   var_fab.template setVal<RunOn::Device>(1);
@@ -1358,7 +1430,9 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
 
           // Initialize MapFac M
           if ( var_name == "MAPFAC_M" ) {
+              // Each rank holds only its own part of the field, so the test is made on the whole of it
               Real max_val = var_fab.template max<RunOn::Device>();
+              ParallelDescriptor::ReduceRealMax(max_val);
               if (std::fabs(max_val) < std::numeric_limits<Real>::epsilon()) {
                   Print() << "MAPFAC_M cannot be 0, resetting to 1!\n";
                   var_fab.template setVal<RunOn::Device>(1);
@@ -2207,6 +2281,10 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
     //       coarse level.  See MakeNewLevelFromCoarse.
     // **************************************************************************
     if (!read_atmos_state) {
+        // The SST/TSK time slices, as at the end of this routine
+        if (!nc_low_file.empty()) {
+            init_fine_low_slices(lev, /*restarting=*/ false);
+        }
         Print() << "Surface-only initialization from wrfinput complete at level " << lev << ".\n";
         Print() << "The atmospheric state and the base state will be built by the caller.\n";
         return;
@@ -2432,13 +2510,19 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
         for (int itime(0); itime < ntimes; ++itime) {
             read_from_wrflow(itime, nc_low_file, geom[0].Domain(), low_data_zlo);
 
-            update_sst_tsk(itime, geom[lev], ba2d[lev],
+            update_sst_tsk(lev, itime, geom[lev], ba2d[lev],
                            sst_lev[lev], tsk_lev[lev],
                            m_SurfaceLayer[Orientation(Direction::z, Orientation::low)], low_data_zlo,
                            lev_new[Vars::cons], *mf_PSFC[lev],
                            l_rdOcp, lmask_lev[lev][0], use_moist);
         }
     } // lev == 0 && nc_low_file exists
+
+    // A finer level that read its own init file: its SST/TSK time slices come from its own
+    // wrflow file if it has one and otherwise, all of them, from its parent
+    if ((lev > 0) && !nc_low_file.empty()) {
+        init_fine_low_slices(lev, /*restarting=*/ false);
+    }
 }
 
 
@@ -3245,5 +3329,189 @@ init_terrain_from_wrfinput (int /*lev*/,
             }
         }
     } // avg_grid_faces_to_nodes
+}
+
+/**
+ * Give a level > 0 that read its own init file (erf.nc_init_file_<lev>) the SST and TSK
+ * time slices it needs now, when level 0 reads a wrflow file (erf.nc_low_file).
+ *
+ * If the level has a wrflow file of its own (erf.nc_low_file_<lev>), the slices are read from
+ * it, on the level's nest box; its times must be those of level 0's file, so that the surface
+ * layer interpolates both levels in time between the same slices.  Otherwise every slice,
+ * including the first, which the level read from its init file, is replaced by interpolation
+ * from the parent, so that the level follows level 0's wrflow file from the start of the run.
+ * Later slices are filled as level 0 reads them (see ERF::timeStep).
+ *
+ * A level made by refinement, with no init file of its own, is left to Interp2DArrays.
+ *
+ * @param[in] lev        level (> 0)
+ * @param[in] restarting true when restarting from a checkpoint: slice 0 was read from it, and
+ *                       the surface pressure, which is not checkpointed, is re-read
+ */
+void
+ERF::init_fine_low_slices (int lev, bool restarting)
+{
+    AMREX_ALWAYS_ASSERT(lev > 0 && !nc_low_file.empty());
+    if (!has_own_init_file(lev)) { return; }
+
+    const int ntimes = static_cast<int>(low_data_zlo.size());
+    const double time_since_start_low = t_new[0] + start_time - start_low_time;
+    const int n_time_old = std::min(static_cast<int>(time_since_start_low / low_time_interval), ntimes-1);
+    const int n_time_end = std::min(n_time_old+3, ntimes);
+
+    if (has_own_low_file(lev))
+    {
+        check_own_low_file_times(lev);
+        if (restarting) { read_psfc_from_own_init_file(lev); }
+
+        sst_lev[lev].resize(ntimes);
+        tsk_lev[lev].resize(ntimes);
+
+        // After a regrid the slices were remade from the parent from n_time_old on only, but
+        // update_sst_tsk takes TSK over land at the later slices from slice 0
+        const auto& dm = vars_new[lev][Vars::cons].DistributionMap();
+        for (auto* field_lev : {&sst_lev, &tsk_lev}) {
+            if (!(*field_lev)[lev][0]) { Interp2DTimeSlice(lev, 0, *field_lev, ba2d[lev], dm); }
+        }
+
+        // The surface layer takes this level's pointers when the level is added to it
+        std::unique_ptr<SurfaceLayer> no_surface_layer;
+        for (int itime = n_time_old; itime < n_time_end; ++itime) {
+            read_own_low_slice(lev, itime, no_surface_layer);
+        }
+    }
+    else if (!restarting)
+    {
+        // Every slice from the parent, including slice 0 (which the surface layer also uses
+        // for TSK over land) in place of the one read from this level's init file.  On a
+        // restart slice 0 comes from the checkpoint and Interp2DArrays fills the rest.
+        const auto& dm = vars_new[lev][Vars::cons].DistributionMap();
+        for (auto* field_lev : {&sst_lev, &tsk_lev}) {
+            for (auto& slice : (*field_lev)[lev]) { slice.reset(); }
+            Interp2DTimeSlice(lev, 0, *field_lev, ba2d[lev], dm);
+            for (int itime = std::max(n_time_old,1); itime < n_time_end; ++itime) {
+                Interp2DTimeSlice(lev, itime, *field_lev, ba2d[lev], dm);
+            }
+        }
+    }
+}
+
+/**
+ * Read time slice itime of this level's own wrflow file (erf.nc_low_file_<lev>) and make the
+ * SST and TSK at that time from it, as update_sst_tsk does at level 0.
+ *
+ * @param[in] lev       level (> 0) with a wrflow file of its own
+ * @param[in] itime     time slice
+ * @param[in] SurfLayer surface layer to point at a newly made slice, or null
+ */
+void
+ERF::read_own_low_slice (int lev, int itime, std::unique_ptr<SurfaceLayer>& SurfLayer)
+{
+    AMREX_ALWAYS_ASSERT(has_own_low_file(lev));
+    AMREX_ALWAYS_ASSERT(itime < static_cast<int>(sst_lev[lev].size()));
+
+    // The file covers this level's nest box (checked when the slice is read)
+    const Box box2d = nest_box_from_own_init_file(lev);
+
+    Vector<Vector<FArrayBox>> low_data(sst_lev[lev].size());
+    read_from_wrflow(itime, nc_low_file_at_level[lev], box2d, low_data);
+
+    const bool use_moist = (solverChoice.moisture_type != MoistureType::None);
+    update_sst_tsk(lev, itime, geom[lev], ba2d[lev],
+                   sst_lev[lev], tsk_lev[lev], SurfLayer, low_data,
+                   vars_new[lev][Vars::cons], *mf_PSFC[lev],
+                   solverChoice.rdOcp, lmask_lev[lev][0], use_moist);
+}
+
+/**
+ * Check that this level's wrflow file has the same times as level 0's: the surface layer
+ * interpolates every level in time with level 0's start time and interval.
+ *
+ * @param[in] lev level (> 0) with a wrflow file of its own
+ */
+void
+ERF::check_own_low_file_times (int lev)
+{
+    Vector<Vector<FArrayBox>> times_only;
+    double start_lev, final_lev;
+    const double interval_lev = read_times_from_wrflow(nc_low_file_at_level[lev], times_only,
+                                                       start_lev, final_lev);
+    if (times_only.size() != low_data_zlo.size() || start_lev != start_low_time ||
+        final_lev != final_low_time || interval_lev != low_time_interval)
+    {
+        Abort("erf.nc_low_file_" + std::to_string(lev) + " (" + nc_low_file_at_level[lev] + ") has " +
+              std::to_string(times_only.size()) + " times every " + std::to_string(interval_lev) +
+              " s, but erf.nc_low_file (" + nc_low_file + ") has " + std::to_string(low_data_zlo.size()) +
+              " times every " + std::to_string(low_time_interval) + " s; the wrflow files for all " +
+              "levels must have the same times");
+    }
+}
+
+/**
+ * Re-read the surface pressure of a level > 0 from its own init file, on its nest box as
+ * init_from_wrfinput reads it.  The surface pressure is not checkpointed, and update_sst_tsk
+ * needs it to convert the sea surface temperature.
+ *
+ * @param[in] lev level (> 0) with a single init file of its own
+ */
+void
+ERF::read_psfc_from_own_init_file (int lev)
+{
+    AMREX_ALWAYS_ASSERT(lev > 0 && nc_init_file[lev].size() == 1);
+
+    int ratio;
+    Box subdomain_to_read = read_subdomain_from_wrfinput(lev, nc_init_file[lev][0], ratio);
+
+    FArrayBox fab_from_file;
+    int success, use_theta_m;
+    read_from_wrfinput(lev, subdomain_to_read, nc_init_file[lev][0], fab_from_file, "PSFC",
+                       geom[lev], use_theta_m, success);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(success, "read_psfc_from_own_init_file: no PSFC in the init file");
+
+    // Put it on the nest box, as init_from_wrfinput does
+    const Box box2d = nest_box_from_own_init_file(lev);
+    AMREX_ALWAYS_ASSERT(fab_from_file.box().length(0) == box2d.length(0) &&
+                        fab_from_file.box().length(1) == box2d.length(1));
+    fab_from_file.shift(box2d.smallEnd() - fab_from_file.box().smallEnd());
+
+    FArrayBox var_fab(box2d, 1, The_Pinned_Arena());
+    var_fab.template copy<RunOn::Host>(fab_from_file, 0, 0, 1);
+
+    for (MFIter mfi(*mf_PSFC[lev], false); mfi.isValid(); ++mfi) {
+        (*mf_PSFC[lev])[mfi].template copy<RunOn::Device>(var_fab, 0, 0, 1);
+    }
+    if (mf_PSFC[lev]->max(0) == zero) {
+        mf_PSFC[lev]->setVal(p_0);
+    }
+}
+
+/**
+ * The 2D box of cells at a level > 0 that its own init file covers, placed as ERF::ErrorEst
+ * places the level when it is made from that file: the file's box (relative to the parent's
+ * region, in units of this level's cells) is coarsened to the parent, shifted to the parent's
+ * region and refined again.  Unlike boxes_at_level, which ErrorEst fills when it makes the
+ * level, this is also available on a restart.
+ *
+ * @param[in] lev level (> 0) with a single init file of its own
+ */
+Box
+ERF::nest_box_from_own_init_file (int lev)
+{
+    AMREX_ALWAYS_ASSERT(lev > 0 && nc_init_file[lev].size() == 1);
+    AMREX_ALWAYS_ASSERT(subdomains[lev-1].size() == 1);
+
+    int ratio;
+    Box box2d = read_subdomain_from_wrfinput(lev-1, nc_init_file[lev][0], ratio);
+    box2d.setRange(2,0);
+
+    const IntVect rr2d(refRatio(lev-1)[0], refRatio(lev-1)[1], 1);
+    const Box parent_region = subdomains[lev-1][0].minimalBox();
+    IntVect parent_lo = parent_region.smallEnd();
+    parent_lo[2] = 0;
+
+    box2d.coarsen(rr2d);
+    box2d.shift(parent_lo);
+    box2d.refine(rr2d);
+    return box2d;
 }
 #endif // ERF_USE_NETCDF

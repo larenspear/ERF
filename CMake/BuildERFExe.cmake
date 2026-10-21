@@ -498,6 +498,7 @@ function(build_erf_lib erf_lib_name)
        ${SRC_DIR}/IO/ERF_ConsoleIO.cpp
        ${SRC_DIR}/IO/ERF_ReadFromERFBdy.cpp
        ${SRC_DIR}/IO/ERF_WriteERFBdy.cpp
+       ${SRC_DIR}/LinearSolvers/ERF_CoarseFineFaces.cpp
        ${SRC_DIR}/LinearSolvers/ERF_PoissonSolve.cpp
        ${SRC_DIR}/LinearSolvers/ERF_PoissonSolve_tb.cpp
        ${SRC_DIR}/LinearSolvers/ERF_PoissonWallDist.cpp
@@ -506,6 +507,7 @@ function(build_erf_lib erf_lib_name)
        ${SRC_DIR}/LinearSolvers/ERF_ImposeBCsOnPhi.cpp
        ${SRC_DIR}/LinearSolvers/ERF_SolveWithEBMLMG.cpp
        ${SRC_DIR}/LinearSolvers/ERF_SolveWithGMRES.cpp
+       ${SRC_DIR}/LinearSolvers/ERF_SolveWithTerrainMLMG.cpp
        ${SRC_DIR}/LinearSolvers/ERF_SolveWithMLMG.cpp
        ${SRC_DIR}/LinearSolvers/ERF_TerrainPoisson.cpp
        ${SRC_DIR}/Microphysics/Morrison/ERF_InitMorrison.cpp
@@ -591,6 +593,7 @@ function(build_erf_lib erf_lib_name)
        ${SRC_DIR}/TimeIntegration/ERF_SlowRhsPre.cpp
        ${SRC_DIR}/TimeIntegration/ERF_SlowRhsPost.cpp
        ${SRC_DIR}/TimeIntegration/ERF_Substep_NS.cpp
+       ${SRC_DIR}/TimeIntegration/ERF_CFFluxHistory.cpp
        ${SRC_DIR}/TimeIntegration/ERF_Substep_T.cpp
        ${SRC_DIR}/TimeIntegration/ERF_Substep_MT.cpp
        ${SRC_DIR}/Utils/ERF_AverageDown.cpp
@@ -598,6 +601,7 @@ function(build_erf_lib erf_lib_name)
        ${SRC_DIR}/Utils/ERF_ColumnBands.cpp
        ${SRC_DIR}/Utils/ERF_LatLonMap.cpp
        ${SRC_DIR}/Utils/ERF_TerrainSurfaceSlab.cpp
+       ${SRC_DIR}/Utils/ERF_TerrainFileChecks.cpp
        ${SRC_DIR}/Utils/ERF_ConvertForProjection.cpp
        ${SRC_DIR}/Utils/ERF_EnforceConstraintOnBdy.cpp
        ${SRC_DIR}/Utils/ERF_HurricaneDiagnostics.cpp

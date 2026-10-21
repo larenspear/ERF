@@ -21,6 +21,7 @@
 #include "ERF_TurbPertStruct.H"
 #include "ERF_RadStruct.H"
 #include "ERF_ShocTransportStruct.H"
+#include "ERF_CanopyTurbStruct.H"
 
 /**
  * Enum of possible plotfile types.
@@ -101,6 +102,18 @@ AMREX_ENUM(AnelasticType,
  */
 AMREX_ENUM(MeshType,
     ConstantDz, StretchedDz, VariableDz
+);
+
+/**
+ * @brief Linear solver for the anelastic projection on a terrain-fitted mesh.
+ *
+ * gmres_fft is GMRES with ERF's TerrainPoisson operator and an FFT preconditioner (needs the
+ * FFT build).  mlmg and gmres_mlmg use amrex::MLTerrainPoisson (AMReX-Codes/amrex#6030), the
+ * same stencil with zero flux through the Neumann faces, solved by geometric multigrid
+ * alone or as the preconditioner of GMRES; they need no FFT.
+ */
+AMREX_ENUM(TerrainPoissonSolver,
+    gmres_fft, mlmg, gmres_mlmg
 );
 
 /**
@@ -1142,6 +1155,15 @@ struct SolverChoice {
         }
         pp.queryAdd("poisson_abstol", poisson_abstol);
         pp.queryAdd("poisson_reltol", poisson_reltol);
+        // Solver for the projection on a terrain-fitted mesh: FFT-preconditioned GMRES (default),
+        // or amrex::MLTerrainPoisson with multigrid, alone or under GMRES
+        pp.query_enum_case_insensitive("terrain_poisson_solver", terrain_poisson_solver);
+        if (pp.contains("terrain_poisson_solver") &&
+            (mesh_type != MeshType::VariableDz || terrain_type == TerrainType::EB)) {
+            amrex::Print() << "WARNING: erf.terrain_poisson_solver is ignored: it applies only to the "
+                           << "projection on a terrain-fitted mesh (erf.terrain_type = StaticFittedMesh "
+                           << "or MovingFittedMesh)" << std::endl;
+        }
 #ifdef AMREX_USE_FLOAT
         poisson_abstol = amrex::max(poisson_abstol,amrex::Real(1e-6));
         poisson_reltol = amrex::max(poisson_reltol,amrex::Real(1e-6));
@@ -1181,6 +1203,11 @@ struct SolverChoice {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
             forest_leaf_theta_fixed <= zero || forest_biophysics_heat,
             "forest_leaf_theta_fixed requires forest_biophysics_heat = true");
+
+        // Canopy terms of the k-eqn RANS model (erf.forest_canopy_*); the
+        // checks that need the forest and the turbulence model are in
+        // ERF::ReadParameters, once both are known
+        canopyTurb.init_params(pp);
 
         // immersed forcing parameters
         pp.queryAdd("if_Cd_momentum", if_Cd_momentum);
@@ -1891,6 +1918,14 @@ struct SolverChoice {
             }
         }
 
+        // Two-way coupling refluxes the diffusive fluxes of the slow scalars, but not on an EB mesh
+        if (coupling_type == CouplingType::TwoWay && terrain_type == TerrainType::EB &&
+            max_level > 0 && l_use_diff) {
+            amrex::Warning("erf.coupling_type = TwoWay with erf.terrain_type = EB does not reflux the "
+                           "diffusive fluxes: diffusion does not conserve the scalars across "
+                           "coarse/fine boundaries");
+        }
+
         // The implicit terrain metric is a change to the vertical implicit solves on a
         // terrain-fitted mesh; refuse it where it could not do anything.  This comes after
         // every block that can turn the implicit solve off.
@@ -2288,6 +2323,7 @@ struct SolverChoice {
 
     int         ncorr               = 1;
     std::string wall_dist_type      = "poisson";
+    TerrainPoissonSolver  terrain_poisson_solver  = TerrainPoissonSolver::gmres_fft;
 #ifdef AMREX_USE_FLOAT
     amrex::Real poisson_abstol      = amrex::Real(1e-6);
     amrex::Real poisson_reltol      = amrex::Real(1e-6);
@@ -2618,6 +2654,8 @@ struct SolverChoice {
     bool        forest_biophysics       {false};
     bool        forest_biophysics_heat  {false};
     amrex::Real forest_leaf_theta_fixed {-one};
+    // Canopy terms of the k-eqn RANS model (ERF_CanopyTurbStruct.H)
+    CanopyTurbulence canopyTurb;
 
     // Enforce constant mass flux?
     amrex::Real const_massflux_u = zero;
@@ -2709,6 +2747,8 @@ struct SolverChoice {
  * @brief Whether the compact terrain-metric part of the vertical diffusion is solved implicitly.
  * @var SolverChoice::ncorr
  * @brief Number of projection correction iterations.
+ * @var SolverChoice::terrain_poisson_solver
+ * @brief Projection solver on a terrain-fitted mesh: gmres_fft (default), mlmg or gmres_mlmg.
  * @var SolverChoice::poisson_abstol
  * @brief Absolute tolerance for the Poisson solve.
  * @var SolverChoice::poisson_reltol
