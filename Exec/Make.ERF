@@ -514,14 +514,24 @@ ifeq ($(USE_NOAHMP), TRUE)
 
   VPATH_LOCATIONS   += $(NOAHMP_HOME)/drivers/erf
   INCLUDE_LOCATIONS += $(NOAHMP_HOME)/drivers/erf
-  INCLUDE_LOCATIONS += $(NOAHMP_HOME)/drivers/erf/include
 
   ERF_LSM_NOAHMP_DIR = $(ERF_SOURCE_DIR)/LandSurfaceModel/Noah-MP
   include $(ERF_LSM_NOAHMP_DIR)/Make.package
   VPATH_LOCATIONS   += $(ERF_LSM_NOAHMP_DIR)
   INCLUDE_LOCATIONS += $(ERF_LSM_NOAHMP_DIR)
 
-  LIBRARY_LOCATIONS += $(NOAHMP_HOME)/drivers/erf/lib
+  # Key the Noah-MP sub-make output by precision. Its object rules depend only on
+  # sources, so a shared obj/ and lib/ is reused unchanged after a PRECISION switch;
+  # NoahmpIO_AssertAbi lives in that same stale library and cannot see the
+  # mismatch. Absolute paths because the sub-make runs with -C.
+  NOAHMP_PREC_TAG     := $(if $(NOAHMP_PRECISION_FLAG),DOUBLE,FLOAT)
+  NOAHMP_TAG_OBJ_DIR  := $(abspath $(NOAHMP_HOME)/drivers/erf/obj/$(NOAHMP_PREC_TAG))
+  NOAHMP_TAG_LIB_DIR  := $(abspath $(NOAHMP_HOME)/drivers/erf/lib/$(NOAHMP_PREC_TAG))
+  NOAHMP_TAG_INC_DIR  := $(abspath $(NOAHMP_HOME)/drivers/erf/include/$(NOAHMP_PREC_TAG))
+  NOAHMP_SUBMAKE_DIRS := NOAHMP_OBJ_DIR=$(NOAHMP_TAG_OBJ_DIR) NOAHMP_LIB_DIR=$(NOAHMP_TAG_LIB_DIR) NOAHMP_INC_DIR=$(NOAHMP_TAG_INC_DIR)
+  INCLUDE_LOCATIONS   += $(NOAHMP_TAG_INC_DIR)
+
+  LIBRARY_LOCATIONS += $(NOAHMP_TAG_LIB_DIR)
   LIBRARIES += -lnoahmp -lnetcdff
 endif
 
@@ -913,7 +923,7 @@ ERF_PREBUILD_TARGETS += build_noahmp
 # different netCDF-Fortran) does not by itself trigger a recompile. Run
 # `make realclean`, or clean $(NOAHMP_HOME)/drivers/erf, when switching installs.
 build_noahmp:
-	$(MAKE) -C $(NOAHMP_HOME)/drivers/erf -f Makefile all_noahmp NOAHMP_PRECISION_FLAG="$(NOAHMP_PRECISION_FLAG)" $(NOAHMP_SUBMAKE_NETCDF)
+	$(MAKE) -C $(NOAHMP_HOME)/drivers/erf -f Makefile all_noahmp NOAHMP_PRECISION_FLAG="$(NOAHMP_PRECISION_FLAG)" $(NOAHMP_SUBMAKE_NETCDF) $(NOAHMP_SUBMAKE_DIRS)
 
 # Build Noah-MP (codegen + libnoahmp.a) before any ERF object; -j ignores the
 # all prereq order, so an order-only dependency is needed to enforce it.
