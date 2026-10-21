@@ -798,6 +798,11 @@ ifeq ($(USE_TERRAIN_VELOCITY), TRUE)
 endif
 
 ifeq ($(USE_ML_UPHYS_DIAGNOSTICS), TRUE)
+  # Mirrors CMakeLists.txt: the diagnostics live in the super-droplet particle
+  # code, so without particles the switch would silently do nothing.
+  ifneq ($(USE_PARTICLES), TRUE)
+    $(error USE_ML_UPHYS_DIAGNOSTICS=TRUE requires USE_PARTICLES=TRUE)
+  endif
   DEFINES += -DERF_USE_ML_UPHYS_DIAGNOSTICS
 endif
 
