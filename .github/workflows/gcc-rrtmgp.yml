@@ -136,7 +136,6 @@ jobs:
           '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
           -DERF_ENABLE_PARTICLES:BOOL=${{matrix.particles}} \
           -DERF_ENABLE_NETCDF:BOOL=${{matrix.netcdf}} \
-          -DERF_ENABLE_HDF5:BOOL=${{matrix.netcdf}} \
           -DERF_ENABLE_KOKKOS:BOOL=ON \
           -DHDF5_ROOT=${HDF5_ROOT} \
           -DNETCDF_ROOT=${NETCDF_ROOT} \

@@ -624,7 +624,7 @@ CMake can also generate makefiles for the Ninja build system for faster compilat
    **I/O and Analysis**
 
    * ``ERF_ENABLE_NETCDF`` - Enables NetCDF I/O for reading WRF input files and writing plotfiles
-   * ``ERF_ENABLE_HDF5`` - Automatically enabled when NetCDF is enabled (provides parallel I/O backend)
+   * ``ERF_ENABLE_HDF5`` - Enables AMReX HDF5 plotfile support (default OFF; not needed for NetCDF)
    * ``ERF_ENABLE_FFT`` - Enables Fast Fourier Transform for spectral analysis
 
    **Physics Packages**

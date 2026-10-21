@@ -132,7 +132,9 @@ if(ERF_ENABLE_REGRESSION_TESTS_ONLY)
 endif()
 option(ERF_USE_INTERNAL_AMREX "Add AMReX as subproject" ON)
 option(ERF_ENABLE_NETCDF "Enable NetCDF IO" OFF)
-option(ERF_ENABLE_HDF5 "Enable HDF5 IO" ${ERF_ENABLE_NETCDF})
+# AMReX HDF5 plotfiles only; ERF code never uses them and NetCDF does not need
+# this (FindNetCDF.cmake links NetCDF's own HDF5 dependency).
+option(ERF_ENABLE_HDF5 "Enable AMReX HDF5 IO" OFF)
 option(ERF_ENABLE_PARTICLES "Enable Lagrangian particles" OFF)
 option(ERF_ENABLE_FCOMPARE "Enable building fcompare when not testing" OFF)
 set(ERF_PRECISION "DOUBLE" CACHE STRING "Floating point precision SINGLE or DOUBLE")

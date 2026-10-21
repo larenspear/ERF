@@ -116,7 +116,7 @@ Compiler and Tool Requirements
      - >= 1.10
 
 .. note::
-   When ``ERF_ENABLE_NETCDF`` is enabled, the build system automatically enables ``ERF_ENABLE_HDF5``. Both libraries must be parallel-enabled versions when building with MPI.
+   ``ERF_ENABLE_HDF5`` is independent of ``ERF_ENABLE_NETCDF`` and defaults to OFF. If you turn it on, the HDF5 build must match ``ERF_ENABLE_MPI`` (parallel HDF5 with MPI, serial HDF5 without).
 
 Compiler-Specific Notes
 -----------------------
