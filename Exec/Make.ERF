@@ -122,7 +122,10 @@ ifeq ($(USE_SYCL), TRUE)
     DEFINES += -DERF_USE_SYCL
 endif
 
-USE_EB = TRUE
+# ERF.H includes ERF_EB.H, which needs AMReX_EB2.H, so EB is not optional; the
+# override keeps a USE_EB=FALSE on the command line from producing a build that
+# fails only at the first ERF compile.
+override USE_EB = TRUE
 
 include $(AMREX_HOME)/Tools/GNUMake/Make.defs
 
