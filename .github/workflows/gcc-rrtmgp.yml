@@ -3,8 +3,31 @@ name: Linux GCC NetCDF RRTMGP
 on:
   push:
     branches: [development]
+    # Run for code changes, for changes to this workflow itself or the shared
+    # actions, and not for docs or for other workflows. A workflow filtered out
+    # here reports no check at all, so if one ever becomes a required status
+    # check it must switch to a gate job instead of a path filter.
+    paths:
+      - '**'
+      - '!Docs/**'
+      - '!**.md'
+      - '!**.rst'
+      - '!license.txt'
+      - '!.github/workflows/**'
+      - '.github/workflows/gcc-rrtmgp.yml'
+      - '.github/actions/**'
   pull_request:
     types: [opened, synchronize, reopened]
+    # Same filter as push.
+    paths:
+      - '**'
+      - '!Docs/**'
+      - '!**.md'
+      - '!**.rst'
+      - '!license.txt'
+      - '!.github/workflows/**'
+      - '.github/workflows/gcc-rrtmgp.yml'
+      - '.github/actions/**'
   workflow_dispatch:
 
 concurrency:
@@ -113,7 +136,6 @@ jobs:
           '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
           -DERF_ENABLE_PARTICLES:BOOL=${{matrix.particles}} \
           -DERF_ENABLE_NETCDF:BOOL=${{matrix.netcdf}} \
-          -DERF_ENABLE_HDF5:BOOL=${{matrix.netcdf}} \
           -DERF_ENABLE_KOKKOS:BOOL=ON \
           -DHDF5_ROOT=${HDF5_ROOT} \
           -DNETCDF_ROOT=${NETCDF_ROOT} \

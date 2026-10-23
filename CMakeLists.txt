@@ -132,7 +132,9 @@ if(ERF_ENABLE_REGRESSION_TESTS_ONLY)
 endif()
 option(ERF_USE_INTERNAL_AMREX "Add AMReX as subproject" ON)
 option(ERF_ENABLE_NETCDF "Enable NetCDF IO" OFF)
-option(ERF_ENABLE_HDF5 "Enable HDF5 IO" ${ERF_ENABLE_NETCDF})
+# AMReX HDF5 plotfiles only; ERF code never uses them and NetCDF does not need
+# this (FindNetCDF.cmake links NetCDF's own HDF5 dependency).
+option(ERF_ENABLE_HDF5 "Enable AMReX HDF5 IO" OFF)
 option(ERF_ENABLE_PARTICLES "Enable Lagrangian particles" OFF)
 option(ERF_ENABLE_FCOMPARE "Enable building fcompare when not testing" OFF)
 set(ERF_PRECISION "DOUBLE" CACHE STRING "Floating point precision SINGLE or DOUBLE")
@@ -301,11 +303,26 @@ else()
       else()
         set(_amrex_particle_precision_component "PDOUBLE")
       endif()
+      # Request only what ERF needs. PIC (position-independent code) is a
+      # build flavor, not a capability, and the AMReX default and the Spack
+      # amrex default are both ~pic, so requiring it rejects stock installs.
+      # EB is always required: ERF compiles Source/EB/* unconditionally.
       list(APPEND AMREX_COMPONENTS
-        "3D" "PIC" "PARTICLES"
-        "${_amrex_particle_precision_component}"
+        "3D" "EB"
         "${_amrex_mesh_precision_component}"
         "LSOLVERS")
+      if (ERF_ENABLE_PARTICLES)
+        list(APPEND AMREX_COMPONENTS "PARTICLES" "${_amrex_particle_precision_component}")
+      endif()
+      if (ERF_ENABLE_FFT)
+        list(APPEND AMREX_COMPONENTS "FFT")
+      endif()
+      if (ERF_ENABLE_HDF5)
+        list(APPEND AMREX_COMPONENTS "HDF5")
+      endif()
+      if (ERF_ENABLE_TESTS OR ERF_ENABLE_FCOMPARE)
+        list(APPEND AMREX_COMPONENTS "PFTOOLS")
+      endif()
       if (ERF_ENABLE_MPI)
         list(APPEND AMREX_COMPONENTS "MPI")
       endif()
@@ -318,14 +335,12 @@ else()
       if (ERF_ENABLE_SYCL)
         list(APPEND AMREX_COMPONENTS "SYCL")
       endif()
-      if (ERF_ENABLE_ROCM)
+      if (ERF_ENABLE_HIP)
         list(APPEND AMREX_COMPONENTS "HIP")
       endif()
-      if (ERF_ENABLE_HYPRE)
-        list(APPEND AMREX_COMPONENTS "HYPRE")
-      endif()
       if (ERF_ENABLE_TINY_PROFILE)
-        list(APPEND AMREX_COMPONENTS "TINY_PROFILE")
+        # AMReXConfig.cmake exports this capability as AMReX_TINYP_FOUND
+        list(APPEND AMREX_COMPONENTS "TINYP")
       endif()
 
       separate_arguments(AMREX_COMPONENTS)
