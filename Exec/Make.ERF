@@ -77,15 +77,6 @@ ifeq ($(filter 0 1,$(words $(ERF_BACKENDS_ENABLED))),)
   $(error At most one of USE_OMP, USE_CUDA, USE_HIP, USE_SYCL may be TRUE; got $(ERF_BACKENDS_ENABLED))
 endif
 
-# The checked-in Source/PhysicsInterfaces/eamxx_config.h defines SCREAM_DOUBLE_PRECISION, so the
-# EAMxx ETI files instantiate the SHOC templates for double only, while ERF instantiates them
-# with amrex::Real.  Refuse a single-precision build here rather than failing at link time.
-ifeq ($(USE_EAMXX_SHOC), TRUE)
-  ifeq ($(PRECISION), FLOAT)
-    $(error USE_EAMXX_SHOC=TRUE requires PRECISION=DOUBLE because the vendored eamxx_config.h builds EAMxx in double precision)
-  endif
-endif
-
 # Default is no Fortran build unless an explicit Fortran bridge/model is enabled.
 # Keep this TRUE when USE_MORR_FORT, USE_WSM6_FORT and USE_WDM6_FORT are unset.
 BL_NO_FORT = TRUE
@@ -131,6 +122,21 @@ include $(AMREX_HOME)/Tools/GNUMake/Make.defs
 ifeq ($(USE_WDM6_FORT), TRUE)
   ifneq ($(PRECISION), DOUBLE)
     $(error USE_WDM6_FORT requires PRECISION=DOUBLE because the WDM6 Fortran bridge is double-precision only)
+  endif
+endif
+# Same for the WSM6 Fortran bridge (CMakeLists.txt rejects ERF_ENABLE_WSM6_FORT
+# with single precision; mp_wsm6_run_c takes double* only).
+ifeq ($(USE_WSM6_FORT), TRUE)
+  ifneq ($(PRECISION), DOUBLE)
+    $(error USE_WSM6_FORT requires PRECISION=DOUBLE because the WSM6 Fortran bridge is double-precision only)
+  endif
+endif
+# The checked-in Source/PhysicsInterfaces/eamxx_config.h defines SCREAM_DOUBLE_PRECISION, so the
+# EAMxx ETI files instantiate the SHOC templates for double only, while ERF instantiates them
+# with amrex::Real.  Refuse a single-precision build here rather than failing at link time.
+ifeq ($(USE_EAMXX_SHOC), TRUE)
+  ifneq ($(PRECISION), DOUBLE)
+    $(error USE_EAMXX_SHOC=TRUE requires PRECISION=DOUBLE because the vendored eamxx_config.h builds EAMxx in double precision)
   endif
 endif
 
