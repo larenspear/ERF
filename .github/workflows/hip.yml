@@ -3,14 +3,33 @@ name: ERF CI (hip)
 on:
   push:
     branches: [development]
-    paths-ignore:
-      - Docs/**
-      - README.rst
-      - license.txt
+    # Run for code changes, for changes to this workflow itself or the shared
+    # actions, and not for docs or for other workflows. A workflow filtered out
+    # here reports no check at all, so if one ever becomes a required status
+    # check it must switch to a gate job instead of a path filter.
+    paths:
+      - '**'
+      - '!Docs/**'
+      - '!**.md'
+      - '!**.rst'
+      - '!license.txt'
+      - '!.github/workflows/**'
+      - '.github/workflows/hip.yml'
+      - '.github/actions/**'
 
   pull_request:
     branches: [development]
     types: [opened, synchronize, reopened]
+    # Same filter as push.
+    paths:
+      - '**'
+      - '!Docs/**'
+      - '!**.md'
+      - '!**.rst'
+      - '!license.txt'
+      - '!.github/workflows/**'
+      - '.github/workflows/hip.yml'
+      - '.github/actions/**'
   workflow_dispatch:
 
 concurrency:
