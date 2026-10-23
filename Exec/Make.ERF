@@ -101,6 +101,14 @@ ifeq ($(USE_WDM6_FORT), TRUE)
 DEFINES += -DERF_USE_WDM6_FORT
 BL_NO_FORT = FALSE
 endif
+# Noah-MP is Fortran, so the link needs the Fortran runtime. BL_NO_FORT=FALSE
+# makes AMReX add it for the compiler in use (for gfortran, the -L from
+# -print-file-name plus -lgfortran/-lquadmath). It also takes the MPI link flags
+# from mpif90 instead of mpicxx, which matches the CMake build linking noahmp
+# against MPI::MPI_Fortran.
+ifeq ($(USE_NOAHMP), TRUE)
+BL_NO_FORT = FALSE
+endif
 
 # Mirrors the ERF_WDM6_F32_LITERALS CMake option, which defaults ON. The WDM6
 # Fortran parameters carry no kind suffix, so as compiled they hold float32
@@ -514,7 +522,7 @@ ifeq ($(USE_NOAHMP), TRUE)
   INCLUDE_LOCATIONS += $(ERF_LSM_NOAHMP_DIR)
 
   LIBRARY_LOCATIONS += $(NOAHMP_HOME)/drivers/erf/lib
-  LIBRARIES += -lnoahmp -lgfortran -lquadmath -lnetcdff
+  LIBRARIES += -lnoahmp -lnetcdff
 endif
 
 ERF_RAD_DIR = $(ERF_SOURCE_DIR)/Radiation
