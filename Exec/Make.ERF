@@ -571,6 +571,12 @@ DEFINES += -DERF_HAS_SHOC_FAMILY
 # If using EAMxx SHOC, compile relevant source and headers
 ifeq ($(USE_EAMXX_SHOC), TRUE)
 
+    # Mirrors the CMake check for the E3SM sources; without it the first missing
+    # SHOC file is reported only as "No rule to make target".
+    ifeq ($(wildcard $(EAMXX_HOME)/physics/shoc),)
+      $(error USE_EAMXX_SHOC=TRUE but $(EAMXX_HOME)/physics/shoc does not exist; clone it with Build/GNU_Ekat/eamxx_clone.sh or set EAMXX_HOME)
+    endif
+
     DEFINES += -DERF_USE_KOKKOS
     DEFINES += -DERF_USE_EAMXX_SHOC
     DEFINES += -DSHOC_ENABLE_KOKKOS
