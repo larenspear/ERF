@@ -27,9 +27,11 @@ has_netcdf_mpi := $(shell pkg-config --cflags netcdf-mpi > /dev/null 2>&1; echo 
 ifeq ($(has_netcdf_mpi),0)
  includes  += $(shell pkg-config --cflags netcdf-mpi)
  LIBRARIES += $(shell pkg-config --libs netcdf-mpi)
-else
+else ifeq ($(shell pkg-config --exists netcdf 2>/dev/null; echo $$?),0)
  includes  += $(shell pkg-config --cflags netcdf)
  LIBRARIES += $(shell pkg-config --libs netcdf)
+else
+ $(error NetCDF not found by pkg-config (tried netcdf-mpi and netcdf); set PKG_CONFIG_PATH to the directory holding netcdf.pc)
 endif
 
 CEXE_sources += ERF_PlotfileToNetCDF.cpp
