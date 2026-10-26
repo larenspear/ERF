@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Break ERF_Interpolation_UPW.H in realistic ways and confirm verify_upw_stencils.py objects.
+"""Break ERF_Interpolation_UPW.H in realistic ways and confirm check_upw_stencils.py objects.
 
-Each mutant is written to its own copy of the two headers the verifier reads; the real
+Each mutant is written to its own copy of the two headers the checker reads; the real
 tree is never touched.  Expect `passes` for the baseline and `CAUGHT` for every mutant.
 
-usage: mutate_upw_stencils.py [WORK_DIR]       default: a fresh temporary directory
+usage: check_upw_stencils_selftest.py [WORK_DIR]     default: a fresh temporary directory
+exit:  0 every outcome as expected, 1 otherwise, 77 z3 is not importable (CTest skip)
 """
 import shutil
 import subprocess
@@ -13,9 +14,7 @@ import tempfile
 from pathlib import Path
 
 ERF = Path(__file__).resolve().parent.parent
-VERIFY = Path(__file__).resolve().parent / "verify_upw_stencils.py"
-WORK = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="erf-upw-mutants-"))
-HDR = (ERF / "Source/Utils/ERF_Interpolation_UPW.H").read_text()
+VERIFY = Path(__file__).resolve().parent / "check_upw_stencils.py"
 
 R5 = "upw * g3 * (d3 - amrex::Real(5.0)*d2 + amrex::Real(10.0)*d1)"
 R5ALL = "upw * g3_5_6 * (d3 - amrex::Real(5.0)*d2 + amrex::Real(10.0)*d1)"
@@ -64,19 +63,24 @@ MUTANTS = {
 
 
 def main():
-    print(f"mutants in {WORK}\n")
+    work =Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="erf-upw-mutants-"))
+    hdr = (ERF / "Source/Utils/ERF_Interpolation_UPW.H").read_text()
+    print(f"mutants in {work}\n")
     bad = 0
     for i, (name, edits) in enumerate(MUTANTS.items()):
-        root = WORK / f"m{i}"
+        root = work / f"m{i}"
         (root / "Source/Utils").mkdir(parents=True, exist_ok=True)
         shutil.copy(ERF / "Source/ERF_NumericalConstants.H", root / "Source/ERF_NumericalConstants.H")
-        text = HDR
+        text = hdr
         for old, new, n in edits:
             assert text.count(old) == n, f"{name}: pattern found {text.count(old)}x, wanted {n}"
             text = text.replace(old, new)
         (root / "Source/Utils/ERF_Interpolation_UPW.H").write_text(text)
-        r = subprocess.run([sys.executable, "-I", str(VERIFY), str(root)], capture_output=True, text=True)
-        fails = [l.strip() for l in r.stdout.splitlines() if l.strip().startswith("FAIL")]
+        r = subprocess.run([sys.executable, str(VERIFY), str(root)], capture_output=True, text=True)
+        if r.returncode == 77:                  # the checker skipped itself: this interpreter has no z3
+            print(r.stdout.strip() or "check_upw_stencils.py skipped (exit 77)")
+            return 77
+        fails =[l.strip() for l in r.stdout.splitlines() if l.strip().startswith("FAIL")]
         if r.returncode and not fails:
             fails = [(r.stderr.strip().splitlines() or ["crash"])[-1]]
         caught = bool(r.returncode)

@@ -2377,6 +2377,34 @@ if(Python3_Interpreter_FOUND)
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/Exec/CanonicalTests/Canonical_RANS"
         LABELS "rans;unit")
 endif()
+
+# The linear advection stencils in Source/Utils/ERF_Interpolation_UPW.H, checked
+# symbolically. Tests/check_upw_stencils.py parses the header (no hand-copied
+# coefficients) and has Z3 prove, in exact arithmetic, that CENTERED2/4/6,
+# UPWIND3/5 and every UPWINDALL branch reproduce constants, have at least their
+# declared order for every upwind blend, are mirror-symmetric, upwind toward the
+# upstream side, and agree with one another; it also checks that the X/Y/Z copies
+# read the offsets their variable names promise. The self-test injects nine bugs
+# into a scratch copy of the header and requires each to be caught. Pure Python,
+# no ERF run.
+#
+# Both scripts need the z3-solver package. Where it is not importable they exit
+# 77, which SKIP_RETURN_CODE turns into a skipped test rather than a failed one
+# (the convention Tests/Unit/CMakeLists.txt uses for gtest), so a CI image
+# without z3 keeps a green unit stage; `pip install z3-solver` arms the checks.
+if(ERF_TEST_PYTHON)
+    add_test(NAME AdvectionStencils_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_upw_stencils.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStencils_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_upw_stencils_selftest.py)
+    set_tests_properties(AdvectionStencils_Z3 AdvectionStencils_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 120
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
     # the exact ridge distance, and the same deck flattened (prob.hmax = 1e-6)

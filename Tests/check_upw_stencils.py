@@ -23,14 +23,19 @@ Proofs are in exact real arithmetic; the C++ rounds each coefficient once to dou
 
 UPWIND3SL (flux limiter) is nonlinear and only gets the structural checks.
 
-usage: verify_upw_stencils.py [ERF_ROOT]       exit status 1 if any check fails
+usage: check_upw_stencils.py [ERF_ROOT]
+exit:  0 all checks pass, 1 a check failed, 77 z3 is not importable (CTest skip)
 """
 import re
 import sys
 from fractions import Fraction
 from pathlib import Path
 
-import z3
+try:
+    import z3
+except ImportError:
+    print("check_upw_stencils.py: the z3-solver package is not importable; skipping (exit 77)")
+    sys.exit(77)
 
 UPW_H = "Source/Utils/ERF_Interpolation_UPW.H"
 CONST_H = "Source/ERF_NumericalConstants.H"
@@ -42,7 +47,7 @@ ALL_BRANCHES = {"Centered_2nd": "CENTERED2", "Upwind_3rd": "UPWIND3",
                 "Centered_6th": "CENTERED6"}
 NONLINEAR = {"UPWIND3SL"}
 EXPECTED = {"CENTERED2", "UPWIND3", "UPWIND3SL", "CENTERED4", "UPWIND5", "CENTERED6", "UPWINDALL"}
-PHI =r"m_phi\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*qty_index\s*\)"
+PHI = r"m_phi\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*qty_index\s*\)"
 
 failures = []
 
