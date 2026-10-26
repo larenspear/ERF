@@ -1,0 +1,113 @@
+# syntax=docker/dockerfile:1
+#
+# ERF container images. .github/workflows/container.yml builds these on every merge
+# to development and on release tags and pushes them to ghcr.io/erf-model:
+#
+#   erf-dev   target "dev": the build environment, the source tree, the build tree
+#             and the ccache of the CI build. Pull it to rebuild ERF incrementally
+#             without installing anything.
+#   erf       target "runtime": erf_exec and its runtime libraries only.
+#
+# Tags: "development" and "sha-<commit>" for development builds; the release
+# number ("26.09") and "latest" for release tags.
+#
+# The build is the Linux GCC Particles ON job of .github/workflows/ci.yml: Ubuntu
+# 22.04, GCC 11, MPICH, RelWithDebInfo (-O2 -g1), AMReX assertions, tests and
+# fcompare on, NetCDF off. Keep the configure flags in step with ci.yml.
+#
+# Local build, from the repository root:
+#   docker build -f Build/Containerfile --target dev -t erf-dev .
+#   docker build -f Build/Containerfile --target runtime -t erf .
+# Add --build-context ccache-seed=<dir> to start from an existing ccache.
+
+ARG UBUNTU_VERSION=22.04
+
+# deps: compilers, MPICH, CMake and ccache.
+FROM ubuntu:${UBUNTU_VERSION} AS deps
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential gfortran git ca-certificates curl xz-utils python3 \
+        mpich libmpich-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# AMReX needs CMake 3.25+; Ubuntu 22.04 ships 3.22.
+ARG CMAKE_VERSION=3.31.6
+RUN curl -fsSL -o /tmp/cmake.sh "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.sh" \
+    && sh /tmp/cmake.sh --skip-license --prefix=/usr/local \
+    && rm -f /tmp/cmake.sh
+
+# The ccache release binary, as ci.yml installs it (Ubuntu's 4.5 lacks --evict-older-than).
+ARG CCACHE_VERSION=4.12.2
+RUN curl -fsSL -o /tmp/ccache.tar.xz "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64.tar.xz" \
+    && tar -xJf /tmp/ccache.tar.xz -C /tmp \
+    && install -m 0755 "/tmp/ccache-${CCACHE_VERSION}-linux-x86_64/ccache" /usr/local/bin/ccache \
+    && rm -rf /tmp/ccache*
+
+ENV CCACHE_DIR=/ccache \
+    CCACHE_COMPRESS=1 \
+    CCACHE_COMPRESSLEVEL=10 \
+    CCACHE_MAXSIZE=600M
+
+# ccache-seed: an empty stage of that name, so COPY --from=ccache-seed works with
+# no seed. The workflow overrides it with --build-context ccache-seed=<dir> holding
+# the previous image's /ccache, and only the files changed since then recompile.
+FROM scratch AS ccache-seed
+
+# dev: the CI build, unit tests included, so an image exists only for a commit
+# whose build and unit tests pass.
+FROM deps AS dev
+
+WORKDIR /erf
+COPY . /erf
+COPY --from=ccache-seed / /ccache/
+
+# The checkout is root-owned; a user running the image under another uid (Apptainer,
+# Podman) would otherwise get "dubious ownership" from every git command.
+RUN git config --system --add safe.directory '*'
+
+RUN cmake -S /erf -B /erf/build \
+      -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
+      -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
+      -DAMReX_ASSERTIONS:BOOL=ON \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+      -DERF_DIM:STRING=3 \
+      -DERF_ENABLE_MPI:BOOL=ON \
+      -DMPI_CXX_COMPILE_OPTIONS=-fno-lto \
+      -DMPI_CXX_LINK_FLAGS=-fno-lto \
+      -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
+      '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
+      -DERF_ENABLE_PARTICLES:BOOL=ON \
+      -DERF_ENABLE_TESTS:BOOL=ON \
+      -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
+      -DERF_ENABLE_FCOMPARE:BOOL=ON \
+    && ccache -z \
+    && build_start=$(date +%s) \
+    && cmake --build /erf/build --parallel "$(nproc)" \
+    && ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s" \
+    && ccache -s > /erf/build/ccache-stats.txt \
+    && cat /erf/build/ccache-stats.txt
+
+RUN ctest --test-dir /erf/build -L unit -LE parallel -j "$(nproc)" --output-on-failure --no-tests=error
+
+ENV PATH=/erf/build/Exec:${PATH}
+CMD ["/bin/bash"]
+
+# runtime: erf_exec and what it links.
+FROM ubuntu:${UBUNTU_VERSION} AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends mpich libgfortran5 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=dev /erf/build/Exec/erf_exec /usr/local/bin/erf_exec
+# Every library erf_exec links must be in the image, and the binary must start.
+RUN ldd /usr/local/bin/erf_exec > /tmp/ldd.txt \
+    && ! grep 'not found' /tmp/ldd.txt \
+    && rm /tmp/ldd.txt \
+    && erf_exec --help > /dev/null
+
+WORKDIR /work
+CMD ["erf_exec", "--help"]
