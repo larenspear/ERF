@@ -3,8 +3,39 @@
 
 .. _containers:
 
+ERF containers
+==============
+
+Pre-built images on GHCR
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every merge into ``development`` and every release builds two container images and pushes them to the GitHub Container Registry, so a current ERF can be pulled rather than built:
+
+* ``ghcr.io/erf-model/erf`` holds ``erf_exec`` and its runtime libraries (MPICH).
+* ``ghcr.io/erf-model/erf-dev`` holds the build environment (GCC 11, MPICH, CMake, ccache), the source tree, the build tree and the ccache of the same build, for recompiling ERF without installing anything.
+
+Both are tagged ``development`` (the latest merge), ``sha-<commit>`` and, for releases, the release number (``26.09``) and ``latest``. The build is the Linux GCC Particles ON configuration of ``.github/workflows/ci.yml``: Ubuntu 22.04, RelWithDebInfo, AMReX assertions, tests and fcompare on, NetCDF off. An image exists only for a commit whose build and unit tests passed. The recipe is ``Build/Containerfile`` and the workflow ``.github/workflows/container.yml``; a fork with Actions enabled pushes to its own ``ghcr.io/<user>/`` namespace.
+
+Run ERF from the image, with the run directory mounted as the working directory:
+
+.. code:: shell
+
+  docker run --rm -v "$PWD":/work -w /work ghcr.io/erf-model/erf:development \
+      mpiexec -n 4 erf_exec inputs_ex
+
+  apptainer exec docker://ghcr.io/erf-model/erf:development mpiexec -n 4 erf_exec inputs_ex
+
+Recompile inside ``erf-dev``: ``/erf`` is a checkout of the commit with its ``build`` directory, so checking out another commit and rebuilding compiles only what changed.
+
+.. code:: shell
+
+  docker run -it --rm ghcr.io/erf-model/erf-dev:development
+  git fetch origin pull/1234/head:pr-1234 && git checkout pr-1234
+  cmake --build build --parallel
+  ctest --test-dir build -L unit -j 4
+
 ERF containers on Perlmutter
-============================
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The following is a brief introduction to ERF and containers on the NERSC Perlmutter platform.
 

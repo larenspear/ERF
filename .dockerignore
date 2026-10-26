@@ -1,0 +1,5 @@
+# Build context for Build/Containerfile (the repository root). .git stays in:
+# AMReX's buildInfo records the commit from it, and erf-dev is a working checkout.
+build*
+Docs
+ccache-seed
