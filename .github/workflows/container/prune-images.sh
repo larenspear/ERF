@@ -28,11 +28,18 @@ esac
 # error response from the packages backend shows up as gh's "unexpected end
 # of JSON input".
 api() {
-  local out attempt
+  local out attempt is_delete=0 arg
+  for arg in "$@"; do
+    if [ "$arg" = DELETE ]; then is_delete=1; fi
+  done
   for attempt in 1 2 3; do
     if out=$(gh api "$@" 2>&1); then
       if [ -n "$out" ]; then printf '%s\n' "$out"; fi
       return 0
+    fi
+    if [ "$is_delete" -eq 1 ] && [[ "$out" == *"HTTP 404"* ]]; then
+      echo "gh api $*: version already absent (HTTP 404)" >&2
+      return 4
     fi
     echo "gh api $* (attempt $attempt): $out" >&2
     if [ "$attempt" -lt 3 ]; then sleep 5; fi
@@ -69,8 +76,13 @@ for arg in "$@"; do
     if api --method DELETE --silent "$base/packages/container/$pkg/versions/$id"; then
       echo "$pkg: deleted version $id"
     else
-      echo "$pkg: could not delete version $id" >&2
-      failed=1
+      status=$?
+      if [ "$status" -eq 4 ]; then
+        echo "$pkg: version $id was already gone"
+      else
+        echo "$pkg: could not delete version $id" >&2
+        failed=1
+      fi
     fi
   done <<< "$to_delete"
 done

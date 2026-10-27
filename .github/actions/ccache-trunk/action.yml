@@ -1,0 +1,116 @@
+name: ccache trunk on GHCR
+description: Restore or save a ccache directory as one image tag per build variant on GHCR.
+inputs:
+  mode:
+    description: restore or save
+    required: true
+  key:
+    description: Variant identifier, such as ERF CI-Build-And-Test-ON
+    required: true
+  path:
+    description: ccache directory
+    default: ~/.cache/ccache
+  token:
+    description: GITHUB_TOKEN (save needs packages write)
+    default: ''
+outputs:
+  hit:
+    description: true when restore found a trunk
+    value: ${{ steps.restore.outputs.hit }}
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        case "$MODE" in
+          restore|save) ;;
+          *) echo "::error::mode must be restore or save" >&2; exit 1 ;;
+        esac
+        if [[ "$MODE" == save && -z "$TOKEN" ]]; then
+          echo "::error::token is required when saving a ccache trunk" >&2
+          exit 1
+        fi
+    - id: ref
+      shell: bash
+      env:
+        KEY: ${{ inputs.key }}
+      run: |
+        owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+        tag=$(printf '%s' "$KEY" | sed -E 's/[^A-Za-z0-9_.-]+/-/g' | tr '[:upper:]' '[:lower:]')
+        if [[ -z "$tag" ]]; then
+          echo "::error::key must produce a non-empty GHCR tag" >&2
+          exit 1
+        fi
+        echo "ref=ghcr.io/$owner/erf-ccache:$tag" >> "$GITHUB_OUTPUT"
+    - if: ${{ inputs.token != '' }}
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.token }}
+      run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+    - id: restore
+      if: ${{ inputs.mode == 'restore' }}
+      shell: bash
+      env:
+        REF: ${{ steps.ref.outputs.ref }}
+        CCACHE_PATH: ${{ inputs.path }}
+      run: |
+        case "$CCACHE_PATH" in
+          "~") path=$HOME ;;
+          "~/"*) path="$HOME/$(printf '%s' "$CCACHE_PATH" | cut -c3-)" ;;
+          *) path=$CCACHE_PATH ;;
+        esac
+        mkdir -p "$path"
+        if pull_output=$(docker pull "$REF" 2>&1); then
+          id=$(docker create "$REF" /trunk)
+          if ! docker cp "$id:/ccache/." "$path"/; then
+            docker rm "$id" >/dev/null || true
+            exit 1
+          fi
+          docker rm "$id" >/dev/null
+          echo "restored $REF: $(du -sh "$path" | cut -f1)"
+          echo "hit=true" >> "$GITHUB_OUTPUT"
+        elif grep -Eqi 'manifest unknown|manifest.*not found|no such manifest' <<< "$pull_output"; then
+          echo "no trunk at $REF: cold build"
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+        else
+          printf '%s\n' "$pull_output" >&2
+          echo "::error::could not pull ccache trunk $REF" >&2
+          exit 1
+        fi
+    - if: ${{ inputs.mode == 'save' }}
+      shell: bash
+      env:
+        REF: ${{ steps.ref.outputs.ref }}
+        CCACHE_PATH: ${{ inputs.path }}
+        SOURCE: ${{ github.server_url }}/${{ github.repository }}
+      run: |
+        case "$CCACHE_PATH" in
+          "~") path=$HOME ;;
+          "~/"*) path="$HOME/$(printf '%s' "$CCACHE_PATH" | cut -c3-)" ;;
+          *) path=$CCACHE_PATH ;;
+        esac
+        mkdir -p "$path"
+        if ! find "$path" -type f -print -quit | grep -q .; then
+          echo "no ccache files in $path: skip save"
+          exit 0
+        fi
+        printf 'FROM scratch\nCOPY . /ccache\n' | docker build --quiet -t "$REF" \
+          --label "org.opencontainers.image.source=$SOURCE" \
+          --label "org.opencontainers.image.revision=$GITHUB_SHA" -f - "$path" > /dev/null
+        docker push --quiet "$REF"
+        echo "saved $REF: $(du -sh "$path" | cut -f1)"
+    - if: ${{ inputs.mode == 'save' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        OWNER: ${{ github.repository_owner }}
+        OWNER_TYPE: ${{ github.event.repository.owner.type }}
+        PRUNE_SCRIPT: ${{ github.action_path }}/../../workflows/container/prune-images.sh
+      run: |
+        if ! "$PRUNE_SCRIPT" erf-ccache:0; then
+          echo "::warning::could not prune old GHCR ccache versions; a later save will retry"
+        fi
