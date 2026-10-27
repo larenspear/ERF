@@ -114,3 +114,7 @@ runs:
         if ! "$PRUNE_SCRIPT" erf-ccache:0; then
           echo "::warning::could not prune old GHCR ccache versions; a later save will retry"
         fi
+    - name: Log out from GHCR
+      if: ${{ always() && inputs.token != '' }}
+      shell: bash
+      run: docker logout ghcr.io >/dev/null 2>&1 || true
