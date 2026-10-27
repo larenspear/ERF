@@ -2440,6 +2440,20 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
+
+    # UPWINDALL's Z-only dispatcher must not read outer ghost cells for the
+    # shorter stencils. This structural check uses only the Python standard
+    # library and its self-test edits scratch copies of the interpolation header.
+    add_test(NAME AdvectionUPWINDALL_ZReach
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_upwindall_z_reach.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionUPWINDALL_ZReach_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_upwindall_z_reach_selftest.py)
+    set_tests_properties(AdvectionUPWINDALL_ZReach AdvectionUPWINDALL_ZReach_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
 endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
