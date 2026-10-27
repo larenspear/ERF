@@ -213,9 +213,9 @@ jobs:
             echo "ccache statistics are in the log of the Build erf-dev step."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # erf-dev has no sha tags, so the superseded manifest is deleted at once; erf
-  # keeps the 30 newest sha-tagged builds plus every named tag. A prune failure
-  # never fails the run.
+  # erf-dev is tagged by name only, so its superseded manifest and any sha-tagged
+  # leftover go at once; erf keeps the 30 newest sha-tagged builds plus every
+  # named tag. A prune failure never fails the run.
   prune:
     name: Prune old image versions
     needs: images
@@ -235,5 +235,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           OWNER_TYPE: ${{ github.event.repository.owner.type }}
-          KEEP: 30
-        run: .github/workflows/container/prune-images.sh erf-dev erf
+        run: .github/workflows/container/prune-images.sh erf-dev:0 erf:30
