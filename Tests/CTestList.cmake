@@ -2404,6 +2404,27 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
+
+    # UPWIND3SL is nonlinear, so the checker replays its parsed C++ expression
+    # in exact-real and IEEE binary64 models. The fast mutation self-test uses
+    # scratch header copies; neither test runs ERF.
+    add_test(NAME AdvectionLimiter_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_upw3sl_limiter.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionLimiter_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_upw3sl_limiter_selftest.py)
+    set_tests_properties(AdvectionLimiter_Z3
+        PROPERTIES
+        TIMEOUT 900
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+    set_tests_properties(AdvectionLimiter_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 120
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
 endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
