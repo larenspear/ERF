@@ -2454,6 +2454,21 @@ if(ERF_TEST_PYTHON)
         TIMEOUT 60
         PROCESSORS 1
         LABELS "unit;advection")
+
+    # Check the source-derived mapped scalar flux divergence and component routing.
+    # The mutation test uses scratch copies of the scalar advection sources.
+    add_test(NAME AdvectionScalarFluxDivergence_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_scalar_flux_divergence.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionScalarFluxDivergence_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_scalar_flux_divergence_selftest.py)
+    set_tests_properties(AdvectionScalarFluxDivergence_Z3
+                         AdvectionScalarFluxDivergence_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
 endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
