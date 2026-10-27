@@ -2483,6 +2483,21 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
+
+    # Verify the mapped normal-grid momentum divergence and component routing.
+    # The mutation test edits a scratch copy of the momentum source.
+    add_test(NAME AdvectionMomentumDivergence_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_divergence.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumDivergence_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_divergence_selftest.py)
+    set_tests_properties(AdvectionMomentumDivergence_Z3
+                         AdvectionMomentumDivergence_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
 endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
