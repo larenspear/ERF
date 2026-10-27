@@ -1,50 +1,95 @@
 name: Container images
 
 # Builds the ERF container images (Build/Containerfile) and pushes them to GHCR:
-#   ghcr.io/<owner>/erf-dev   build environment + source + build tree + ccache
+#   ghcr.io/<owner>/erf-dev   build environment + source + ccache
 #   ghcr.io/<owner>/erf       erf_exec and its runtime libraries
-# Pushed on every merge to development (tags "development" and "sha-<commit>")
-# and on release tags (the release number and "latest"). The previous erf-dev
-# image's ccache seeds each build, so a merge recompiles only what changed.
+# Nightly from development (skipped when development has not moved since the
+# last image), on release tags, and on demand. Tags: "development" on both;
+# "sha-<commit>" on erf, which the prune job keeps for the last 30 builds; the
+# release number and "latest" on release tags. The previous erf-dev image's
+# ccache seeds each build, so a night's merges recompile only what changed.
 # Pull requests build without pushing, and only when they change the
 # Containerfile or this workflow; ci.yml tests the same build on every PR.
 on:
+  schedule:
+    - cron: '0 5 * * *'
   push:
-    branches: [development]
     tags: ['**']
-    paths:
-      - '**'
-      - '!Docs/**'
-      - '!**.md'
-      - '!**.rst'
-      - '!license.txt'
-      - '!.github/workflows/**'
-      - '.github/workflows/container.yml'
-      - '.github/workflows/container/**'
   pull_request:
     paths:
       - Build/Containerfile
+      - Build/container-configure.sh
       - .dockerignore
       - .github/workflows/container.yml
       - .github/workflows/container/**
   workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if an image for this commit exists
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-# Each merge into development gets its own group (keyed on the commit), so a
-# burst of merges never cancels a still-pending development run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 env:
-  # Push from development, tags and manual runs; a pull request only builds.
+  # Push from the schedule, tags and manual runs; a pull request only builds.
   PUSH: ${{ github.event_name != 'pull_request' }}
 
 jobs:
+  check:
+    name: Image names, and is this commit built already?
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      dev: ${{ steps.names.outputs.dev }}
+      runtime: ${{ steps.names.outputs.runtime }}
+      built: ${{ steps.built.outputs.built }}
+    steps:
+      # ghcr.io namespaces are lower case. The owner is erf-model upstream and
+      # the user on a fork, so a fork pushes to its own packages.
+      - name: Image names
+        id: names
+        run: |
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          echo "dev=ghcr.io/${owner}/erf-dev" >> "$GITHUB_OUTPUT"
+          echo "runtime=ghcr.io/${owner}/erf" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A nightly or a plain dispatch on a commit that already has an image is
+      # skipped; a pull request, a release tag or a forced dispatch always builds.
+      - name: Look for this commit's image
+        id: built
+        env:
+          IMAGE: ${{ steps.names.outputs.runtime }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          built=false
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$GITHUB_REF_TYPE" != tag ] && [ "$FORCE" != true ] \
+             && docker manifest inspect "$IMAGE:sha-${GITHUB_SHA::7}" > /dev/null 2>&1; then
+            built=true
+            echo "$IMAGE:sha-${GITHUB_SHA::7} exists: nothing to build"
+          fi
+          echo "built=$built" >> "$GITHUB_OUTPUT"
+
   images:
     name: erf-dev and erf
+    needs: check
+    if: needs.check.outputs.built != 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     permissions:
@@ -61,15 +106,6 @@ jobs:
       - name: Free disk space on Ubuntu
         uses: ./.github/actions/free-space-ubuntu
 
-      # ghcr.io namespaces are lower case. The owner is erf-model upstream and
-      # the user on a fork, so a fork pushes to its own packages.
-      - name: Image names
-        id: names
-        run: |
-          owner=${GITHUB_REPOSITORY_OWNER,,}
-          echo "dev=ghcr.io/${owner}/erf-dev" >> "$GITHUB_OUTPUT"
-          echo "runtime=ghcr.io/${owner}/erf" >> "$GITHUB_OUTPUT"
-
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -84,7 +120,7 @@ jobs:
       # fork without one, a PR that cannot read a private package): cold build.
       - name: Seed ccache from the previous erf-dev image
         env:
-          DEV_IMAGE: ${{ steps.names.outputs.dev }}:development
+          DEV_IMAGE: ${{ needs.check.outputs.dev }}:development
         run: |
           mkdir -p ccache-seed
           if docker pull --quiet "$DEV_IMAGE"; then
@@ -100,21 +136,20 @@ jobs:
         id: meta-dev
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.names.outputs.dev }}
+          images: ${{ needs.check.outputs.dev }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=sha
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
           labels: |
             org.opencontainers.image.title=erf-dev
-            org.opencontainers.image.description=ERF build environment, source, build tree and ccache (the ci.yml Linux GCC Particles ON build)
+            org.opencontainers.image.description=ERF build environment, source and ccache (the ci.yml Linux GCC Particles ON build)
 
       - name: Tags and labels for erf
         id: meta-runtime
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.names.outputs.runtime }}
+          images: ${{ needs.check.outputs.runtime }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -126,8 +161,8 @@ jobs:
 
       # provenance off: a plain single-platform manifest, which every HPC container
       # runtime reads; the default attestation index trips some of them.
-      # cache-from + inline: the deps layers come from the previous image; the
-      # build layer changes on every merge and is not worth exporting separately.
+      # cache-from + inline: the deps and source layers come from the previous
+      # image; the build stage changes every time and is not worth exporting.
       - name: Build erf-dev
         id: build-dev
         uses: docker/build-push-action@v6
@@ -140,10 +175,10 @@ jobs:
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta-dev.outputs.tags }}
           labels: ${{ steps.meta-dev.outputs.labels }}
-          cache-from: type=registry,ref=${{ steps.names.outputs.dev }}:development
+          cache-from: type=registry,ref=${{ needs.check.outputs.dev }}:development
           cache-to: ${{ env.PUSH == 'true' && 'type=inline' || '' }}
 
-      # The dev stage is already built in this job's builder; this adds the
+      # The build stage is already done in this job's builder; this adds the
       # runtime stage on top of it.
       - name: Build erf
         id: build-runtime
@@ -157,7 +192,7 @@ jobs:
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta-runtime.outputs.tags }}
           labels: ${{ steps.meta-runtime.outputs.labels }}
-          cache-from: type=registry,ref=${{ steps.names.outputs.runtime }}:development
+          cache-from: type=registry,ref=${{ needs.check.outputs.runtime }}:development
           cache-to: ${{ env.PUSH == 'true' && 'type=inline' || '' }}
 
       - name: Summary
@@ -178,9 +213,9 @@ jobs:
             echo "ccache statistics are in the log of the Build erf-dev step."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Old sha-tagged and untagged versions pile up at about 2 GB per merge: keep
-  # the ten newest plus everything with a named tag. A prune failure never
-  # fails the run.
+  # erf-dev has no sha tags, so the superseded manifest is deleted at once; erf
+  # keeps the 30 newest sha-tagged builds plus every named tag. A prune failure
+  # never fails the run.
   prune:
     name: Prune old image versions
     needs: images
@@ -200,5 +235,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           OWNER_TYPE: ${{ github.event.repository.owner.type }}
-          KEEP: 10
+          KEEP: 30
         run: .github/workflows/container/prune-images.sh erf-dev erf
