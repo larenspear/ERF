@@ -86,14 +86,14 @@ def replace_metric_reads(expression):
     return re.sub(r"\b(detJ|mf_mx|mf_my)\s*\(([^)]*)\)", replace, expression)
 
 
-def replace_flux_reads(expression):
+def replace_flux_reads(expression, flux_component="flux_comp"):
     expected = {
-        (0, "i+1,j,k,flux_comp"): "Fx_hi",
-        (0, "i,j,k,flux_comp"): "Fx_lo",
-        (1, "i,j+1,k,flux_comp"): "Fy_hi",
-        (1, "i,j,k,flux_comp"): "Fy_lo",
-        (2, "i,j,k+1,flux_comp"): "Fz_hi",
-        (2, "i,j,k,flux_comp"): "Fz_lo",
+        (0, f"i+1,j,k,{flux_component}"): "Fx_hi",
+        (0, f"i,j,k,{flux_component}"): "Fx_lo",
+        (1, f"i,j+1,k,{flux_component}"): "Fy_hi",
+        (1, f"i,j,k,{flux_component}"): "Fy_lo",
+        (2, f"i,j,k+1,{flux_component}"): "Fz_hi",
+        (2, f"i,j,k,{flux_component}"): "Fz_lo",
     }
     seen = Counter()
 
@@ -107,16 +107,25 @@ def replace_flux_reads(expression):
         seen[key] += 1
         return expected[key]
 
-    translated = re.sub(r"\bflx_arr\s*\[\s*(\d+)\s*\]\s*\(([^)]*)\)", replace, expression)
+    # The scalar helper spells reads as flx_arr[d](...), while the density
+    # kernel parenthesizes the Array4 expression as (flx_arr[d])(...). Handle
+    # these two forms separately so an enclosing arithmetic parenthesis is not
+    # accidentally consumed as part of the array read.
+    translated = re.sub(
+        r"\(\s*flx_arr\s*\[\s*(\d+)\s*\]\s*\)\s*\(([^)]*)\)",
+        replace, expression)
+    translated = re.sub(
+        r"\bflx_arr\s*\[\s*(\d+)\s*\]\s*\(([^)]*)\)",
+        replace, translated)
     if any(count != 1 for count in seen.values()) or len(seen) != 6:
         raise ValueError(f"expected each low/high face flux once, found {dict(seen)}")
     return translated
 
 
-def to_z3(expression, env, flux_reads=False):
+def to_z3(expression, env, flux_reads=False, flux_component="flux_comp"):
     expr = expression.replace("amrex::Real", "")
     if flux_reads:
-        expr = replace_flux_reads(expr)
+        expr = replace_flux_reads(expr, flux_component)
     expr = replace_metric_reads(expr)
     if re.search(r"[^\w\s.+\-*/()]", expr):
         raise ValueError(f"unsupported C++ arithmetic expression: {expression}")

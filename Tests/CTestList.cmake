@@ -2469,6 +2469,20 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
+
+    # Verify the density face mass fluxes, fixed_rho behavior, and mapped divergence.
+    # The mutation test edits a scratch copy of the advection source.
+    add_test(NAME AdvectionRhoMassFlux_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_rho_advection.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionRhoMassFlux_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_rho_advection_selftest.py)
+    set_tests_properties(AdvectionRhoMassFlux_Z3 AdvectionRhoMassFlux_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
 endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
