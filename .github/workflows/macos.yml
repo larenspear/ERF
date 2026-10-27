@@ -53,6 +53,11 @@ jobs:
         restore-keys: |
              ccache-${{ github.workflow }}-${{ github.job }}-${{ matrix.mesh_precision }}-git-
 
+    - name: Set up Python for source checks
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
     - name: Configure Project and Generate Build System
       run: |
         cmake \
@@ -117,6 +122,10 @@ jobs:
         Tests/Unit/erf_unit_tests --gtest_list_tests | tee ${{runner.workspace}}/unit-test-list.txt
         grep -Eq '^[A-Za-z0-9_].*\.$' ${{runner.workspace}}/unit-test-list.txt
       working-directory: ${{runner.workspace}}/ERF/build
+
+    - name: Install Z3 for advection checks
+      if: matrix.particles_precision == 'DOUBLE' && matrix.mesh_precision == 'DOUBLE'
+      run: python -m pip install z3-solver
 
     - name: Run Serial Unit Tests
       if: matrix.particles_precision == 'DOUBLE' && matrix.mesh_precision == 'DOUBLE'

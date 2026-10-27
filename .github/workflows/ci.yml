@@ -74,6 +74,11 @@ jobs:
         restore-keys: |
              ccache-${{ github.workflow }}-${{ github.job }}-${{ matrix.particles }}-git-
 
+    - name: Set up Python for source checks
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
     - name: Configure CMake
       # Ubuntu's MPICH wrapper advertises -flto=auto -ffat-lto-objects, and FindMPI
       # would put them on every target: fat objects double the ccache and every
@@ -254,6 +259,9 @@ jobs:
         print(f'Parallel CTest entries: {len(tests)}')
         PY
       working-directory: ${{runner.workspace}}/ERF/build-${{matrix.os}}
+
+    - name: Install Z3 for advection checks
+      run: python -m pip install z3-solver
 
     - name: Run Serial Unit Tests
       run: |
