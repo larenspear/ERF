@@ -2498,6 +2498,21 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
+
+    # Check the inline centered-second-order constant-dz momentum path, including
+    # its component metrics and the top z-face flux special case.
+    add_test(NAME AdvectionMomentumConstantDzFastPath_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_constant_dz_fast_path.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumConstantDzFastPath_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_constant_dz_fast_path_selftest.py)
+    set_tests_properties(AdvectionMomentumConstantDzFastPath_Z3
+                         AdvectionMomentumConstantDzFastPath_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
 endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
