@@ -1,5 +1,6 @@
-# Build context for Build/Containerfile (the repository root). .git stays in:
-# AMReX's buildInfo records the commit from it, and erf-dev is a working checkout.
+# Build context for Build/Containerfile (the repository root). The context is the
+# whole checkout, .git and Docs included: AMReX's buildInfo records the commit,
+# the inputs checker's self-test reads Docs/sphinx_doc/Inputs.rst, and erf-dev is
+# meant to be a complete working checkout. Only local build trees stay out.
 build*
-Docs
 ccache-seed
