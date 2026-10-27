@@ -2,14 +2,17 @@
 # Prunes old versions of the container packages that container.yml pushes.
 #
 # Keeps every version that carries a tag other than sha-<commit> (development,
-# latest, a release number) and the KEEP newest sha-only versions; deletes the
-# rest, untagged versions (superseded manifests) included. A failed request is
-# reported with its response and retried; a version that still cannot be
-# deleted is left for the next run, and the exit status says something failed.
+# latest, a release number) and the newest KEEP sha-only versions of each
+# package; deletes the rest, untagged versions (superseded manifests) included.
+# A failed request is reported with its response and retried; a version that
+# still cannot be deleted is left for the next run, and the exit status says
+# something failed.
 #
-# Usage: prune-images.sh <package>...
+# Usage: prune-images.sh <package>[:<keep>]...
+#   erf-dev:0 erf:30   keep no sha-tagged erf-dev, the 30 newest sha-tagged erf
 # Environment: OWNER (the repository owner), OWNER_TYPE (Organization or User),
-# GH_TOKEN (packages: write on the publishing repository), KEEP (default 10).
+# GH_TOKEN (packages: write on the publishing repository), KEEP (the default
+# per-package keep, 10).
 set -uo pipefail
 
 : "${OWNER:?}" "${OWNER_TYPE:?}" "${GH_TOKEN:?}"
@@ -38,15 +41,18 @@ api() {
 }
 
 failed=0
-for pkg in "$@"; do
+for arg in "$@"; do
+  pkg=${arg%%:*}
+  keep=${arg#*:}
+  if [ "$keep" = "$arg" ]; then keep=$KEEP; fi
   if ! versions=$(api --paginate "$base/packages/container/$pkg/versions?per_page=100" \
         --jq '.[] | [.id, .created_at, (.metadata.container.tags | join(","))] | @tsv'); then
     echo "$pkg: could not list versions" >&2
     failed=1
     continue
   fi
-  # Newest first; keep named tags and the KEEP newest sha-only versions.
-  to_delete=$(printf '%s\n' "$versions" | sort -t $'\t' -k2,2r | awk -F '\t' -v keep="$KEEP" '
+  # Newest first; keep named tags and the newest keep sha-only versions.
+  to_delete=$(printf '%s\n' "$versions" | sort -t $'\t' -k2,2r | awk -F '\t' -v keep="$keep" '
       NF == 0 { next }
       {
         n = split($3, tag, ","); named = 0; sha = 0
