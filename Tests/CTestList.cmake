@@ -2425,6 +2425,21 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
+
+    # The WENO checks parse the candidate polynomials, prove smoothness
+    # indicators non-negative, and prove normalized nonlinear weights sum to one
+    # and stay non-negative. The mutation test edits scratch header copies only.
+    add_test(NAME AdvectionWENOCandidates_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionWENOCandidates_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates_selftest.py)
+    set_tests_properties(AdvectionWENOCandidates_Z3 AdvectionWENOCandidates_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 120
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
 endif()
 if(ERF_ENABLE_FFT)
     # terrain-fitted mesh (FFT-preconditioned projection): wall distance against
