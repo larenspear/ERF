@@ -133,7 +133,7 @@ jobs:
         du -hs ~/.cache/ccache
 
     - name: Save Cache
-      if: always() && github.ref_name == github.event.repository.default_branch
+      if: always() && (github.ref_name == github.event.repository.default_branch || github.ref_name == 'ci-ghcr-linux-test')
       uses: ./.github/actions/ccache-trunk
       with:
         mode: save
