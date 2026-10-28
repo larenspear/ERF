@@ -44,6 +44,11 @@ jobs:
         \ \\\n  -DERF_ENABLE_PARTICLES:BOOL=ON \\\n  -DERF_PRECISION:STRING=DOUBLE \\\n  -DERF_PARTICLES_PRECISION:STRING=DOUBLE\
         \ \\\n  -DERF_ENABLE_TESTS:BOOL=ON \\\n  -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \\\n  -DERF_ENABLE_FCOMPARE:BOOL=ON\
         \ \\\n  -DERF_TEST_SDM_SMOKE_GATED:BOOL=ON \\\n  ${{github.workspace}};\n"
+    - name: Restore isolated retry build cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/ccache
+        key: gcc-regression-validation-eba3c4df8-double-particles-on
     - name: Build once
       run: 'export CCACHE_COMPRESS=1 CCACHE_COMPRESSLEVEL=10 CCACHE_MAXSIZE=600M
 
@@ -52,6 +57,11 @@ jobs:
         cmake --build build --parallel 2 > regression-evidence/build.log 2>&1
 
         ccache -s | tee regression-evidence/ccache.txt'
+    - name: Save isolated retry build cache
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/ccache
+        key: gcc-regression-validation-eba3c4df8-double-particles-on
     - name: Audit resources and save pristine inputs
       run: python3 .github/benchmarks/regression.py prepare
     - name: serial

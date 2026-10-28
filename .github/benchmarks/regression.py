@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import time
@@ -44,7 +45,12 @@ def audit():
         assert 1 <= count <= CORES, (name, count, CORES)
         counts[count] += 1
         command = test['command']
-        rank_args = re.findall(r'(?:-D(?:NRANKS|CHK_NRANKS|RESTART_NRANKS)=|\s-n\s+)(\d+)', ' '.join(command))
+        rank_args = [match[1] for arg in command
+                     if (match := re.fullmatch(r'-D(?:NRANKS|CHK_NRANKS|RESTART_NRANKS)=(\d+)', arg))]
+        tokens = shlex.split(command[-1]) if command[:2] == ['/usr/bin/sh', '-c'] else command
+        for index, token in enumerate(tokens[:-2]):
+            if Path(token).name in ('mpiexec', 'mpirun') and tokens[index + 1] == '-n':
+                rank_args.append(tokens[index + 2])
         assert all(int(n) <= count for n in rank_args), (name, count, rank_args)
         work = props.get('WORKING_DIRECTORY', '')
         for arg in command:
