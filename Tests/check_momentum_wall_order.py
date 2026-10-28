@@ -12,8 +12,9 @@ wiring, not higher-order reconstruction arithmetic. Wall-policy instantiation
 and wrapper-to-helper bindings are checked by the dispatch/divergence suites.
 The load-bound check covers InterpolateInZ's explicit m_phi loads; Evaluate
 arithmetic is covered separately by the linear-stencil suite.
-The interior-domain precondition follows the caller's ShrinkZmomBoxAtDomainEnds
-usage, but this checker does not prove that caller or storage/halo validity.
+The interior-domain precondition is checked separately by
+check_momentum_domain.py under its stated AMReX and caller assumptions. This
+checker does not prove storage/halo validity.
 Integers and reals are mathematical values: overflow and rounding are excluded.
 
 usage: check_momentum_wall_order.py [ERF_ROOT]

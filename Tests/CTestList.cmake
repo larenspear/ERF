@@ -2596,6 +2596,20 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Prove the Z-momentum shrink preserves precisely the domain-interior nodes,
+    # including split faces; audit its caller and normal-grid boundary bindings.
+    add_test(NAME AdvectionMomentumDomain_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_domain.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumDomain_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_domain_selftest.py)
+    set_tests_properties(AdvectionMomentumDomain_Z3 AdvectionMomentumDomain_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 120
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
