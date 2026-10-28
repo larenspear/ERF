@@ -112,3 +112,28 @@ The native helper reads action configuration once in `read_config()`. Its separa
 `setup_registry()`, `restore()`, `save()`, and `prune()` functions use that configuration.
 `main()` owns temporary-file cleanup and calls pruning only after a successful save.
 Archive verification, safe extraction, and rollback remain in focused helpers.
+
+## Manual GHCR smoke test
+
+Run **GHCR cache smoke test** from the Actions tab, or use:
+
+```sh
+gh workflow run cache-smoke.yml
+```
+
+The workflow runs Linux, macOS Intel and Windows sequentially, with a 20-minute
+limit per OS, followed by a read-only/anonymous restore job limited to 10 minutes.
+It compiles a tiny program unique to that run, publishes its cache, removes local
+objects and cache, then requires a restored cache hit. Changing the source must
+miss the cache and produce new output. A second publication must replace the first
+GHCR version, delete the superseded version, and restore the changed-source object.
+The helper tests also run on each OS. ERF and its submodules are not built.
+
+Tests use three rolling `transport-check-<os>-<arch>` tags in the same `erf-ccache`
+package, separate from production configuration tags. Runs are serialized across
+branches. Normal package pruning removes superseded untagged versions; the three
+diagnostic tags remain available for inspection. Publishing requires repository
+package write/admin access, and the anonymous check requires public package visibility.
+The checks cover small transfers on the listed runners, not full-size GPU caches or
+a hosted macOS ARM round trip. GitHub requires a manually dispatched workflow to be
+registered on the repository's default branch before it can run on another branch.
