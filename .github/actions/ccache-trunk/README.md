@@ -107,3 +107,8 @@ inputs. The full suite runs in the existing `shellcheck` job in `lint.yml` for p
 requests and development pushes that change `.github/**`, and on manual dispatch.
 It uses the runner's Python
 standard library, Bash, and GNU coreutils, without compiling ERF or accessing GHCR.
+
+The native helper reads action configuration once in `read_config()`. Its separate
+`setup_registry()`, `restore()`, `save()`, and `prune()` functions use that configuration.
+`main()` owns temporary-file cleanup and calls pruning only after a successful save.
+Archive verification, safe extraction, and rollback remain in focused helpers.

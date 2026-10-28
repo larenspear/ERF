@@ -59,11 +59,13 @@ class NativeTests(unittest.TestCase):
             shutil.copyfile(self.archive, args[args.index('--output') + 1])
         return ''
 
-    def action(self, mode='restore', command=None, **env):
+    def action(self, mode='restore', command=None, missing=(), **env):
         with patch.dict(os.environ, {**self.env, "CACHE_MODE": mode, **env}), \
                 patch.object(native, 'install_oras', return_value=Path('oras')), \
                 patch.object(native, 'run', side_effect=command or self.command), \
                 contextlib.redirect_stderr(io.StringIO()) as err:
+            for name in missing:
+                os.environ.pop(name, None)
             status = native.main()
         self.assertEqual(list(self.runner.iterdir()), [], 'temporary credentials leaked')
         self.assertFalse(list(self.root.glob('*.ghcr-*')), 'staging directory leaked')
@@ -95,6 +97,59 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual(status, 0)
                 self.assertIn('::warning::', errors)
                 self.preserved()
+
+    def test_anonymous_restore_needs_no_publishing_metadata(self):
+        status, errors = self.action(GHCR_TOKEN='', missing=(
+            'GITHUB_ACTOR', 'CACHE_SOURCE', 'GITHUB_SHA', 'CACHE_OWNER_TYPE'))
+        self.assertEqual((status, errors), (0, ''))
+        self.assertEqual(self.output.read_text(), 'hit=false\nhit=true\n')
+        self.assertEqual((self.cache / 'a/object').read_bytes(), b'new object')
+
+    def test_missing_required_environment_fails_before_registry_access(self):
+        cases = [('restore', name) for name in
+                 ('GITHUB_REPOSITORY_OWNER', 'GITHUB_OUTPUT', 'RUNNER_TEMP', 'GITHUB_ACTOR')]
+        cases += [('save', name) for name in ('CACHE_SOURCE', 'GITHUB_SHA', 'CACHE_OWNER_TYPE')]
+        for mode, name in cases:
+            with self.subTest(mode=mode, name=name):
+                status, errors = self.action(mode, missing=(name,))
+                self.assertEqual(status, 2)
+                self.assertIn('::error::', errors)
+                self.assertIn(name, errors)
+                self.assertEqual(self.calls, [])
+
+    def test_configuration_stays_consistent_throughout_transfer(self):
+        alternate_output = self.root / 'other-output'
+
+        def command(args, **kwargs):
+            result = self.command(args, **kwargs)
+            if args[1] == 'login':
+                os.environ.update(GITHUB_OUTPUT=str(alternate_output),
+                                  CACHE_SOURCE='https://example.invalid/changed',
+                                  GITHUB_SHA='1' * 40, GITHUB_REPOSITORY_OWNER='Changed',
+                                  CACHE_OWNER_TYPE='Organization', GHCR_TOKEN='changed-token')
+            return result
+
+        for mode in ('restore', 'save'):
+            with self.subTest(mode=mode):
+                self.calls.clear()
+                self.output.unlink(missing_ok=True)
+                status, errors = self.action(mode, command=command)
+                self.assertEqual((status, errors), (0, ''))
+                self.assertFalse(alternate_output.exists())
+                if mode == 'restore':
+                    self.assertEqual(self.output.read_text(), 'hit=false\nhit=true\n')
+                else:
+                    push = next(args for args, _ in self.calls if args[1] == 'push')
+                    self.assertIn('org.opencontainers.image.source=' + self.env['CACHE_SOURCE'], push)
+                    self.assertIn('org.opencontainers.image.revision=' + self.env['GITHUB_SHA'], push)
+                    env = self.calls[-1][1]['env']
+                    self.assertEqual(env['OWNER'], 'Example')
+                    self.assertEqual(env['OWNER_TYPE'], 'User')
+                    self.assertEqual(env['GH_TOKEN'], 'synthetic-token')
+
+    def test_config_repr_does_not_expose_credentials(self):
+        config = native.read_config({**self.env, 'CACHE_MODE': 'save'})
+        self.assertNotIn('synthetic-token', repr(config))
 
     def test_corrupt_blob_preserves_cache(self):
         self.archive.write_bytes(b'truncated download')

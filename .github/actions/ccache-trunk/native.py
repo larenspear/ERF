@@ -5,6 +5,9 @@ Only input errors fail the action. Registry, installation, and filesystem failur
 leave compilation free to proceed. No third-party Python packages are needed.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -34,6 +37,59 @@ ARCHIVE_NAME = "ccache.tar"
 MAX_ARCHIVE_BYTES = 8 * 1024**3
 MAX_MEMBERS = 500_000
 TOKEN_VARIABLES = ("GHCR_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+
+@dataclass(frozen=True)
+class Config:
+    mode: str
+    cache: Path
+    ref: str
+    platform: tuple[str, str]
+    timeout: int
+    runner_temp: Path
+    output_path: Path | None
+    token: str = field(repr=False)
+    actor: str
+    source: str
+    revision: str
+    prune_env: dict[str, str] = field(repr=False)
+
+
+def read_config(env):
+    """Validate action inputs once, before any installation or registry access."""
+    mode = env["CACHE_MODE"]
+    if mode not in ("restore", "save"):
+        raise ValueError("mode must be restore or save")
+    token = env.get("GHCR_TOKEN", "")
+    if mode == "save" and not token:
+        raise ValueError("token is required when saving")
+    tag = re.sub(r"[^A-Za-z0-9_.-]+", "-", env["CACHE_KEY"]).lower()
+    if not re.fullmatch(r"[a-z0-9_][a-z0-9_.-]{0,127}", tag):
+        raise ValueError("key must produce a valid GHCR tag")
+    raw_path = env["CACHE_PATH"]
+    cache = Path(raw_path).expanduser().resolve()
+    if not raw_path or cache in (Path(cache.anchor), Path.home().resolve()):
+        raise ValueError("path must name a dedicated ccache directory")
+    if cache.exists() and not cache.is_dir():
+        raise ValueError("cache path is not a directory")
+    platform = (env["RUNNER_OS"], env["RUNNER_ARCH"])
+    if platform not in ORAS_RELEASES:
+        raise ValueError("unsupported ORAS runner platform")
+    timeout = int(env.get("CACHE_TIMEOUT", "180"))
+    if not 1 <= timeout <= 600:
+        raise ValueError("transfer timeout must be between 1 and 600 seconds")
+    owner = env["GITHUB_REPOSITORY_OWNER"]
+    saving = mode == "save"
+    return Config(
+        mode=mode, cache=cache, ref=f"ghcr.io/{owner.lower()}/erf-ccache:{tag}",
+        platform=platform, timeout=timeout, runner_temp=Path(env["RUNNER_TEMP"]),
+        output_path=Path(env["GITHUB_OUTPUT"]) if not saving else None,
+        token=token, actor=env["GITHUB_ACTOR"] if token else "",
+        source=env["CACHE_SOURCE"] if saving else "",
+        revision=env["GITHUB_SHA"] if saving else "",
+        prune_env=dict(env, GH_TOKEN=token, OWNER=owner, OWNER_TYPE=env["CACHE_OWNER_TYPE"])
+        if saving else {},
+    )
 
 
 def diagnostic(value, secrets=(), limit=1024):
@@ -218,106 +274,102 @@ def layer_descriptor(manifest):
     return layer
 
 
-def transfer(mode, cache, ref, directory, platform, timeout):
-    binary = install_oras(directory, platform)
-    config = directory / "registry.json"
-    config.write_text('{"auths":{}}', encoding="utf-8")
-    config.chmod(0o600)
-    registry_args = ["--registry-config", str(config)]
-    token = os.environ.get("GHCR_TOKEN", "")
-    if token:
+def setup_registry(config, directory):
+    """Install ORAS and log in using an isolated, temporary credential file."""
+    binary = install_oras(directory, config.platform)
+    registry_file = directory / "registry.json"
+    registry_file.write_text('{"auths":{}}', encoding="utf-8")
+    registry_file.chmod(0o600)
+    registry_args = ["--registry-config", str(registry_file)]
+    if config.token:
         run([str(binary), "login", "ghcr.io", *registry_args,
-             "--username", os.environ["GITHUB_ACTOR"], "--password-stdin"],
-            input=token, timeout=30, label="ORAS login")
+             "--username", config.actor, "--password-stdin"],
+            input=config.token, timeout=30, label="ORAS login")
+    return binary, registry_args
 
+
+def restore(config, binary, registry_args, directory):
+    """Verify a downloaded snapshot, then replace the cache with rollback support."""
+    cache, ref = config.cache, config.ref
     archive = directory / ARCHIVE_NAME
-    if mode == "restore":
-        try:
-            manifest = json.loads(run([str(binary), "manifest", "fetch", *registry_args, ref],
-                                      timeout=timeout, label="fetch cache manifest"))
-        except CommandError as exc:
-            if not exc.missing_manifest(ref):
-                raise
-            print(f"no cache at {ref}; continuing with the local cache")
-            return
-        layer = layer_descriptor(manifest)
-        # Fetch the immutable blob from this manifest, not the moving configuration tag.
-        # An artifact-supplied filename never reaches the filesystem.
-        blob_ref = ref.rsplit(":", 1)[0] + "@" + layer["digest"]
-        run([str(binary), "blob", "fetch", *registry_args, "--output", str(archive), blob_ref],
-            timeout=timeout, label="fetch cache archive")
-        if (archive.stat().st_size != layer["size"]
-                or "sha256:" + sha256(archive) != layer["digest"]):
-            raise ValueError("cache archive digest/size mismatch")
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        staged = Path(tempfile.mkdtemp(prefix=cache.name + ".ghcr-", dir=cache.parent))
-        try:
-            unpack(archive, staged)
-            promote(staged, cache)
-        finally:
-            if staged.exists():
-                shutil.rmtree(staged)
-        output("hit=true")
-        print(f"restored {ref}")
-    else:
-        pack(cache, archive)
-        run([str(binary), "push", *registry_args, "--artifact-type", ARTIFACT_TYPE,
-             "--annotation", "org.opencontainers.image.source=" + os.environ["CACHE_SOURCE"],
-             "--annotation", "org.opencontainers.image.revision=" + os.environ["GITHUB_SHA"],
-             ref, ARCHIVE_NAME + ":" + LAYER_TYPE], cwd=directory, timeout=timeout,
-            label="publish cache")
-        print(f"saved {ref}")
-        env = dict(os.environ, GH_TOKEN=token, OWNER=os.environ["GITHUB_REPOSITORY_OWNER"],
-                   OWNER_TYPE=os.environ["CACHE_OWNER_TYPE"])
-        try:
-            print(run([sys.executable, str(Path(__file__).with_name("prune.py")), "erf-ccache:0"],
-                      env=env, timeout=65, attempts=1, label="prune cache versions"), end="")
-        except RuntimeError as exc:
-            warning(f"could not prune old GHCR ccache versions ({exc}); a later save will retry")
+    try:
+        manifest = json.loads(run([str(binary), "manifest", "fetch", *registry_args, ref],
+                                  timeout=config.timeout, label="fetch cache manifest"))
+    except CommandError as exc:
+        if not exc.missing_manifest(ref):
+            raise
+        print(f"no cache at {ref}; continuing with the local cache")
+        return
+    layer = layer_descriptor(manifest)
+    # Fetch the immutable blob from this manifest, not the moving configuration tag.
+    # An artifact-supplied filename never reaches the filesystem.
+    blob_ref = ref.rsplit(":", 1)[0] + "@" + layer["digest"]
+    run([str(binary), "blob", "fetch", *registry_args, "--output", str(archive), blob_ref],
+        timeout=config.timeout, label="fetch cache archive")
+    if (archive.stat().st_size != layer["size"]
+            or "sha256:" + sha256(archive) != layer["digest"]):
+        raise ValueError("cache archive digest/size mismatch")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix=cache.name + ".ghcr-", dir=cache.parent))
+    try:
+        unpack(archive, staged)
+        promote(staged, cache)
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
+    output(config.output_path, "hit=true")
+    print(f"restored {ref}")
 
 
-def output(value):
-    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+def save(config, binary, registry_args, directory):
+    """Package and publish the cache; leave pruning to the successful-save path."""
+    archive = directory / ARCHIVE_NAME
+    pack(config.cache, archive)
+    run([str(binary), "push", *registry_args, "--artifact-type", ARTIFACT_TYPE,
+         "--annotation", "org.opencontainers.image.source=" + config.source,
+         "--annotation", "org.opencontainers.image.revision=" + config.revision,
+         config.ref, ARCHIVE_NAME + ":" + LAYER_TYPE], cwd=directory, timeout=config.timeout,
+        label="publish cache")
+    print(f"saved {config.ref}")
+
+
+def prune(config):
+    """Pruning is best effort and must not turn a successful save into a failure."""
+    try:
+        print(run([sys.executable, str(Path(__file__).with_name("prune.py")), "erf-ccache:0"],
+                  env=config.prune_env, timeout=65, attempts=1, label="prune cache versions"), end="")
+    except RuntimeError as exc:
+        warning(f"could not prune old GHCR ccache versions ({exc}); a later save will retry")
+
+
+def output(path, value):
+    with path.open("a", encoding="utf-8") as stream:
         stream.write(value + "\n")
 
 
 def main():
     try:
-        mode = os.environ["CACHE_MODE"]
-        if mode not in ("restore", "save"):
-            raise ValueError("mode must be restore or save")
-        if mode == "save" and not os.environ.get("GHCR_TOKEN"):
-            raise ValueError("token is required when saving")
-        tag = re.sub(r"[^A-Za-z0-9_.-]+", "-", os.environ["CACHE_KEY"]).lower()
-        if not re.fullmatch(r"[a-z0-9_][a-z0-9_.-]{0,127}", tag):
-            raise ValueError("key must produce a valid GHCR tag")
-        raw_path = os.environ["CACHE_PATH"]
-        cache = Path(raw_path).expanduser().resolve()
-        if not raw_path or cache in (Path(cache.anchor), Path.home().resolve()):
-            raise ValueError("path must name a dedicated ccache directory")
-        if cache.exists() and not cache.is_dir():
-            raise ValueError("cache path is not a directory")
-        platform = (os.environ["RUNNER_OS"], os.environ["RUNNER_ARCH"])
-        if platform not in ORAS_RELEASES:
-            raise ValueError("unsupported ORAS runner platform")
-        timeout = int(os.environ.get("CACHE_TIMEOUT", "180"))
-        if not 1 <= timeout <= 600:
-            raise ValueError("transfer timeout must be between 1 and 600 seconds")
+        config = read_config(dict(os.environ))
     except (KeyError, ValueError, OSError) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
 
-    if mode == "restore":
-        output("hit=false")
-    ref = f"ghcr.io/{os.environ['GITHUB_REPOSITORY_OWNER'].lower()}/erf-ccache:{tag}"
+    if config.mode == "restore":
+        output(config.output_path, "hit=false")
     try:
-        if mode == "save" and not any(p.is_file() for p in cache.rglob("*")):
-            print(f"no ccache files in {cache}: skip save")
+        if config.mode == "save" and not any(p.is_file() for p in config.cache.rglob("*")):
+            print(f"no ccache files in {config.cache}: skip save")
             return 0
-        with tempfile.TemporaryDirectory(prefix="erf-ccache-", dir=os.environ["RUNNER_TEMP"]) as tmp:
-            transfer(mode, cache, ref, Path(tmp), platform, timeout)
+        with tempfile.TemporaryDirectory(prefix="erf-ccache-", dir=config.runner_temp) as tmp:
+            directory = Path(tmp)
+            binary, registry_args = setup_registry(config, directory)
+            if config.mode == "restore":
+                restore(config, binary, registry_args, directory)
+            else:
+                save(config, binary, registry_args, directory)
+                prune(config)
     except (OSError, RuntimeError, ValueError, tarfile.TarError, zipfile.BadZipFile) as exc:
-        warning(f"could not {mode} GHCR ccache ({exc}); continuing with the local cache")
+        warning(f"could not {config.mode} GHCR ccache ({exc}); continuing with the local cache")
     return 0
 
 
