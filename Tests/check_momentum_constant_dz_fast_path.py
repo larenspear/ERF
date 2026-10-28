@@ -3,7 +3,8 @@
 
 The checker reads the three live ParallelFor lambdas, proves each RHS is the
 negative mapped x/y/z face-flux divergence, checks component map factors, and
-checks all staggered flux reconstructions and inverse-map initialization, and
+checks all staggered flux reconstructions and inverse-map initialization. It also
+proves shared interior face consistency and volume-weighted cancellation, and
 checks the top z-face flux special case. The higher-order templated path,
 memory/halo validity, and floating-point rounding remain outside this proof.
 
@@ -23,6 +24,7 @@ from check_scalar_flux_divergence import (
     brace_block, check, compact, failures, function_body, number, strip_comments, z3,
 )
 from momentum_centered import check_fluxes, check_setup, reconstructed_rhs
+from momentum_balance import check_shared_faces
 
 MOM_CPP = "Source/Advection/ERF_AdvectionSrcForMom_ConstantDz.cpp"
 ARRAYS = {
@@ -60,9 +62,11 @@ def prove_equal(actual, expected, description, assumptions=()):
     solver.set(timeout=10000)
     solver.add(*assumptions, actual != expected)
     result = solver.check()
-    check(result == z3.unsat, description)
+    check(result == z3.unsat, f'{description} [{result}]')
     if result == z3.sat:
         print(f"       counterexample: {solver.model()}")
+    elif result == z3.unknown:
+        print(f"       inconclusive: {solver.reason_unknown()}")
 
 
 def parse_single_assignment(body, name, lhs_pattern=None):
@@ -110,6 +114,8 @@ def check_component(body, component, expected_metric, constants):
                 f"{component}: RHS stores the negative mapped divergence")
     reconstructed_rhs(source_expr, rhs_expr, env, actual_fluxes, expected_fluxes,
                       expected_metric_term, component, to_z3, prove_equal)
+    check_shared_faces(component, actual_fluxes, actual_rhs, env, expected_metric_term,
+                       env['dzInv'], array_reads, to_z3, prove_equal)
 
 
 def check_top_z_flux(z_body, constants):

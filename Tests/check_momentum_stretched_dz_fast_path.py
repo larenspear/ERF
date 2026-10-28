@@ -4,7 +4,8 @@
 The checker parses the three live ParallelFor lambdas. It proves the mapped
 face-flux divergence and component metrics, checks the X/Y and Z inverse-z
 spacing rules, all staggered flux reconstructions, inverse-map initialization,
-and the top z-face flux special case. The higher-order templated path,
+and the top z-face flux special case. It also proves shared interior face
+consistency and volume-weighted cancellation. The higher-order templated path,
 memory/halo validity, and floating-point rounding remain outside this proof.
 
 usage: check_momentum_stretched_dz_fast_path.py [ERF_ROOT]
@@ -23,6 +24,7 @@ from check_scalar_flux_divergence import (
     brace_block, check, compact, failures, function_body, number, strip_comments, z3,
 )
 from momentum_centered import check_fluxes, check_setup, reconstructed_rhs
+from momentum_balance import check_shared_faces
 
 MOM_CPP = "Source/Advection/ERF_AdvectionSrcForMom_StretchedDz.cpp"
 ARRAYS = {
@@ -68,9 +70,11 @@ def prove_equal(actual, expected, description, assumptions=()):
     solver.set(timeout=10000)
     solver.add(*assumptions, actual != expected)
     result = solver.check()
-    check(result == z3.unsat, description)
+    check(result == z3.unsat, f'{description} [{result}]')
     if result == z3.sat:
         print(f"       counterexample: {solver.model()}")
+    elif result == z3.unknown:
+        print(f"       inconclusive: {solver.reason_unknown()}")
 
 
 def parse_single_assignment(body, name, lhs_pattern=None):
@@ -154,6 +158,10 @@ def check_component(body, component, expected_metric, constants):
     reconstructed_rhs(source_expr, rhs_expr, {**env, "mfsq": actual_metric, "dzInv": dz_inv},
                       actual_fluxes, expected_fluxes, expected_metric_term,
                       component, to_z3, prove_equal)
+    expected_dz = to_z3('1 / dz_ptr[k]' if component != 'Z' else
+                        '2 / (dz_ptr[k] + dz_ptr[k-1])', {})
+    check_shared_faces(component, actual_fluxes, actual_rhs, env, expected_metric_term,
+                       expected_dz, array_reads, to_z3, prove_equal)
 
 
 def check_top_z_flux(z_body, constants):
