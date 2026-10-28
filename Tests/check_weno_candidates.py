@@ -3,17 +3,24 @@
 
 The checker reads candidate and weight expressions from the WENO headers. It proves
 finite-volume candidate moments in exact rational arithmetic, smoothness-indicator
-positive semidefiniteness by rational LDLᵀ, and nonlinear-weight normalization with Z3.
+identities against independent derivative integrals, optimal ideal-weight ratios
+and full-stencil ideal reconstruction, positive semidefiniteness by rational LDLᵀ,
+and nonlinear-weight normalization with Z3. Polynomial identities use exact
+rational coefficient comparison, not sample testing. Nonlinear convergence order,
+critical-point behavior, nonuniform-grid accuracy, and floating-point rounding
+remain outside these uniform-grid, cell-average checks.
 
 usage: check_weno_candidates.py [ERF_ROOT]
 exit:  0 all checks pass, 1 a check failed, 77 z3 is not importable (CTest skip)
 """
+import ast
 import re
 import sys
 from fractions import Fraction
 from pathlib import Path
 
-from advection_source import evaluation
+from advection_source import Source, evaluation
+import weno_polynomial as reference
 
 try:
     import z3
@@ -95,13 +102,46 @@ def num(value):
 
 
 def to_z3(expr, env):
-    expr = " ".join(expr.split()).replace("amrex::Real", "")
-    expr = expr.replace("std::abs", "abs")
-    if re.search(r"[^\w\s.+\-*/()]", expr):
-        raise ValueError(f"unsupported candidate expression: {expr.strip()}")
-    expr = re.sub(r"(?<![\w.])(\d+\.?\d*(?:[eE][+-]?\d+)?)", r"_N('\1')", expr)
-    abs_real = lambda value: z3.If(value >= 0, value, -value)
-    return eval(expr, {"__builtins__": {}}, {**env, "_N": num, "abs": abs_real})
+    """Read pure scalar arithmetic, retaining C++ integer/real operand types.
+
+    In particular, 1/3 must not become real division just because its result
+    is assigned to a Real. Unsupported integer division fails closed.
+    """
+    expr = " ".join(expr.split()).replace('amrex::Real', 'Real').replace('std::abs', 'abs')
+
+    def visit(node):
+        if isinstance(node, ast.Name) and node.id in env:
+            return env[node.id]
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            spelling = ast.get_source_segment(expr, node)
+            if not re.fullmatch(r'(?:0|[1-9]\d*)', spelling) and type(node.value) is int:
+                raise ValueError('unsupported integer spelling in WENO expression')
+            return z3.IntVal(spelling) if type(node.value) is int else num(spelling)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = visit(node.operand)
+            return -value if isinstance(node.op, ast.USub) else value
+        if isinstance(node, ast.BinOp):
+            left, right = visit(node.left), visit(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                if z3.is_int(left) and z3.is_int(right):
+                    raise ValueError('integer division is unsupported in WENO expressions')
+                return left / right
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and len(node.args) == 1 and not node.keywords:
+            value = visit(node.args[0])
+            if node.func.id == 'Real':
+                return z3.ToReal(value) if z3.is_int(value) else value
+            if node.func.id == 'abs':
+                return z3.If(value >= 0, value, -value)
+        raise ValueError(f'unsupported WENO expression: {expr}')
+
+    result = visit(ast.parse(expr, mode='eval').body)
+    return z3.ToReal(result) if z3.is_int(result) else result
 
 
 def rational(term):
@@ -227,31 +267,109 @@ def candidate_scale(name, body):
 
 
 def parse_evaluate(name, body):
-    signature = re.search(r"\bEvaluate\s*\(([^)]*)\)\s*const\s*\{", body, flags=re.S)
-    if not signature:
-        raise ValueError(f"{name}: Evaluate() not found")
+    signatures = list(re.finditer(r"\bEvaluate\s*\(([^)]*)\)\s*const\s*\{", body, flags=re.S))
+    if len(signatures) != 1:
+        raise ValueError(f"{name}: expected one Evaluate() definition")
+    signature = signatures[0]
     params = []
     for param in signature.group(1).split(","):
         match = re.fullmatch(r"\s*const\s+amrex::Real\s*&\s*(\w+)\s*", param)
         if not match:
             raise ValueError(f"{name}: unexpected Evaluate() parameter {param!r}")
         params.append(match.group(1))
+    expected_params = set().union(*EXPECTED_SUPPORT[name].values())
+    if len(params) != len(set(params)) or set(params) != expected_params:
+        raise ValueError(f"{name}: missing, duplicate or unexpected Evaluate() samples")
     block = brace_block(body, signature.end() - 1)
-    env = {param: z3.Real(param) for param in params}
-    env["eps"] = z3.Real("eps")
-    # Resolve the ideal weights from static constants in this source struct.
-    for match in re.finditer(
-            r"static constexpr amrex::Real\s+(\w+)\s*=\s*(.+?);\s*$", body, flags=re.M):
-        env[match.group(1)] = to_z3(match.group(2), env)
+    # Consume the complete supported member-data region. Constants cannot be
+    # silently duplicated, omitted by line-oriented matching, or shadow samples.
+    private = list(re.finditer(r'\bprivate\s*:', body))
+    if len(private) != 1:
+        raise ValueError(f'{name}: expected one private member-data region')
+    source = Source(body[private[0].end():])
+    source.take(r'amrex::Array4\s*<\s*const\s+amrex::Real\s*>\s+m_phi\s*;')
+    source.take(r'#ifdef\s+AMREX_USE_FLOAT\s+')
+    eps_pattern = r'const\s+amrex::Real\s+eps\s*=\s*amrex::Real\(\s*([-+0-9.eE]+)\s*\)\s*;'
+    source.take(eps_pattern)
+    source.take(r'#else\s+')
+    source.take(eps_pattern)
+    source.take(r'#endif\s+')
+    constants = {}
+    while source.text[source.pos:].strip():
+        local, expr = source.take(r'static\s+constexpr\s+amrex::Real\s+(\w+)\s*=\s*([^;{}]+);').groups()
+        if local in constants or local in expected_params | {'eps', 'm_phi'}:
+            raise ValueError(f'{name}: duplicate or shadowing member constant {local}')
+        constants[local] = to_z3(expr, constants)
+        rational(constants[local])  # No symbolic, sample-dependent constants.
+    source.done()
+    env = {**constants, **{param: z3.Real(param) for param in params}, 'eps': z3.Real('eps')}
     assignments = {}
     raw_assignments = {}
     declarations, returned = evaluation(block)
     for local, source_expr in declarations.items():
+        if local in env:
+            raise ValueError(f'{name}: Evaluate() shadows an input/member: {local}')
         value = to_z3(source_expr, env)
         assignments[local] = value
         raw_assignments[local] = source_expr
         env[local] = value
     return params, env, assignments, raw_assignments, returned
+
+
+def polynomial_identity(actual, expected, variables, description):
+    """An exact coefficient identity is universal over all real cell averages."""
+    got, wanted = polynomial(actual, variables), polynomial(expected, variables)
+    check(got == wanted, description)
+    if got != wanted:
+        power = next(power for power in sorted(set(got) | set(wanted))
+                     if got.get(power, 0) != wanted.get(power, 0))
+        print(f'       coefficient at powers {power}: source {got.get(power, 0)}, expected {wanted.get(power, 0)}')
+
+
+def prove_polynomial_specification(name, assignments, raw_assignments, env, params, return_expr):
+    """Derive beta and ideal-blend specifications without copying ERF formulas."""
+    variables = [env[param] for param in params]
+    supports = [tuple(sorted(support, key=offset)) for support in EXPECTED_SUPPORT[name].values()]
+    stencils = tuple(tuple(offset(param) for param in support) for support in supports)
+    for index, (support, stencil) in enumerate(zip(supports, stencils), 1):
+        matrix = reference.smoothness(stencil)
+        beta = z3.Sum([num(matrix[row][column]) * env[left] * env[right]
+                       for row, left in enumerate(support) for column, right in enumerate(support)])
+        polynomial_identity(assignments[f'b{index}'], beta, variables,
+                            f'{name}.b{index}: equals derivative-integral smoothness indicator')
+
+    ideals = tuple(rational(env[f'g{i}']) for i in range(1, len(stencils) + 1))
+    total = sum(ideals, Fraction(0))
+    # Existing weight proofs diagnose nonpositive g. Do not infer an ideal
+    # reconstruction from invalid/zero normalizers.
+    if any(value <= 0 for value in ideals):
+        check(False, f'{name}: independent ideal reconstruction needs positive weights')
+        return
+    if name == 'WENO_MZQ3':
+        # MZQ's corrected third candidate permits ANY positive unit-sum triple.
+        # Its 1/3 choices are not determined by polynomial accuracy alone.
+        check(total == 1, f'{name}: corrected ideal weights sum to one')
+    else:
+        wanted = reference.ideal_weights(stencils)
+        got = tuple(value / total for value in ideals)
+        check(got == wanted, f'{name}: normalized ideal weights match full-stencil reconstruction')
+        if got != wanted:
+            print(f'       source ratios {got}, expected {wanted}')
+
+    # Replay the source declarations/return with only the RAW nonlinear weights
+    # replaced by g. This is the ideal-weight operator, not an assertion that
+    # the actual nonlinear weights equal g for arbitrary or smooth data.
+    ideal_env = {key: value for key, value in env.items() if key not in assignments}
+    prefix = 'a' if name == 'WENO_MZQ3' else 'w'
+    overrides = {f'{prefix}{i}': num(value) for i, value in enumerate(ideals, 1)}
+    for local, expr in raw_assignments.items():
+        ideal_env[local] = overrides[local] if local in overrides else to_z3(expr, ideal_env)
+    actual = to_z3(return_expr, ideal_env)
+    full = tuple(sorted(set().union(*stencils)))
+    samples = {offset(param): env[param] for param in params}
+    expected = z3.Sum([num(value) * samples[cell] for cell, value in zip(full, reference.face(full))])
+    polynomial_identity(actual, expected, variables,
+                        f'{name}: source ideal return matches full-stencil reconstruction (order {len(full)})')
 
 
 def cell_average_monomial(center, degree):
@@ -326,6 +444,8 @@ def prove_weights(name, body, assignments, raw_assignments, env, params,
     check(not missing, f"{name}: parsed all source weights and smoothness indicators")
     if missing:
         return
+
+    prove_polynomial_specification(name, assignments, raw_assignments, env, params, return_expr)
 
     beta = [assignments[item] for item in beta_names]
     eps = z3.Real(f"{name}_eps")

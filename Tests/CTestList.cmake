@@ -2426,9 +2426,9 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
-    # The WENO checks parse the candidate polynomials, prove smoothness
-    # indicators non-negative, and prove normalized nonlinear weights sum to one
-    # and stay non-negative. The mutation test edits scratch header copies only.
+    # Derive WENO ideal blends and smoothness indicators from independent
+    # finite-volume polynomials, then check the parsed source, positivity and
+    # nonlinear normalization. Mutations edit scratch header copies only.
     add_test(NAME AdvectionWENOCandidates_Z3
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates.py
                 ${PROJECT_SOURCE_DIR})

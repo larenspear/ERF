@@ -100,6 +100,19 @@ def cases(originals):
         changed = once(ebody, candidate[0], candidate[0].replace(candidate[1], '(' + candidate[1] + ') + s'))
         yield case('wrong scalar candidate', once(body, ebody, changed),
                    (f'FAIL {name}.v1: constant-data candidate scale',))
+        # A modular transport identity can hold for the wrong scalar formula.
+        # Require the independent numerical prerequisites to reject it while
+        # the unchanged source/transport bindings still prove their identities.
+        beta = re.search(r'amrex::Real b1\s*=\s*([^;]+);', ebody)
+        changed = once(ebody, beta[0], beta[0].replace(beta[1], 'amrex::Real(2) * (' + beta[1] + ')'))
+        preserved = (f'{scheme}/hi: composed WENO flux matches reconstruction [unsat]',
+                     f'{scheme}: reconstructed shared vertical flux agrees [unsat]')
+        yield case('positive but wrong scalar smoothness', once(body, ebody, changed),
+                   (f'FAIL {name}.b1: equals derivative-integral smoothness indicator',) + preserved)
+        ideal = re.search(r'static constexpr amrex::Real g1\s*=\s*([^;]+);', body)
+        changed = once(body, ideal[0], ideal[0].replace(ideal[1], 'amrex::Real(2) * (' + ideal[1] + ')'))
+        yield case('positive but wrong scalar ideal weight', changed,
+                   (f'FAIL {name}: source ideal return matches full-stencil reconstruction',) + preserved)
         changed = once(ebody, returned[0], 'v1 *= -1; ' + returned[0])
         yield case('late scalar write', once(body, ebody, changed), ())
         changed = once(zbody, result[0], result[0] + '\n val_lo *= -1;')
@@ -166,6 +179,8 @@ def main():
             return 77
         caught, expected, failures = mutation_outcome(result, mutated)
         missing = [message for message in required if message not in result.stdout]
+        if 'unknown' in result.stdout:
+            missing.append('all solver obligations must be decided')
         expected = expected and not missing
         unexpected += not expected
         mutants += mutated

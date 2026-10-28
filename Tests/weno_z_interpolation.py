@@ -81,7 +81,8 @@ class WenoZ:
         self.kernel = z3.Function(name + '_Evaluate', *([z3.RealSort()] * (len(self.params) + 1)))
 
         # These are prerequisites, run here as well as in the standalone suite.
-        # They prove candidate support/moments, beta PSD, positive weights and
+        # They prove candidate support/moments, independent beta derivative
+        # integrals and ideal reconstruction, beta PSD, positive weights and
         # complete return normalization (including the MZQ correction).
         expected = scalar.EXPECTED[name]
         candidates = {key: value for key, value in assignments.items() if re.fullmatch(r'v\d+', key)}
