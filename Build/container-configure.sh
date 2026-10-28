@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Configures ERF the way the container images build it: the Linux GCC Particles ON
-# job of .github/workflows/ci.yml. Keep the flags in step with ci.yml.
+# Configures the CPU images: double precision, MPI and particles, without NetCDF
+# or the CI-only example fire engine. Keep these options and the image docs in sync.
 #
 # Usage: Build/container-configure.sh <source dir> <build dir>
 # In the erf-dev image: Build/container-configure.sh /erf /erf/build
@@ -17,12 +17,16 @@ exec cmake -S "$src" -B "$build" \
   -DAMReX_ASSERTIONS:BOOL=ON \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DERF_DIM:STRING=3 \
+  -DERF_PRECISION:STRING=DOUBLE \
   -DERF_ENABLE_MPI:BOOL=ON \
   -DMPI_CXX_COMPILE_OPTIONS=-fno-lto \
   -DMPI_CXX_LINK_FLAGS=-fno-lto \
   -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
   '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
   -DERF_ENABLE_PARTICLES:BOOL=ON \
+  -DERF_ENABLE_NETCDF:BOOL=OFF \
+  -DERF_ENABLE_FIRE:BOOL=OFF \
+  -DERF_FIRE_ENGINE_DIRS:STRING= \
   -DERF_ENABLE_TESTS:BOOL=ON \
   -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
   -DERF_ENABLE_FCOMPARE:BOOL=ON

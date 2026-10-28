@@ -11,14 +11,13 @@
 # Tags: erf-dev carries "development" and the release number ("26.09", also
 # "latest"); erf also keeps "sha-<commit>" for the last 30 builds.
 #
-# The build is the Linux GCC Particles ON job of .github/workflows/ci.yml: Ubuntu
-# 22.04, GCC 11, MPICH, RelWithDebInfo (-O2 -g1), AMReX assertions, tests and
-# fcompare on, NetCDF off. The configure flags live in Build/container-configure.sh,
-# which the dev image carries for rebuilding; keep them in step with ci.yml.
+# The CPU build uses Ubuntu 22.04, GCC 11, MPICH, double precision, particles,
+# RelWithDebInfo (-O2 -g1), AMReX assertions, tests and fcompare. NetCDF and fire
+# coupling are off. Build/container-configure.sh holds the configuration.
 #
 # Local build, from the repository root:
-#   docker build -f Build/Containerfile --target dev -t erf-dev .
-#   docker build -f Build/Containerfile --target runtime -t erf .
+#   docker build --platform linux/amd64 -f Build/Containerfile --target dev -t erf-dev .
+#   docker build --platform linux/amd64 -f Build/Containerfile --target runtime -t erf .
 # Add --build-context ccache-seed=<dir> to start from an existing ccache.
 
 ARG UBUNTU_VERSION=22.04
@@ -69,16 +68,17 @@ RUN git config --system --add safe.directory '*'
 # whose build and unit tests pass.
 FROM source AS build
 
+ARG BUILD_JOBS=4
 COPY --from=ccache-seed / /ccache/
 
 RUN /erf/Build/container-configure.sh /erf /erf/build \
     && ccache -z \
     && build_start=$(date +%s) \
-    && cmake --build /erf/build --parallel "$(nproc)" \
+    && cmake --build /erf/build --parallel "${BUILD_JOBS}" \
     && ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s" \
     && ccache -s
 
-RUN ctest --test-dir /erf/build -L unit -LE parallel -j "$(nproc)" --output-on-failure --no-tests=error
+RUN ctest --test-dir /erf/build -L unit -LE parallel -j "${BUILD_JOBS}" --output-on-failure --no-tests=error
 
 # dev: the source and the ccache of that build, without the build tree.
 FROM source AS dev
@@ -95,6 +95,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /erf/build/Exec/erf_exec /usr/local/bin/erf_exec
+COPY Exec/RegTests/ScalarAdvDiff/inputs_advect_uniformU /usr/local/share/erf/inputs_scalar_advection
 # Every library erf_exec links must be in the image, and the binary must start.
 RUN ldd /usr/local/bin/erf_exec > /tmp/ldd.txt \
     && ! grep 'not found' /tmp/ldd.txt \

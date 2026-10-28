@@ -9,7 +9,7 @@ name: Container images
 # release number and "latest" on release tags. The previous erf-dev image's
 # ccache seeds each build, so a night's merges recompile only what changed.
 # Pull requests build without pushing, and only when they change the
-# Containerfile or this workflow; ci.yml tests the same build on every PR.
+# Containerfile, its bundled example, or this workflow.
 on:
   schedule:
     - cron: '0 5 * * *'
@@ -19,6 +19,7 @@ on:
     paths:
       - Build/Containerfile
       - Build/container-configure.sh
+      - Exec/RegTests/ScalarAdvDiff/inputs_advect_uniformU
       - .dockerignore
       - .github/workflows/container.yml
       - .github/workflows/container/**
@@ -33,8 +34,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Push from the schedule, tags and manual runs; a pull request only builds.
@@ -95,6 +96,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      dev_ref: ${{ steps.publish.outputs.dev_ref }}
+      runtime_ref: ${{ steps.publish.outputs.runtime_ref }}
     steps:
       # No credentials in .git: the source tree, .git included, is copied into
       # erf-dev (AMReX's buildInfo records the commit from it).
@@ -123,13 +127,23 @@ jobs:
           DEV_IMAGE: ${{ needs.check.outputs.dev }}:development
         run: |
           mkdir -p ccache-seed
-          if docker pull --quiet "$DEV_IMAGE"; then
-            id=$(docker create "$DEV_IMAGE")
-            docker cp "$id:/ccache/." ccache-seed/
-            docker rm "$id" > /dev/null
-            echo "seeded from $DEV_IMAGE: $(du -sh ccache-seed | cut -f1)"
+          container=""
+          cleanup() {
+            if [[ -n "$container" ]]; then
+              timeout 15s docker rm "$container" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+          if timeout 120s docker pull --quiet "$DEV_IMAGE"; then
+            container="erf-seed-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            if timeout 30s docker create --name "$container" "$DEV_IMAGE" >/dev/null &&
+               timeout 60s docker cp "$container:/ccache/." ccache-seed/; then
+              echo "seeded from $DEV_IMAGE: $(du -sh ccache-seed | cut -f1)"
+            else
+              echo "::warning::Could not extract the previous compiler cache; building with available entries"
+            fi
           else
-            echo "no $DEV_IMAGE to seed from: cold build"
+            echo "::warning::No previous compiler cache available from $DEV_IMAGE; cold build"
           fi
 
       - name: Tags and labels for erf-dev
@@ -143,7 +157,7 @@ jobs:
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
           labels: |
             org.opencontainers.image.title=erf-dev
-            org.opencontainers.image.description=ERF build environment, source and ccache (the ci.yml Linux GCC Particles ON build)
+            org.opencontainers.image.description=ERF CPU build environment, source and compiler cache (GCC, MPICH, double precision, particles)
 
       - name: Tags and labels for erf
         id: meta-runtime
@@ -157,7 +171,7 @@ jobs:
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
           labels: |
             org.opencontainers.image.title=erf
-            org.opencontainers.image.description=ERF erf_exec with MPICH (the ci.yml Linux GCC Particles ON build)
+            org.opencontainers.image.description=ERF CPU executable with MPICH, double precision, particles and a runnable example
 
       # provenance off: a plain single-platform manifest, which every HPC container
       # runtime reads; the default attestation index trips some of them.
@@ -170,10 +184,11 @@ jobs:
           context: .
           file: Build/Containerfile
           target: dev
+          platforms: linux/amd64
           build-contexts: ccache-seed=ccache-seed
           provenance: false
-          push: ${{ env.PUSH == 'true' }}
-          tags: ${{ steps.meta-dev.outputs.tags }}
+          load: true
+          tags: erf-dev:ci
           labels: ${{ steps.meta-dev.outputs.labels }}
           cache-from: type=registry,ref=${{ needs.check.outputs.dev }}:development
           cache-to: ${{ env.PUSH == 'true' && 'type=inline' || '' }}
@@ -187,31 +202,97 @@ jobs:
           context: .
           file: Build/Containerfile
           target: runtime
+          platforms: linux/amd64
           build-contexts: ccache-seed=ccache-seed
           provenance: false
-          push: ${{ env.PUSH == 'true' }}
-          tags: ${{ steps.meta-runtime.outputs.tags }}
+          load: true
+          tags: erf:ci
           labels: ${{ steps.meta-runtime.outputs.labels }}
           cache-from: type=registry,ref=${{ needs.check.outputs.runtime }}:development
           cache-to: ${{ env.PUSH == 'true' && 'type=inline' || '' }}
+
+      - name: Run the runtime image with one and two MPI ranks
+        timeout-minutes: 5
+        run: bash .github/workflows/container/smoke-test.sh erf:ci "$RUNNER_TEMP/runtime-smoke"
+
+      - name: Publish tested images
+        id: publish
+        if: env.PUSH == 'true'
+        env:
+          DEV_TAGS: ${{ steps.meta-dev.outputs.tags }}
+          RUNTIME_TAGS: ${{ steps.meta-runtime.outputs.tags }}
+        run: |
+          publish_image() {
+            local tag
+            while IFS= read -r tag; do
+              if [[ -z "$tag" ]]; then continue; fi
+              docker tag "$1" "$tag"
+              docker push "$tag"
+            done <<< "$2"
+          }
+          publish_image erf-dev:ci "$DEV_TAGS"
+          publish_image erf:ci "$RUNTIME_TAGS"
+          echo "dev_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' erf-dev:ci)" >> "$GITHUB_OUTPUT"
+          echo "runtime_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' erf:ci)" >> "$GITHUB_OUTPUT"
 
       - name: Summary
         env:
           DEV_TAGS: ${{ steps.meta-dev.outputs.tags }}
           RUNTIME_TAGS: ${{ steps.meta-runtime.outputs.tags }}
-          DEV_DIGEST: ${{ steps.build-dev.outputs.digest }}
-          RUNTIME_DIGEST: ${{ steps.build-runtime.outputs.digest }}
+          DEV_REF: ${{ steps.publish.outputs.dev_ref }}
+          RUNTIME_REF: ${{ steps.publish.outputs.runtime_ref }}
         run: |
           {
             echo "### Container images (pushed: $PUSH)"
             echo '```'
             echo "$DEV_TAGS"
-            echo "  $DEV_DIGEST"
+            echo "  $DEV_REF"
             echo "$RUNTIME_TAGS"
-            echo "  $RUNTIME_DIGEST"
+            echo "  $RUNTIME_REF"
             echo '```'
             echo "ccache statistics are in the log of the Build erf-dev step."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-published:
+    name: Pull and use the published images
+    needs: images
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/workflows/container
+          persist-credentials: false
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and run the runtime image by digest
+        env:
+          IMAGE: ${{ needs.images.outputs.runtime_ref }}
+        run: |
+          docker pull "$IMAGE"
+          bash .github/workflows/container/smoke-test.sh "$IMAGE" "$RUNNER_TEMP/runtime-pull-smoke"
+
+      - name: Pull and rebuild the development image by digest
+        env:
+          IMAGE: ${{ needs.images.outputs.dev_ref }}
+        run: |
+          docker pull "$IMAGE"
+          docker run --rm --env EXPECTED_REVISION="$GITHUB_SHA" "$IMAGE" bash -euo pipefail -c '
+            test "$(git -C /erf rev-parse HEAD)" = "$EXPECTED_REVISION"
+            ccache -z
+            Build/container-configure.sh /erf /erf/build
+            cmake --build /erf/build --parallel 4
+            ccache -s
+          '
 
   # erf-dev is tagged by name only, so its superseded manifest and any sha-tagged
   # leftover go at once; erf keeps the 30 newest sha-tagged builds plus every
