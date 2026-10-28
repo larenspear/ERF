@@ -2499,6 +2499,19 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Exhaustively check the normal momentum scheme dispatch and parameter bindings.
+    # These finite checks use only the Python standard library, without Z3.
+    add_test(NAME AdvectionMomentumDispatch
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_dispatch.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumDispatch_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_dispatch_selftest.py)
+    set_tests_properties(AdvectionMomentumDispatch AdvectionMomentumDispatch_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Check the inline centered-second-order constant-dz momentum path, including
     # its flux reconstruction, inverse maps, shared interior face balance, and top flux.
     add_test(NAME AdvectionMomentumConstantDzFastPath_Z3

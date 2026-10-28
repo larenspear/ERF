@@ -12,56 +12,17 @@ halo validity, launch synchronization, and floating-point rounding are not model
 """
 import re
 
-from advection_source import Source
+from advection_source import Source, momentum_setup
 from check_scalar_flux_divergence import compact, number, z3
 
 
 def check_setup(prefix, stretched, constants, to_z3, prove_equal):
     """Consume setup through the dispatch gate and verify inverse-map writes."""
-    source = Source(compact(prefix))
-
-    def literal(text):
-        source.take(re.escape(compact(text)))
-
-    routine = 'AdvectionSrcForMom_' + ('StretchedDz' if stretched else 'ConstantDz')
-    literal(f'BL_PROFILE_VAR("{routine}", {routine});')
-    literal('AMREX_ALWAYS_ASSERT(bxz.smallEnd(2) > 0);')
-    if stretched:
-        literal('auto dxInv = cellSizeInv[0]; auto dyInv = cellSizeInv[1];')
-    else:
-        literal('auto dxInv = cellSizeInv[0], dyInv = cellSizeInv[1], dzInv = cellSizeInv[2];')
-        literal('const bool use_terrain_fitted_coords = '
-                '(terrain_type == TerrainType::StaticFittedMesh || '
-                'terrain_type == TerrainType::MovingFittedMesh);')
-        literal('AMREX_ALWAYS_ASSERT(!use_terrain_fitted_coords && '
-                '(terrain_type != TerrainType::EB));')
-
-    for component, box in (('u', 'bxx'), ('v', 'bxy')):
-        literal(f'Box box2d_{component}({box}); '
-                f'box2d_{component}.setRange(2,0); box2d_{component}.grow({{3,3,0}});')
-    for component in 'uv':
-        for axis in 'xy':
-            literal(f'FArrayBox mf_{component}{axis}_invFAB('
-                    f'box2d_{component},1,The_Async_Arena());')
-        for axis in 'xy':
-            literal(f'const Array4<Real>& mf_{component}{axis}_inv = '
-                    f'mf_{component}{axis}_invFAB.array();')
-
-    literal('ParallelFor(box2d_u, box2d_v,')
-    for component in 'uv':
-        literal('[=] AMREX_GPU_DEVICE (int i, int j, int) noexcept {')
-        for axis in 'xy':
-            name = f'mf_{component}{axis}'
-            literal(f'{name}_inv(i,j,0) =')
-            expression = source.take(r'([^;{}]+);').group(1)
-            metric = to_z3(f'{name}(i,j,0)', {})
-            prove_equal(to_z3(expression, constants), 1 / metric,
-                        f'{name}_inv: setup stores the reciprocal of its positive map factor',
-                        assumptions=[metric > 0])
-        literal('},' if component == 'u' else '});')
-    if stretched:
-        literal('auto dz_ptr = stretched_dz_d.data();')
-    source.done()
+    for name, expression in momentum_setup(prefix, stretched).items():
+        metric = to_z3(f'{name}(i,j,0)', {})
+        prove_equal(to_z3(expression, constants), 1 / metric,
+                    f'{name}_inv: setup stores the reciprocal of its positive map factor',
+                    assumptions=[metric > 0])
 
 
 def centered_flux(component, direction, high, to_z3):

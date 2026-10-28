@@ -212,3 +212,53 @@ def mutation_outcome(result, mutated):
     if result.returncode and not caught:
         failures.append('unexpected checker error: ' + (result.stderr.strip() or str(result.returncode)))
     return caught, expected, failures
+
+
+def momentum_setup(prefix, stretched):
+    """Consume the setup prefix and return its four inverse-map expressions."""
+    compact = lambda text: re.sub(r"\s+", "", text)
+    source = Source(compact(prefix))
+    inverses = {}
+
+    def literal(text):
+        source.take(re.escape(compact(text)))
+
+    routine = 'AdvectionSrcForMom_' + ('StretchedDz' if stretched else 'ConstantDz')
+    literal(f'BL_PROFILE_VAR("{routine}", {routine});')
+    literal('AMREX_ALWAYS_ASSERT(bxz.smallEnd(2) > 0);')
+    if stretched:
+        literal('auto dxInv = cellSizeInv[0]; auto dyInv = cellSizeInv[1];')
+    else:
+        literal('auto dxInv = cellSizeInv[0], dyInv = cellSizeInv[1], dzInv = cellSizeInv[2];')
+        literal('const bool use_terrain_fitted_coords = '
+                '(terrain_type == TerrainType::StaticFittedMesh || '
+                'terrain_type == TerrainType::MovingFittedMesh);')
+        literal('AMREX_ALWAYS_ASSERT(!use_terrain_fitted_coords && '
+                '(terrain_type != TerrainType::EB));')
+
+    for component, box in (('u', 'bxx'), ('v', 'bxy')):
+        literal(f'Box box2d_{component}({box}); '
+                f'box2d_{component}.setRange(2,0); box2d_{component}.grow({{3,3,0}});')
+    for component in 'uv':
+        for axis in 'xy':
+            literal(f'FArrayBox mf_{component}{axis}_invFAB('
+                    f'box2d_{component},1,The_Async_Arena());')
+        for axis in 'xy':
+            literal(f'const Array4<Real>& mf_{component}{axis}_inv = '
+                    f'mf_{component}{axis}_invFAB.array();')
+
+    literal('ParallelFor(box2d_u, box2d_v,')
+    for component in 'uv':
+        literal('[=] AMREX_GPU_DEVICE (int i, int j, int) noexcept {')
+        for axis in 'xy':
+            name = f'mf_{component}{axis}'
+            literal(f'{name}_inv(i,j,0) =')
+            expression = source.take(r'([^;{}]+);').group(1)
+            pure_expression(expression)
+            inverses[name] = expression
+        literal('},' if component == 'u' else '});')
+    if stretched:
+        literal('auto dz_ptr = stretched_dz_d.data();')
+    source.done()
+
+    return inverses
