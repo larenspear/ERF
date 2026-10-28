@@ -2,8 +2,9 @@
 """Keep named tags and the newest KEEP sha-only versions; prune the rest.
 
 Uses gh on Linux, macOS and Windows. Bound the entire operation to 60 seconds;
-a later successful save retries any incomplete cleanup. Concurrent DELETE 404s
-are harmless. OWNER, OWNER_TYPE and GH_TOKEN identify the publishing repository.
+failed deletions do not block other versions while time remains. A later successful
+save retries incomplete cleanup. Concurrent DELETE 404s are harmless. OWNER,
+OWNER_TYPE and GH_TOKEN identify the publishing repository.
 """
 
 import os
@@ -69,7 +70,14 @@ def main(specs):
                                    '.[] | [.id, .created_at, (.metadata.container.tags | join(","))] | @tsv'],
                                   deadline)
             for version in select_versions(versions, keep):
-                result = github_api(["--method", "DELETE", "--silent", endpoint + "/" + version], deadline)
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("pruning timed out")
+                try:
+                    result = github_api(["--method", "DELETE", "--silent", endpoint + "/" + version], deadline)
+                except RuntimeError as exc:
+                    print(f"{package}: could not delete version {version}: {exc}", file=sys.stderr)
+                    failed = True
+                    continue
                 state = "was already gone" if result is None else "deleted"
                 print(f"{package}: version {version} {state}")
         except (RuntimeError, ValueError) as exc:

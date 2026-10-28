@@ -189,6 +189,57 @@ class NativeTests(unittest.TestCase):
 
 
 class PruneTests(unittest.TestCase):
+    VERSIONS = ('1\t2026-10-28T03:00:00Z\tactive-trunk\n'
+                '2\t2026-10-28T02:00:00Z\t\n'
+                '3\t2026-10-28T01:00:00Z\t\n')
+
+    def test_failed_deletion_does_not_block_later_versions(self):
+        deleted = []
+
+        def github_response(command, **kwargs):
+            if 'DELETE' not in command:
+                return subprocess.CompletedProcess(command, 0, self.VERSIONS, '')
+            version = command[-1].rsplit('/', 1)[1]
+            deleted.append(version)
+            if version == '2':
+                return subprocess.CompletedProcess(command, 1, '', 'gh: Forbidden (HTTP 403)')
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        with patch.dict(os.environ, OWNER='Example', OWNER_TYPE='User'), \
+                patch.object(prune.subprocess, 'run', side_effect=github_response), \
+                patch.object(prune.time, 'monotonic', return_value=0), \
+                patch.object(prune.time, 'sleep'), \
+                contextlib.redirect_stderr(io.StringIO()) as errors, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            status = prune.main(['erf-ccache:0'])
+
+        self.assertEqual(deleted, ['2', '2', '2', '3'])
+        self.assertEqual(status, 1, 'partial cleanup must still report failure')
+        self.assertIn('could not delete version 2', errors.getvalue())
+        self.assertIn('version 3 deleted', output.getvalue())
+
+    def test_failed_deletion_stops_at_total_deadline(self):
+        now = [0]
+        deleted = []
+
+        def github_response(command, **kwargs):
+            if 'DELETE' not in command:
+                return subprocess.CompletedProcess(command, 0, self.VERSIONS, '')
+            deleted.append(command[-1].rsplit('/', 1)[1])
+            now[0] = 61
+            raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+
+        with patch.dict(os.environ, OWNER='Example', OWNER_TYPE='User'), \
+                patch.object(prune.subprocess, 'run', side_effect=github_response), \
+                patch.object(prune.time, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(prune.time, 'sleep'), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            status = prune.main(['erf-ccache:0'])
+
+        self.assertEqual(deleted, ['2'], 'do not retry or delete more versions after the deadline')
+        self.assertEqual(status, 1)
+        self.assertIn('pruning timed out', errors.getvalue())
+
     def test_total_deadline_stops_requests(self):
         with patch.object(prune.time, 'monotonic', return_value=61), \
                 patch.object(prune.subprocess, 'run') as command:
