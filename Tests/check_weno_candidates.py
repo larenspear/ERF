@@ -5,7 +5,9 @@ The checker reads candidate and weight expressions from the WENO headers. It pro
 finite-volume candidate moments in exact rational arithmetic, smoothness-indicator
 identities against independent derivative integrals, optimal ideal-weight ratios
 and full-stencil ideal reconstruction, positive semidefiniteness by rational LDLᵀ,
-and nonlinear-weight normalization with Z3. Polynomial identities use exact
+and nonlinear-weight normalization with Z3. The actual nonlinear return also
+reproduces constant and affine fields for arbitrary positive epsilon, after
+proving every evaluated divisor nonzero on those fields. Polynomial identities use exact
 rational coefficient comparison, not sample testing. Nonlinear convergence order,
 critical-point behavior, nonuniform-grid accuracy, and floating-point rounding
 remain outside these uniform-grid, cell-average checks.
@@ -101,11 +103,13 @@ def num(value):
     return z3.RealVal(f"{value.numerator}/{value.denominator}")
 
 
-def to_z3(expr, env):
+def to_z3(expr, env, divisors=None):
     """Read pure scalar arithmetic, retaining C++ integer/real operand types.
 
     In particular, 1/3 must not become real division just because its result
-    is assigned to a Real. Unsupported integer division fails closed.
+    is assigned to a Real. Unsupported integer division fails closed. Optional
+    divisor collection happens during AST traversal, before simplification can
+    erase divisions in canceled terms, zero products, or unused declarations.
     """
     expr = " ".join(expr.split()).replace('amrex::Real', 'Real').replace('std::abs', 'abs')
 
@@ -131,6 +135,8 @@ def to_z3(expr, env):
             if isinstance(node.op, ast.Div):
                 if z3.is_int(left) and z3.is_int(right):
                     raise ValueError('integer division is unsupported in WENO expressions')
+                if divisors is not None:
+                    divisors.append(z3.ToReal(right) if z3.is_int(right) else right)
                 return left / right
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and len(node.args) == 1 and not node.keywords:
             value = visit(node.args[0])
@@ -299,7 +305,10 @@ def parse_evaluate(name, body):
         local, expr = source.take(r'static\s+constexpr\s+amrex::Real\s+(\w+)\s*=\s*([^;{}]+);').groups()
         if local in constants or local in expected_params | {'eps', 'm_phi'}:
             raise ValueError(f'{name}: duplicate or shadowing member constant {local}')
-        constants[local] = to_z3(expr, constants)
+        divisors = []
+        constants[local] = to_z3(expr, constants, divisors)
+        if any(rational(divisor) == 0 for divisor in divisors):
+            raise ValueError(f'{name}.{local}: zero divisor in member constant')
         rational(constants[local])  # No symbolic, sample-dependent constants.
     source.done()
     env = {**constants, **{param: z3.Real(param) for param in params}, 'eps': z3.Real('eps')}
@@ -387,6 +396,50 @@ def offset(param):
     return int(match.group(2)) * (1 if match.group(1) == "p" else -1)
 
 
+def prove_nonlinear_fields(name, assignments, raw_assignments, env, params, return_expr):
+    """Replay every source declaration on symbolic constant/affine cell averages.
+
+    No beta, tau, weight, normalizer, or return is replaced by its specification.
+    At each expression, prove its divisors nonzero before simplifying the value.
+    Nested divisors are visited inside out. A failed definedness obligation stops
+    that field's replay: we must not claim accuracy on an empty/partial domain by
+    assuming away a zero denominator, or rely on Z3's totalized division at zero.
+    """
+    intercept, slope = z3.Reals(f'{name}_intercept {name}_slope')
+    for field, gradient in [('constant', num(0)), ('affine', slope)]:
+        actual_env = {key: value for key, value in env.items() if key not in assignments}
+        actual_env.update({param: intercept + gradient * offset(param) for param in params})
+        assumptions = [actual_env['eps'] > 0]
+        defined = True
+        checked = set()
+        for local, expression in [*raw_assignments.items(), ('return', return_expr)]:
+            divisors = []
+            value = to_z3(expression, actual_env, divisors)
+            for index, divisor in enumerate(divisors, 1):
+                divisor = z3.simplify(divisor, som=True)
+                # Repeated divisors and nonzero constants need no solver call.
+                if divisor in checked or (z3.is_rational_value(divisor) and rational(divisor) != 0):
+                    continue
+                result = prove(divisor != 0, assumptions)
+                if result != z3.unsat:
+                    check(False, f'{name}: {field} source divisions are defined for eps>0 '
+                          f'({local} divisor {index}) [{result}]')
+                    defined = False
+                    break
+                checked.add(divisor)
+            if not defined:
+                break
+            # Expanding polynomial locals first keeps high-order beta formulas
+            # small after the affine substitution, without assuming beta=m^2.
+            actual_env[local] = z3.simplify(value, som=True)
+        if not defined:
+            continue
+        check(True, f'{name}: {field} source divisions are defined for eps>0')
+        result = prove(actual_env['return'] == intercept + gradient / num(2), assumptions)
+        check(result == z3.unsat,
+              f'{name}: actual nonlinear return reproduces {field} fields for eps>0 [{result}]')
+
+
 def prove_candidate(name, label, expr, env, params, order, scale, support):
     variables = [env[param] for param in params]
     zeros = [(var, z3.RealVal(0)) for var in variables]
@@ -446,6 +499,7 @@ def prove_weights(name, body, assignments, raw_assignments, env, params,
         return
 
     prove_polynomial_specification(name, assignments, raw_assignments, env, params, return_expr)
+    prove_nonlinear_fields(name, assignments, raw_assignments, env, params, return_expr)
 
     beta = [assignments[item] for item in beta_names]
     eps = z3.Real(f"{name}_eps")

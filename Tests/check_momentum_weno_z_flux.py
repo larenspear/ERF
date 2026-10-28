@@ -9,9 +9,10 @@ rational weights. Both final fluxes and shared-face consistency are checked.
 
 All integer lo < k < hi, all real sample values and flow signs (including zero)
 are covered. WENO ignores the supplied blend fraction. Scalar proofs assume
-eps>0, as in both source precision branches. The interface proof does not
-independently specify nonlinear smoothness/ideal-weight formulas or establish
-WENO convergence. Dispatch/caller bindings are checked separately; floating
+eps>0, as in both source precision branches. Scalar prerequisites independently
+specify smoothness and ideal reconstruction and prove actual nonlinear
+constant/affine exactness with defined divisions. The interface proof does not
+establish WENO convergence. Dispatch/caller bindings are checked separately; floating
 point, horizontal fluxes, complete divergence and halo validity are excluded.
 
 usage: check_momentum_weno_z_flux.py [ERF_ROOT]

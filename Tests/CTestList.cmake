@@ -2428,7 +2428,8 @@ if(ERF_TEST_PYTHON)
 
     # Derive WENO ideal blends and smoothness indicators from independent
     # finite-volume polynomials, then check the parsed source, positivity and
-    # nonlinear normalization. Mutations edit scratch header copies only.
+    # nonlinear normalization, then actual constant/affine reconstruction with
+    # defined source divisions. Mutations edit scratch header copies only.
     add_test(NAME AdvectionWENOCandidates_Z3
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates.py
                 ${PROJECT_SOURCE_DIR})

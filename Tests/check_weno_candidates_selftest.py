@@ -90,6 +90,80 @@ def cases(originals):
             constants = list(re.finditer(r'static constexpr amrex::Real\s+(g\d+)\s*=\s*([^;]+);', body))
             returned = re.search(r'\breturn\s+([^;]+);', body)
             ideal = f'{name}: source ideal return matches full-stencil reconstruction'
+            defined = f'{name}: constant source divisions are defined for eps>0'
+            affine_defined = f'{name}: affine source divisions are defined for eps>0'
+            exact = f'{name}: actual nonlinear return reproduces'
+            positive_fields = ('ok   ' + defined, 'ok   ' + affine_defined,
+                               f'ok   {exact} constant fields for eps>0 [unsat]',
+                               f'ok   {exact} affine fields for eps>0 [unsat]')
+            raw_prefix = 'a' if name == 'WENO_MZQ3' else 'w'
+            weights = list(re.finditer(rf'amrex::Real\s+({raw_prefix}\d+)\s*=\s*([^;]+);', body))
+            for match in weights:
+                # On constant data beta=0. Positivity of an abstract alpha alone
+                # is not a substitute for checking each actual source divisor.
+                expr = re.sub(r'eps\s*\+\s*', '', match[2])
+                changed = body[:match.start(2)] + expr + body[match.end(2):]
+                yield case(match[1] + ' loses epsilon regularization', changed,
+                           ('FAIL ' + defined, 'FAIL ' + affine_defined))
+
+            # A canceled or unused singular expression used to escape every
+            # algebraic identity. Preserve evidence that the old ideal operator
+            # and normalized return identities still hold for these fixtures.
+            for label, expr in (
+                ('unused zero-numerator singularity', 'amrex::Real(0) / b1'),
+                ('nested singularity', 'amrex::Real(1) / (amrex::Real(1) / b1)'),
+                ('canceled singularity', 'eps / (b1-b2) - eps / (b1-b2)'),
+            ):
+                changed = body[:returned.start()] + f'amrex::Real unused = {expr};\n' + body[returned.start():]
+                yield case(label, changed, ('FAIL ' + defined, 'FAIL ' + affine_defined,
+                                           'ok   ' + ideal,
+                                           f'ok   {name}: complete source return equals the normalized candidate reconstruction'))
+            changed = body[:returned.start(1)] + '(' + returned[1] + ') + amrex::Real(0)*(amrex::Real(1)/(w1-w1))' + body[returned.end(1):]
+            yield case('hidden singularity in actual return', changed,
+                       ('FAIL ' + defined, 'FAIL ' + affine_defined, 'ok   ' + ideal,
+                        f'ok   {name}: complete source return equals the normalized candidate reconstruction'))
+            tau = re.search(r'amrex::Real\s+t5\s*=\s*([^;]+);', body)
+            if tau:
+                changed = body[:tau.start(1)] + '(' + tau[1] + ') + amrex::Real(0)*(amrex::Real(1)/(b1-b2))' + body[tau.end(1):]
+                yield case('hidden singularity in global smoothness', changed,
+                           ('FAIL ' + defined, 'FAIL ' + affine_defined, 'ok   ' + ideal))
+            # A removable singularity at eps=1 must fail despite every source
+            # precision branch using a much smaller positive eps: the contract
+            # explicitly quantifies over all positive eps.
+            match = weights[0]
+            changed = body[:match.start(2)] + '(' + match[2] + ') * ((eps-amrex::Real(1))/(eps-amrex::Real(1)))' + body[match.end(2):]
+            yield case('weight has a removable singularity at positive epsilon', changed,
+                       ('FAIL ' + defined, 'FAIL ' + affine_defined))
+            changed = body[:match.start(2)] + '(' + match[2] + ') * ((eps+b1)/(eps+b1))' + body[match.end(2):]
+            yield case('weight has a defined canceling ratio', changed, positive_fields, mutated=False)
+            # Affine accuracy does not uniquely determine nonlinear weighting:
+            # every candidate is already affine-exact. This changes the algorithm
+            # on general data but preserves the CURRENT checked specification.
+            changed = body[:match.start(2)] + 'amrex::Real(2)*(' + match[2] + ')' + body[match.end(2):]
+            yield case('alternative positive nonlinear weight', changed, positive_fields, mutated=False)
+            changed = body[:returned.start()] + 'amrex::Real unused = amrex::Real(1)/(eps+b1);\n' + body[returned.start():]
+            yield case('unused but defined division', changed, positive_fields, mutated=False)
+
+            candidate = re.search(r'amrex::Real\s+v1\s*=\s*([^;]+);', body)
+            for label, perturbation, required in (
+                ('candidate constant shift', 'amrex::Real(1)',
+                 (f'FAIL {exact} constant fields for eps>0 [sat]',
+                  f'FAIL {exact} affine fields for eps>0 [sat]')),
+                ('candidate slope shift', '(s-sm1)',
+                 (f'ok   {exact} constant fields for eps>0 [unsat]',
+                  f'FAIL {exact} affine fields for eps>0 [sat]')),
+            ):
+                # For MZQ the low-order candidates cancel at ideal weights;
+                # perturb its full-stencil candidate to change the affine result.
+                selected = (re.search(r'amrex::Real\s+v3\s*=\s*([^;]+);', body)
+                            if name == 'WENO_MZQ3' else candidate)
+                changed = body[:selected.start(1)] + '(' + selected[1] + ') + ' + perturbation + body[selected.end(1):]
+                yield case(label, changed, ('ok   ' + defined, 'ok   ' + affine_defined) + required)
+
+            first = constants[0]
+            changed = body[:first.start(2)] + '(' + first[2] + ') + amrex::Real(0)*(amrex::Real(1)/amrex::Real(0))' + body[first.end(2):]
+            yield case('hidden zero divisor in member constant', changed,
+                       ('zero divisor in member constant',))
             for index, match in enumerate(beta):
                 label, expr = match[1], match[2]
                 required = (f'FAIL {name}.{label}: equals derivative-integral smoothness indicator',

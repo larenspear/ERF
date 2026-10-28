@@ -109,6 +109,18 @@ def cases(originals):
                      f'{scheme}: reconstructed shared vertical flux agrees [unsat]')
         yield case('positive but wrong scalar smoothness', once(body, ebody, changed),
                    (f'FAIL {name}.b1: equals derivative-integral smoothness indicator',) + preserved)
+        changed = once(ebody, returned[0],
+                       'amrex::Real unused = amrex::Real(0)/b1;\n' + returned[0])
+        yield case('undefined scalar evaluation despite unchanged return', once(body, ebody, changed),
+                   (f'FAIL {name}: constant source divisions are defined for eps>0',
+                    f'FAIL {name}: affine source divisions are defined for eps>0',
+                    f'ok   {name}: source ideal return matches full-stencil reconstruction') + preserved)
+        selected = (re.search(r'amrex::Real v3\s*=\s*([^;]+);', ebody)
+                    if name == 'WENO_MZQ3' else candidate)
+        changed = once(ebody, selected[0], selected[0].replace(selected[1], '(' + selected[1] + ') + (s-sm1)'))
+        yield case('scalar candidate loses affine exactness', once(body, ebody, changed),
+                   (f'ok   {name}: actual nonlinear return reproduces constant fields for eps>0 [unsat]',
+                    f'FAIL {name}: actual nonlinear return reproduces affine fields for eps>0 [sat]') + preserved)
         ideal = re.search(r'static constexpr amrex::Real g1\s*=\s*([^;]+);', body)
         changed = once(body, ideal[0], ideal[0].replace(ideal[1], 'amrex::Real(2) * (' + ideal[1] + ')'))
         yield case('positive but wrong scalar ideal weight', changed,
