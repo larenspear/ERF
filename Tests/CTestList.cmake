@@ -2512,6 +2512,20 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Prove the normal Z-momentum wall-order rule, vertical call/flux bindings,
+    # reduced-stencil index bounds, and shared interior vertical-face consistency.
+    add_test(NAME AdvectionMomentumWallOrder_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_wall_order.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumWallOrder_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_wall_order_selftest.py)
+    set_tests_properties(AdvectionMomentumWallOrder_Z3 AdvectionMomentumWallOrder_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 120
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Check the inline centered-second-order constant-dz momentum path, including
     # its flux reconstruction, inverse maps, shared interior face balance, and top flux.
     add_test(NAME AdvectionMomentumConstantDzFastPath_Z3

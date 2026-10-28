@@ -184,6 +184,7 @@ def analyze_upwindall(body, standalones):
           f"unconditional non-early reads are the shared core stencil (found {sorted(common_offsets)})")
 
     print("\nUPWINDALL branch reaches")
+    selected_offsets = {}
     for adv_type, struct_name in BRANCHES.items():
         if adv_type in early_cond:
             actual = early_offsets
@@ -198,6 +199,8 @@ def analyze_upwindall(body, standalones):
               f"{adv_type}: live Z reads {sorted(actual)} match {struct_name} stencil {sorted(expected)}")
         check(reach == declared,
               f"{adv_type}: live Z read reach {reach} matches {struct_name} declaration {declared}")
+        selected_offsets[adv_type] = actual
+    return selected_offsets
 
 
 def main():
