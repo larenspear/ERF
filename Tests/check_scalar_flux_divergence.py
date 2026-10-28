@@ -16,6 +16,8 @@ from collections import Counter
 from fractions import Fraction
 from pathlib import Path
 
+from advection_source import Source, LAMBDA, checked_constants
+
 try:
     import z3
 except ImportError:
@@ -142,6 +144,12 @@ def find_assignment(block):
 
 
 def check_flux_builder(body):
+    source = Source(body)
+    source.take(r"InterpType_H\s+interp_h\s*\(\s*scalar\s*,\s*horiz_upw_frac\s*\)\s*;")
+    source.take(r"InterpType_V\s+interp_v\s*\(\s*scalar\s*,\s*vert_upw_frac\s*\)\s*;")
+    for box, dim in zip(('xbx', 'ybx', 'zbx'), range(3)):
+        source.take(rf"const\s+amrex::Box\s+{box}\s*=\s*amrex::surroundingNodes\s*"
+                    rf"\(\s*bx\s*,\s*{dim}\s*\)\s*;")
     check(bool(re.search(r"InterpType_H\s+interp_h\s*\(\s*scalar\s*,\s*horiz_upw_frac\s*\)", body)),
           "horizontal interpolation policy uses the horizontal upwind fraction")
     check(bool(re.search(r"InterpType_V\s+interp_v\s*\(\s*scalar\s*,\s*vert_upw_frac\s*\)", body)),
@@ -158,6 +166,11 @@ def check_flux_builder(body):
         assign = (rf"flx_arr\s*\[\s*{dim}\s*\]\s*\(\s*i\s*,\s*j\s*,\s*k\s*,\s*flux_comp\s*\)\s*=\s*"
                   rf"{velocity}\s*\(\s*i\s*,\s*j\s*,\s*k\s*\)\s*\*\s*{face_value}\s*;")
         box_def = rf"const\s+amrex::Box\s+{box}\s*=\s*amrex::surroundingNodes\s*\(\s*bx\s*,\s*{dim}\s*\)\s*;"
+        source.take(rf"amrex::ParallelFor\s*\(\s*{box}\s*," + LAMBDA)
+        source.take(rf"amrex::Real\s+{face_value}\s*\(\s*zero\s*\)\s*;")
+        source.take(call)
+        source.take(assign)
+        source.take(r"\}\s*\)\s*;")
         check(bool(re.search(call, body)),
               f"{axis}: interpolates the scalar with its matching face-normal mass flux")
         check(bool(re.search(assign, body)),
@@ -165,8 +178,19 @@ def check_flux_builder(body):
         check(bool(re.search(box_def, body)),
               f"{axis}: computes fluxes on the {axis}-nodal box")
 
+    source.done()
+
 
 def check_component_adapter(body):
+    loop = re.search(r"for\s*\(\s*int\s+n\(0\)\s*;\s*n\s*<\s*ncomp\s*;\s*\+\+n\s*\)\s*\{", body)
+    if not loop:
+        raise ValueError("scalar component loop not found")
+    source = Source(brace_block(body, loop.end() - 1))
+    for name in ('cons_comp', 'scalar_comp', 'flux_comp'):
+        source.take(rf"const\s+int\s+{name}\s*=\s*[^;{{}}]+;")
+    for call in ('BuildScalarAdvectionFluxes', 'ApplyScalarAdvectionFluxDivergence'):
+        source.take(rf"{call}\s*\([^()]+\)\s*;")
+    source.done()
     check(bool(re.search(r"const\s+int\s+cons_comp\s*=\s*icomp\s*\+\s*n\s*;", body)),
           "scalar loop maps n to conserved component icomp+n")
     check(bool(re.search(r"const\s+int\s+scalar_comp\s*=\s*cons_comp\s*-\s*1\s*;", body)),
@@ -183,6 +207,20 @@ def check_component_adapter(body):
 
 
 def check_divergence(body):
+    # Consume the entire kernel, including both branches and the launch, before
+    # modeling its arithmetic. Extra writes and surrounding conditionals fail.
+    source = Source(body)
+    for name in ('dxInv', 'dyInv', 'dzInv'):
+        source.take(rf"const\s+auto\s+{name}\s*=\s*[^;{{}}]+;")
+    source.take(r"amrex::ParallelFor\s*\(\s*bx\s*," + LAMBDA)
+    source.take(r"if\s*\([^{}]+\)\s*\{")
+    for name in ('invdetJ', 'mfsq'):
+        source.take(rf"const\s+amrex::Real\s+{name}\s*=\s*[^;{{}}]+;")
+    source.take(r"rhs\s*\([^()]+\)\s*=\s*[^;{}]+;")
+    source.take(r"\}\s*else\s*\{")
+    source.take(r"rhs\s*\([^()]+\)\s*=\s*[^;{}]+;")
+    source.take(r"\}\s*\}\s*\)\s*;")
+    source.done()
     for alias, dim in (("dxInv", 0), ("dyInv", 1), ("dzInv", 2)):
         pattern = rf"const\s+auto\s+{alias}\s*=\s*cellSizeInv\s*\[\s*{dim}\s*\]\s*;"
         check(bool(re.search(pattern, body)), f"{alias} uses cellSizeInv[{dim}]")
@@ -243,6 +281,7 @@ def check_divergence(body):
 
 def main():
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
+    checked_constants(root, {"zero": "0", "one": "1"})
     scalar = strip_comments((root / SCALAR_H).read_text())
     state = strip_comments((root / STATE_CPP).read_text())
     check_flux_builder(function_body(scalar, "BuildScalarAdvectionFluxesWithPolicy"))

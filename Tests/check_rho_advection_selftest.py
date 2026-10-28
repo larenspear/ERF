@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from advection_source import CONST_H, mutation_outcome
+
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).resolve().parent / "check_rho_advection.py"
 STATE_CPP = "Source/Advection/ERF_AdvectionSrcForState.cpp"
@@ -39,22 +41,35 @@ MUTANTS = {
         "advectionSrc(i,j,k,0) = zero;", "advectionSrc(i,j,k,0) = one;", 1, 2),
     "vertical divergence reads the wrong high face": (
         "(flx_arr[2])(i,j,k+1,0)", "(flx_arr[2])(i,j,k+2,0)", 0, 1),
+    'update density after the fixed-rho assignment': ('advectionSrc(i,j,k,0) = zero;',
+         'advectionSrc(i,j,k,0) = zero;\n            advectionSrc(i,j,k,0) += 1;',
+         0,
+         2),
+    'source zero constant is changed': ('zero         = amrex::Real(0.0)',
+         'zero         = amrex::Real(1.0)',
+         0,
+         1,
+         'Source/ERF_NumericalConstants.H'),
 }
 
 
 def main():
     work = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
         tempfile.mkdtemp(prefix="erf-rho-advection-mutants-"))
-    original = (ERF / STATE_CPP).read_text()
+    originals = {name: (ERF / name).read_text() for name in (STATE_CPP, CONST_H)}
     print(f"mutants in {work}\n")
     unexpected = 0
     for index, (name, edit) in enumerate(MUTANTS.items()):
         root = work / f"m{index}"
-        target = root / STATE_CPP
-        target.parent.mkdir(parents=True, exist_ok=True)
-        source = original
+        for relative, original in originals.items():
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(original)
+        relative = edit[4] if edit is not None and len(edit) == 5 else STATE_CPP
+        target = root / relative
+        source = originals[relative]
         if edit is not None:
-            old, new, occurrence, expected_count = edit
+            old, new, occurrence, expected_count = edit[:4]
             count = source.count(old)
             if count != expected_count:
                 raise AssertionError(f"{name}: found {count} pattern(s), expected {expected_count}")
@@ -68,12 +83,8 @@ def main():
         if result.returncode == 77:
             print(result.stdout.strip() or "checker skipped because z3-solver is unavailable")
             return 77
-        failures = [line.strip() for line in result.stdout.splitlines()
-                    if line.strip().startswith("FAIL")]
-        if result.returncode and not failures:
-            failures = [(result.stderr.strip().splitlines() or ["checker crashed"])[-1]]
-        caught = bool(result.returncode)
-        unexpected += caught == (edit is None)
+        caught, expected, failures = mutation_outcome(result, edit is not None)
+        unexpected += not expected
         print(f"[{'CAUGHT' if caught else 'passes'}] {name}")
         for failure in failures[:3]:
             print(f"           {failure}")

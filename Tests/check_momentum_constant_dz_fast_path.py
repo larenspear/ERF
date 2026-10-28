@@ -14,6 +14,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from advection_source import (
+    checked_constants, momentum_component, momentum_lambdas as get_lambdas, spacing_aliases,
+)
+
 from check_scalar_flux_divergence import (
     brace_block, check, compact, failures, function_body, number, strip_comments, z3,
 )
@@ -58,15 +62,6 @@ def prove_equal(actual, expected, description):
         print(f"       counterexample: {solver.model()}")
 
 
-def get_lambdas(branch):
-    pattern = (r"\[=\]\s*AMREX_GPU_DEVICE\s*\(\s*int i,\s*int j,\s*int k\s*\)"
-               r"\s*noexcept\s*\{")
-    matches = list(re.finditer(pattern, branch))
-    if len(matches) != 3:
-        raise ValueError(f"expected three inline momentum lambdas, found {len(matches)}")
-    return [brace_block(branch, match.end() - 1) for match in matches]
-
-
 def parse_single_assignment(body, name, lhs_pattern=None):
     lhs = lhs_pattern or rf"\b{name}\b"
     matches = list(re.finditer(rf"{lhs}\s*=\s*(.*?);", body, flags=re.S))
@@ -75,15 +70,16 @@ def parse_single_assignment(body, name, lhs_pattern=None):
     return matches[0].group(1).strip()
 
 
-def check_component(body, component, expected_metric):
+def check_component(body, component, expected_metric, constants):
     rhs_name = {"X": "rho_u_rhs", "Y": "rho_v_rhs", "Z": "rho_w_rhs"}[component]
+    momentum_component(body, rhs_name, stretched=False)
     flux_names = [f"{axis}flux_{edge}" for axis in "xyz" for edge in ("hi", "lo")]
     declared = re.findall(r"\bReal\s+([xyz]flux_(?:hi|lo))\s*=", body)
     check(Counter(declared) == Counter(flux_names),
           f"{component}: defines each low/high directional flux once")
 
     env = {
-        "fourth": number("1/4"),
+        **constants,
         "dxInv": z3.Real("dxInv"), "dyInv": z3.Real("dyInv"), "dzInv": z3.Real("dzInv"),
         **{name: z3.Real(name) for name in flux_names},
     }
@@ -110,7 +106,7 @@ def check_component(body, component, expected_metric):
                 f"{component}: RHS stores the negative mapped divergence")
 
 
-def check_top_z_flux(z_body):
+def check_top_z_flux(z_body, constants):
     expression = parse_single_assignment(z_body, "zflux_hi", r"\bReal\s+zflux_hi")
     match = re.fullmatch(r"\s*\(\s*(k\s*==\s*hi_z_face)\s*\)\s*\?\s*(.*?)\s*:\s*(.*?)\s*", expression, re.S)
     if not match:
@@ -119,20 +115,22 @@ def check_top_z_flux(z_body):
     check(compact(condition) == "k==hi_z_face",
           "Z high flux selects the wall value only at hi_z_face")
 
-    env = {"fourth": number("1/4")}
+    env = dict(constants)
     actual_top = to_z3(top_expr, env)
     expected_top = to_z3("omega(i,j,k) * w(i,j,k)", env)
     prove_equal(actual_top, expected_top, "top Z flux is omega times w")
 
     actual_interior = to_z3(interior_expr, env)
     expected_interior = to_z3(
-        "fourth * (omega(i,j,k) + omega(i,j,k+1)) * (w(i,j,k) + w(i,j,k+1))", env)
+        "(1/4) * (omega(i,j,k) + omega(i,j,k+1)) * (w(i,j,k) + w(i,j,k+1))", env)
     prove_equal(actual_interior, expected_interior,
                 "interior Z high flux averages omega and w across the face")
 
 
 def main():
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
+    constants = {name: number(value) for name, value in
+                 checked_constants(root, {"fourth": "1/4"}).items()}
     text = strip_comments((root / MOM_CPP).read_text())
     body = function_body(text, "AdvectionSrcForMom_ConstantDz")
     branch_match = re.search(
@@ -143,13 +141,14 @@ def main():
     check(branch_condition ==
           "horiz_adv_type==AdvType::Centered_2nd&&vert_adv_type==AdvType::Centered_2nd",
           "inline path is gated on centered second order in both directions")
+    spacing_aliases(body[:branch_match.start()], 3)
     branch = brace_block(body, branch_match.end() - 1)
     x_body, y_body, z_body = get_lambdas(branch)
 
-    check_component(x_body, "X", "mf_ux(i,j,0) * mf_uy(i,j,0)")
-    check_component(y_body, "Y", "mf_vx(i,j,0) * mf_vy(i,j,0)")
-    check_component(z_body, "Z", "mf_mx(i,j,0) * mf_my(i,j,0)")
-    check_top_z_flux(z_body)
+    check_component(x_body, "X", "mf_ux(i,j,0) * mf_uy(i,j,0)", constants)
+    check_component(y_body, "Y", "mf_vx(i,j,0) * mf_vy(i,j,0)", constants)
+    check_component(z_body, "Z", "mf_mx(i,j,0) * mf_my(i,j,0)", constants)
+    check_top_z_flux(z_body, constants)
     print(f"\n{len(failures)} check(s) failed")
     return 1 if failures else 0
 

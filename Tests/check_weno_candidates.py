@@ -13,6 +13,8 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
+from advection_source import evaluation
+
 try:
     import z3
 except ImportError:
@@ -243,16 +245,13 @@ def parse_evaluate(name, body):
         env[match.group(1)] = to_z3(match.group(2), env)
     assignments = {}
     raw_assignments = {}
-    for match in re.finditer(r"\bamrex::Real\s+(\w+)\s*=\s*(.*?);", block, flags=re.S):
-        name, source_expr = match.groups()
+    declarations, returned = evaluation(block)
+    for local, source_expr in declarations.items():
         value = to_z3(source_expr, env)
-        assignments[name] = value
-        raw_assignments[name] = source_expr
-        env[name] = value
-    ret = re.search(r"\breturn\s*(.*?);", block, flags=re.S)
-    if not ret:
-        raise ValueError(f"{name}: Evaluate() return not found")
-    return params, env, assignments, raw_assignments, ret.group(1)
+        assignments[local] = value
+        raw_assignments[local] = source_expr
+        env[local] = value
+    return params, env, assignments, raw_assignments, returned
 
 
 def cell_average_monomial(center, degree):
@@ -314,7 +313,7 @@ def prove_candidate(name, label, expr, env, params, order, scale, support):
 
 
 def prove_weights(name, body, assignments, raw_assignments, env, params,
-                  return_expr, candidate_count):
+                  return_expr, candidate_count, scale):
     """Prove source smoothness indicators and normalized nonlinear weights."""
     is_mzq = "a1" in assignments
     raw_prefix = "a" if is_mzq else "w"
@@ -383,18 +382,29 @@ def prove_weights(name, body, assignments, raw_assignments, env, params,
             result = prove(equation)
             check(result == z3.unsat,
                   f"{name}.{weight_name}: source normalized weight is alpha/normalizer")
-        for weight_name in weight_names:
-            check(bool(re.search(rf"\b{weight_name}\b", return_expr)),
-                  f"{name}.{weight_name}: normalized weight reaches the returned reconstruction")
     else:
-        # The classic and Z variants use the raw alphas directly in the return
-        # expression and divide their weighted candidates by wsum.
         normalized = [item / raw_sum for item in alpha_symbols]
-        for weight_name in raw_names:
-            check(bool(re.search(rf"\b{weight_name}\b", return_expr)),
-                  f"{name}.{weight_name}: raw weight reaches the returned reconstruction")
-        check(bool(re.search(r"\bwsum\b", return_expr)),
-              f"{name}: return expression divides by the source wsum")
+
+    # Connect the weight proof to the entire source return, with independent
+    # candidate values. This catches signs, pairings, dropped terms and divisors
+    # without expanding large smoothness polynomials in the solver.
+    candidates = [z3.Real(f"{name}_candidate{i}") for i in range(1, candidate_count + 1)]
+    return_env = {f"v{i}": value for i, value in enumerate(candidates, 1)}
+    if is_mzq:
+        return_env.update(zip(weight_names, normalized))
+        return_env.update({f"g{i}": env[f"g{i}"] for i in range(1, candidate_count + 1)})
+        expected_return = (normalized[2] / env["g3"] *
+                           (candidates[2] - env["g1"] * candidates[0] - env["g2"] * candidates[1]) +
+                           normalized[0] * candidates[0] + normalized[1] * candidates[1])
+    else:
+        return_env.update(normalizer_env)
+        return_env[normalizer_name] = normalizer_source
+        expected_return = z3.Sum([weight * candidate for weight, candidate
+                                 in zip(normalized, candidates)]) / num(scale)
+    actual_return = to_z3(return_expr, return_env)
+    result = prove(actual_return == expected_return, alpha_positive)
+    check(result == z3.unsat,
+          f"{name}: complete source return equals the normalized candidate reconstruction")
 
     proof_facts = alpha_positive
     result = prove(z3.Sum(normalized) == 1, proof_facts)
@@ -438,7 +448,7 @@ def main():
                 prove_candidate(name, label, candidates[label], env, params, order, scale,
                                 EXPECTED_SUPPORT[name][label])
             prove_weights(name, structs[name], assignments, raw_assignments, env, params, return_expr,
-                          len(expected_candidates))
+                          len(expected_candidates), scale)
     check(total_structs == set(EXPECTED),
           f"WENO header set complete (found {sorted(total_structs)})")
     print(f"\n{len(failures)} check(s) failed")

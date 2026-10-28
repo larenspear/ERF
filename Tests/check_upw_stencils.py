@@ -31,6 +31,8 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
+from advection_source import Source, evaluation, interpolation, pure_expression
+
 try:
     import z3
 except ImportError:
@@ -131,6 +133,7 @@ def parse_interp(body):
     out = {}
     for m in re.finditer(r"InterpolateIn([XYZ])\s*\(", body):
         blk = brace_block(body, body.index("{", m.end()))
+        interpolation(blk, dispatcher="adv_type" in blk)
         offs = {}
         for st in blk.split(";"):
             mm = re.search(r"amrex::Real\s+(\w+)\s*=.*?" + PHI, st, re.S)
@@ -154,12 +157,32 @@ def parse_evaluate(body, env0, V):
     for name, is_real in params:
         if is_real:
             env[name] = V[name]
-    for nm, ex in re.findall(r"amrex::Real\s+(\w+)\s*=\s*([^;]+);", blk):
-        env[nm] = to_z3(ex, env)
-    variants = {b: to_z3(ex, env) for b, ex in
-                re.findall(r"AdvType::(\w+)\)\s*\{\s*iv\s*=\s*([^;]+);", blk)}
-    if not variants:                       # no adv_type switch: a plain `return expr;`
-        variants[""] = to_z3(re.search(r"return\s*(.+?);", blk, flags=re.S).group(1), env)
+    if not any(n == "adv_type" for n, _ in params):
+        assignments, returned = evaluation(blk)
+        for nm, ex in assignments.items():
+            env[nm] = to_z3(ex, env)
+        variants = {"": to_z3(returned, env)}
+    else:
+        source = Source(blk)
+        for nm, ex in source.initializers().items():
+            env[nm] = to_z3(ex, env)
+        source.take(r"amrex::Real\s+iv\s*\(\s*amrex::Real\(0\)\s*\)\s*;")
+        variants = {}
+        for index in range(len(ALL_BRANCHES)):
+            prefix = r"else\s+" if index else ""
+            branch, expr = source.take(
+                prefix + r"if\s*\(\s*adv_type\s*==\s*AdvType::(\w+)\s*\)\s*\{"
+                r"\s*iv\s*=\s*([^;{}]+);\s*\}").groups()
+            if branch in variants:
+                raise ValueError(f"duplicate UPWINDALL branch: {branch}")
+            pure_expression(expr)
+            variants[branch] = to_z3(expr, env)
+        if set(variants) != set(ALL_BRANCHES):
+            raise ValueError("unexpected UPWINDALL branch set")
+        returned = source.take(r"return\s+([^;{}]+);").group(1)
+        source.done()
+        variants = {name: to_z3(returned, {**env, "iv": value})
+                    for name, value in variants.items()}
     return [n for n, r in params if r], [n for n, _ in params], variants
 
 
@@ -317,4 +340,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, NameError, SyntaxError) as exc:
+        print(f"FAIL checker could not parse source: {exc}")
+        sys.exit(1)

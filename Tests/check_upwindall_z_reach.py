@@ -13,6 +13,8 @@ import re
 import sys
 from pathlib import Path
 
+from advection_source import interpolation
+
 UPW_H = "Source/Utils/ERF_Interpolation_UPW.H"
 BRANCHES = {
     "Centered_2nd": "CENTERED2",
@@ -100,6 +102,7 @@ def half_width(offsets):
 
 def standalone_stencil(body):
     interp = function_body(body, "InterpolateInZ")
+    interpolation(interp, dispatcher="adv_type" in interp)
     offsets = set(read_offsets(interp))
     declared = re.search(r"GetUpwindCellNumber\s*\(\)\s*const\s*\{\s*return\s*(\d+)\s*;", body)
     if not declared:
@@ -113,6 +116,7 @@ def standalone_stencil(body):
 
 def analyze_upwindall(body, standalones):
     interp = function_body(body, "InterpolateInZ")
+    interpolation(interp, dispatcher="adv_type" in interp)
     first_if = re.search(r"\bif\s*\((.*?)\)\s*\{", interp, flags=re.S)
     if not first_if:
         raise ValueError("Centered_2nd early-return branch not found")

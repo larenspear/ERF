@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from advection_source import mutation_outcome
+
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).resolve().parent / "check_upwindall_z_reach.py"
 HEADER = "Source/Utils/ERF_Interpolation_UPW.H"
@@ -33,6 +35,13 @@ MUTANTS = {
         "if (adv_type == AdvType::Centered_2nd || adv_type == AdvType::Centered_4th)", 0, 2),
     "Centered_2nd early return reads the wrong cell": (
         "m_phi(i,j,k-1,qty_index)", "m_phi(i,j,k,qty_index)", 0, 1),
+    'extra load after stencil declarations': ('amrex::Real sm3 = (adv_type == AdvType::Upwind_5th || adv_type == '
+         'AdvType::Centered_6th ) ? m_phi(i  , j  , k-3, qty_index) : amrex::Real(0);',
+         'amrex::Real sm3 = (adv_type == AdvType::Upwind_5th || adv_type == '
+         'AdvType::Centered_6th ) ? m_phi(i  , j  , k-3, qty_index) : amrex::Real(0);\n'
+         '            sp2 += m_phi(i,j,k+3,qty_index);',
+         0,
+         1),
 }
 
 
@@ -70,12 +79,8 @@ def main():
         target.write_text(source)
         result = subprocess.run([sys.executable, str(VERIFY), str(root)],
                                 capture_output=True, text=True)
-        failures = [line.strip() for line in result.stdout.splitlines()
-                    if line.strip().startswith("FAIL")]
-        if result.returncode and not failures:
-            failures = [(result.stderr.strip().splitlines() or ["checker crashed"])[-1]]
-        caught = bool(result.returncode)
-        unexpected += caught == (edit is None)
+        caught, expected, failures = mutation_outcome(result, edit is not None)
+        unexpected += not expected
         print(f"[{'CAUGHT' if caught else 'passes'}] {name}")
         for failure in failures[:3]:
             print(f"           {failure}")

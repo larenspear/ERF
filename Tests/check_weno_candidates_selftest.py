@@ -13,6 +13,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from advection_source import mutation_outcome
+
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).resolve().parent / "check_weno_candidates.py"
 HEADERS = (
@@ -42,6 +44,24 @@ MUTANTS = {
     "negative WENO-MZQ3 unnormalized weight": (
         HEADERS[1], "amrex::Real a3 = g3 * ( amrex::Real(1) +",
         "amrex::Real a3 = -g3 * ( amrex::Real(1) +"),
+    'WENO3 return subtracts second candidate': ('Source/Utils/ERF_Interpolation_WENO.H',
+         'return ( (w1 * v1 + w2 * v2) / (amrex::Real(2) * wsum) );',
+         'return ( (w1 * v1 - w2 * v2) / (amrex::Real(2) * wsum) );'),
+    'WENO3 return duplicates second candidate': ('Source/Utils/ERF_Interpolation_WENO.H',
+         'return ( (w1 * v1 + w2 * v2) / (amrex::Real(2) * wsum) );',
+         'return ( (w1 * v2 + w2 * v2) / (amrex::Real(2) * wsum) );'),
+    'WENO3 return drops second candidate': ('Source/Utils/ERF_Interpolation_WENO.H',
+         'return ( (w1 * v1 + w2 * v2) / (amrex::Real(2) * wsum) );',
+         'return ( (w1 * v1) / (amrex::Real(2) * wsum) );'),
+    'WENO3 return divides by wrong normalizer': ('Source/Utils/ERF_Interpolation_WENO.H',
+         'return ( (w1 * v1 + w2 * v2) / (amrex::Real(2) * wsum) );',
+         'return ( (w1 * v1 + w2 * v2) / (amrex::Real(2) * (wsum + w1)) );'),
+    'WENO-MZQ3 return reverses correction': ('Source/Utils/ERF_Interpolation_WENO_Z.H',
+         '(v3 - g1 * v1 - g2 * v2)',
+         '(v3 + g1 * v1 - g2 * v2)'),
+    'WENO3 weight is updated after initialization': ('Source/Utils/ERF_Interpolation_WENO.H',
+         'amrex::Real wsum = w1 + w2;',
+         'w1 *= -1;\n        amrex::Real wsum = w1 + w2;'),
 }
 
 
@@ -69,12 +89,8 @@ def main():
         if result.returncode == 77:
             print(result.stdout.strip() or "check_weno_candidates.py skipped (exit 77)")
             return 77
-        failures = [line.strip() for line in result.stdout.splitlines()
-                    if line.strip().startswith("FAIL")]
-        if result.returncode and not failures:
-            failures = [(result.stderr.strip().splitlines() or ["checker crashed"])[-1]]
-        caught = bool(result.returncode)
-        unexpected += caught == (edit is None)
+        caught, expected, failures = mutation_outcome(result, edit is not None)
+        unexpected += not expected
         print(f"[{'CAUGHT' if caught else 'passes'}] {name}")
         for failure in failures[:3]:
             print(f"           {failure}")

@@ -2384,7 +2384,7 @@ endif()
 # UPWIND3/5 and every UPWINDALL branch reproduce constants, have at least their
 # declared order for every upwind blend, are mirror-symmetric, upwind toward the
 # upstream side, and agree with one another; it also checks that the X/Y/Z copies
-# read the offsets their variable names promise. The self-test injects nine bugs
+# read the offsets their variable names promise. The self-test injects numerical and source-parsing bugs
 # into a scratch copy of the header and requires each to be caught. Pure Python,
 # no ERF run.
 #
@@ -2508,6 +2508,21 @@ if(ERF_TEST_PYTHON)
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_constant_dz_fast_path_selftest.py)
     set_tests_properties(AdvectionMomentumConstantDzFastPath_Z3
                          AdvectionMomentumConstantDzFastPath_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
+    # Check the inline centered-second-order stretched-dz momentum path,
+    # including variable vertical spacing and the top z-face flux special case.
+    add_test(NAME AdvectionMomentumStretchedDzFastPath_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_stretched_dz_fast_path.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumStretchedDzFastPath_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_stretched_dz_fast_path_selftest.py)
+    set_tests_properties(AdvectionMomentumStretchedDzFastPath_Z3
+                         AdvectionMomentumStretchedDzFastPath_Z3_SelfTest
         PROPERTIES
         TIMEOUT 60
         PROCESSORS 1

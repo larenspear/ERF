@@ -14,6 +14,8 @@ import re
 import sys
 from pathlib import Path
 
+from advection_source import Source, LAMBDA, checked_constants
+
 from check_scalar_flux_divergence import (
     check, compact, failures, function_body, number, strip_comments, to_z3, z3,
 )
@@ -139,10 +141,40 @@ def check_source_branches(body):
         print(f"       counterexample: {solver.model()}")
 
 
+def validate_statements(body):
+    """Consume the full density routine; arithmetic/routing is checked below."""
+    source = Source(body)
+    source.take(r'BL_PROFILE_VAR\("AdvectionSrcForRho",\s*AdvectionSrcForRho\)\s*;')
+    source.take(r"auto\s+dxInv\s*=\s*[^;{}]+;")
+    for box in ('xbx', 'ybx', 'zbx'):
+        source.take(rf"const\s+Box\s+{box}\s*=\s*surroundingNodes\([^()]+\)\s*;")
+    for dim, axis in enumerate('xyz'):
+        source.take(rf"ParallelFor\s*\(\s*{axis}bx\s*," + LAMBDA)
+        if dim == 2:
+            source.take(r"Real\s+mfsq\s*=\s*[^;{}]+;")
+        source.take(rf"\(flx_arr\[{dim}\]\)\([^()]+\)\s*=\s*[^;{{}}]+;")
+        source.take(rf"avg_{axis}mom\([^()]+\)\s*=\s*[^;{{}}]+;")
+        source.take(r"\}\s*\)\s*;")
+    source.take(r"if\s*\(\s*fixed_rho\s*\)\s*\{")
+    source.take(r"ParallelFor\s*\(\s*bx\s*," + LAMBDA)
+    source.take(r"advectionSrc\([^()]+\)\s*=\s*[^;{}]+;")
+    source.take(r"\}\s*\)\s*;\s*\}\s*else\s*\{")
+    source.take(r"ParallelFor\s*\(\s*bx\s*," + LAMBDA)
+    source.take(r"if\s*\([^{}]+\)\s*\{")
+    source.take(r"Real\s+mfsq\s*=\s*[^;{}]+;")
+    source.take(r"advectionSrc\([^()]+\)\s*=\s*[^;{}]+;")
+    source.take(r"\}\s*else\s*\{")
+    source.take(r"advectionSrc\([^()]+\)\s*=\s*[^;{}]+;")
+    source.take(r"\}\s*\}\s*\)\s*;\s*\}")
+    source.done()
+
+
 def main():
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
+    checked_constants(root, {"zero": "0"})
     source = strip_comments((root / STATE_CPP).read_text())
     body = function_body(source, "AdvectionSrcForRho")
+    validate_statements(body)
     check_face_mass_fluxes(body)
     check_source_branches(body)
     print(f"\n{len(failures)} check(s) failed")

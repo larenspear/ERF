@@ -16,6 +16,8 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
+from advection_source import evaluation, interpolation
+
 try:
     import z3
 except ImportError:
@@ -115,14 +117,10 @@ def parse_evaluate(body):
     block = linear_checker.brace_block(body, sig.end() - 1)
     constants = re.findall(
         r"static\s+constexpr\s+amrex::Real\s+(\w+)\s*=\s*(.+?);", body)
-    assignments = re.findall(r"amrex::Real\s+(\w+)\s*=\s*([^;]+);", block)
-    ret = re.search(r"return\s*(.+?);", block, flags=re.S)
-    if not ret:
-        raise ValueError("UPWIND3SL::Evaluate return expression was not found")
-    names = [name for name, _ in assignments]
-    if not {"rmh", "K", "phi"} <= set(names):
-        raise ValueError(f"limiter locals missing from Evaluate: {names}")
-    return params, constants, assignments, ret.group(1).strip()
+    assignments, returned = evaluation(block)
+    if not {"rmh", "K", "phi"} <= set(assignments):
+        raise ValueError(f"limiter locals missing from Evaluate: {list(assignments)}")
+    return params, constants, list(assignments.items()), returned
 
 
 def build_evaluate(parsed, constants0, values, fp_mode, sort=None, overrides=None):
@@ -166,12 +164,8 @@ def parse_interpolations(body):
     for m in re.finditer(r"InterpolateIn([XYZ])\s*\(", body):
         direction = m.group(1)
         block = linear_checker.brace_block(body, body.index("{", m.end()))
-        calls = [tuple(x.strip() for x in args.split(","))
-                 for args in re.findall(r"\bEvaluate\s*\(([^)]*)\)", block)]
-        blends = re.findall(r"\bval_lo\s*=\s*([^;]+);", block)
-        if len(blends) != 1:
-            raise ValueError(f"InterpolateIn{direction}: expected one val_lo assignment, got {len(blends)}")
-        out[direction] = (calls, blends[0].strip(), block)
+        bindings, blend = interpolation(block)
+        out[direction] = (bindings, blend, block)
     return out
 
 
@@ -208,13 +202,13 @@ def run(root, fast):
     report_bool(set(interp) == {"X", "Y", "Z"},
                 f"Interpolate directions present: {''.join(sorted(interp))}")
     linear_interp = linear_checker.parse_interp(body)
-    expected_calls = [("s", "sm1", "sm2"), ("sm1", "s", "sp1")]
+    expected_calls = {"Fhi": ("s", "sm1", "sm2"), "Flo": ("sm1", "s", "sp1")}
     for d in "XYZ":
         if d not in interp:
             continue
         calls, blend, block = interp[d]
         report_bool(calls == expected_calls,
-                    f"InterpolateIn{d}: calls Evaluate(s,sm1,sm2) then Evaluate(sm1,s,sp1)")
+                    f"InterpolateIn{d}: binds Fhi=Evaluate(s,sm1,sm2) and Flo=Evaluate(sm1,s,sp1)")
         if d in linear_interp:
             offsets = linear_interp[d][0]
             axis = "XYZ".index(d)
@@ -406,9 +400,9 @@ def main():
     print(f"z3 {z3.get_version_string()}   source: {args.root / UPW_H}\n")
     try:
         return run(args.root, args.fast)
-    except Exception as exc:
-        print(f"FAIL checker error: {exc}", file=sys.stderr)
-        raise
+    except (OSError, ValueError, NameError, SyntaxError) as exc:
+        print(f"FAIL checker could not parse source: {exc}")
+        return 1
 
 
 if __name__ == "__main__":

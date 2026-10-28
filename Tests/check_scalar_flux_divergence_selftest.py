@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from advection_source import CONST_H, mutation_outcome
+
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).resolve().parent / "check_scalar_flux_divergence.py"
 SCALAR_H = "Source/Advection/ERF_AdvectionSrcForScalars.H"
@@ -40,6 +42,18 @@ MUTANTS = {
         STATE_CPP,
         "advectionSrc, cons_comp, detJ,",
         "advectionSrc, scalar_comp, detJ,", 1),
+    'update tendency after nonpositive branch assignment': ('Source/Advection/ERF_AdvectionSrcForScalars.H',
+         'rhs(i,j,k,rhs_comp) = zero;',
+         'rhs(i,j,k,rhs_comp) = zero;\n            rhs(i,j,k,rhs_comp) += 1;',
+         1),
+    'source zero constant is changed': ('Source/ERF_NumericalConstants.H',
+         'zero         = amrex::Real(0.0)',
+         'zero         = amrex::Real(1.0)',
+         1),
+    'source one constant is changed': ('Source/ERF_NumericalConstants.H',
+         'one          = amrex::Real(1.0)',
+         'one          = amrex::Real(2.0)',
+         1),
 }
 
 
@@ -47,6 +61,7 @@ def main():
     work = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
         tempfile.mkdtemp(prefix="erf-scalar-divergence-mutants-"))
     originals = {
+        CONST_H: (ERF / CONST_H).read_text(),
         SCALAR_H: (ERF / SCALAR_H).read_text(),
         STATE_CPP: (ERF / STATE_CPP).read_text(),
     }
@@ -73,12 +88,8 @@ def main():
         if result.returncode == 77:
             print(result.stdout.strip() or "checker skipped because z3-solver is unavailable")
             return 77
-        failures = [line.strip() for line in result.stdout.splitlines()
-                    if line.strip().startswith("FAIL")]
-        if result.returncode and not failures:
-            failures = [(result.stderr.strip().splitlines() or ["checker crashed"])[-1]]
-        caught = bool(result.returncode)
-        unexpected += caught == (edit is None)
+        caught, expected, failures = mutation_outcome(result, edit is not None)
+        unexpected += not expected
         print(f"[{'CAUGHT' if caught else 'passes'}] {name}")
         for failure in failures[:3]:
             print(f"           {failure}")

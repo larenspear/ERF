@@ -17,6 +17,8 @@ import re
 import sys
 from pathlib import Path
 
+from advection_source import Source, LAMBDA, checked_constants, spacing_aliases
+
 from check_scalar_flux_divergence import (
     check, compact, failures, function_body, number, strip_comments, to_z3, z3,
 )
@@ -42,7 +44,7 @@ def replace_inverse_map_reads(expression):
                   replace, expression)
 
 
-def check_component(text, component, mfsq_expression):
+def check_component(text, component, mfsq_expression, constants):
     helper = f"AdvectionSrcFor{component}Mom_N"
     body = function_body(text, helper)
     mfsq_match = re.search(r"\bamrex::Real\s+mfsq\s*=\s*(.*?);", body, flags=re.S)
@@ -50,7 +52,7 @@ def check_component(text, component, mfsq_expression):
         raise ValueError(f"{helper}: mfsq local not found")
 
     env = {
-        "one": number("1"),
+        **constants,
         "ux_inv": z3.Real("ux_inv"), "uy_inv": z3.Real("uy_inv"),
         "vx_inv": z3.Real("vx_inv"), "vy_inv": z3.Real("vy_inv"),
         "mx": z3.Real("mx"), "my": z3.Real("my"),
@@ -66,13 +68,23 @@ def check_component(text, component, mfsq_expression):
           f"{component}: mfsq uses the matching component map factors")
     env["mfsq"] = mfsq
 
-    source = re.search(r"\badvectionSrc\s*=\s*(.*?);", body, flags=re.S)
-    if not source:
-        raise ValueError(f"{helper}: advectionSrc assignment not found")
-    check(bool(re.search(r"\breturn\s+advectionSrc\s*;", body)),
+    # Flux reconstruction remains abstract. No protected spacing/result variable
+    # may be changed in that prefix, and the entire divergence tail is consumed.
+    prefix = body[:mfsq_match.start()]
+    prefix = re.sub(r"amrex::Real\s+advectionSrc\s*;", "", prefix, count=1)
+    if (re.search(r"\b(?:advectionSrc|mfsq|dxInv|dyInv|dzInv|return)\b", prefix)
+            or prefix.count('{') != prefix.count('}')):
+        raise ValueError(f"{helper}: unmodeled change or control flow before divergence")
+    tail = Source(body[mfsq_match.start():])
+    tail.take(r"amrex::Real\s+mfsq\s*=\s*([^;{}]+);")
+    source = tail.take(r"advectionSrc\s*=\s*([^;{}]+);").group(1)
+    returned = tail.take(r"return\s+([^;{}]+);").group(1)
+    tail.done()
+    actual = to_z3(compact(source), env)
+    actual_return = to_z3(returned, {**env, "advectionSrc": actual})
+    check(z3.simplify(actual_return == actual) == z3.BoolVal(True),
           f"{component}: helper returns its computed divergence")
 
-    actual = to_z3(compact(source.group(1)), env)
     divergence = ((env["xflux_hi"] - env["xflux_lo"]) * env["dxInv"] * env["mfsq"] +
                   (env["yflux_hi"] - env["yflux_lo"]) * env["dyInv"] * env["mfsq"] +
                   (env["zflux_hi"] - env["zflux_lo"]) * env["dzInv"])
@@ -96,22 +108,42 @@ def check_wrapper(text):
         "interp_w_h,interp_w_v,interp_w_wall,mf_mx,mf_my,mf_uy_inv,mf_vx_inv,"
         "vert_adv_type,lo_z_face,hi_z_face,dxInv,dyInv,dzInv);",
     )
-    normalized = compact(body)
-    for component, assignment in zip(("X", "Y", "Z"), expected):
-        check(normalized.count(assignment) == 1,
+    source = Source(body)
+    # Constructor bodies/reconstruction are outside this divergence proof, but
+    # no other executable statements may be hidden between setup and launches.
+    for component in 'uvw':
+        for direction, policy in (('h', 'H'), ('v', 'V')):
+            source.take(rf"InterpType_{policy}\s+interp_{component}_{direction}"
+                        rf"\s*\(\s*{component}\s*,\s*upw_frac_{direction}\s*\)\s*;")
+    source.take(r"WallInterpType\s+interp_w_wall\s*\(\s*w\s*,\s*upw_frac_v\s*\)\s*;")
+    start = source.pos
+    source.take(r"auto\s+dxInv\s*=\s*[^;]+;\s*auto\s+dyInv\s*=\s*[^;]+;")
+    spacing_aliases(body[start:source.pos], 2)
+    source.take(r"auto\s+dz_ptr\s*=\s*stretched_dz_d\.data\(\s*\)\s*;")
+    for component, box, assignment in zip('XYZ', ('bxx', 'bxy', 'bxz'), expected):
+        source.take(rf"amrex::ParallelFor\s*\(\s*{box}\s*," + LAMBDA)
+        block = source.take(r"([^{}]*)\}\s*\)\s*;").group(1)
+        kernel = Source(block)
+        spacing = kernel.take(r"auto\s+dzInv\s*=\s*([^;{}]+);").group(1)
+        wanted_spacing = ('one/dz_ptr[k]' if component != 'Z' else
+                          '(k==0)?one/dz_ptr[k]:two/(dz_ptr[k]+dz_ptr[k-1])')
+        check(compact(spacing) == wanted_spacing,
+              f"wrapper uses the matching vertical spacing for {component}-momentum")
+        actual = kernel.take(r"([^;{}]+;)").group(1)
+        kernel.done()
+        check(compact(actual) == assignment,
               f"wrapper writes {component}-momentum RHS as the negative matching helper result")
-    check(normalized.count("autodzInv=one/dz_ptr[k];") == 2,
-          "wrapper uses local cell dz for x- and y-momentum")
-    check("autodzInv=(k==0)?one/dz_ptr[k]:two/(dz_ptr[k]+dz_ptr[k-1]);" in normalized,
-          "wrapper uses the boundary or centered dz average for z-momentum")
+    source.done()
 
 
 def main():
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
+    constants = {name: number(value) for name, value in
+                 checked_constants(root, {"one": "1", "two": "2"}).items()}
     text = strip_comments((root / MOM_N_H).read_text())
-    check_component(text, "X", "one / (mf_ux_inv(i,j,0) * mf_uy_inv(i,j,0))")
-    check_component(text, "Y", "one / (mf_vx_inv(i,j,0) * mf_vy_inv(i,j,0))")
-    check_component(text, "Z", "mf_mx(i,j,0) * mf_my(i,j,0)")
+    check_component(text, "X", "1 / (mf_ux_inv(i,j,0) * mf_uy_inv(i,j,0))", constants)
+    check_component(text, "Y", "1 / (mf_vx_inv(i,j,0) * mf_vy_inv(i,j,0))", constants)
+    check_component(text, "Z", "mf_mx(i,j,0) * mf_my(i,j,0)", constants)
     check_wrapper(text)
     print(f"\n{len(failures)} check(s) failed")
     return 1 if failures else 0

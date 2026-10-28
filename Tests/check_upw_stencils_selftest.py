@@ -13,6 +13,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from advection_source import mutation_outcome
+
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).resolve().parent / "check_upw_stencils.py"
 
@@ -59,6 +61,15 @@ MUTANTS = {
     "UPWINDALL Centered_2nd inline early return reads k+1 instead of k-1":
         [("val_lo = myhalf * ( m_phi(i,j,k,qty_index) + m_phi(i,j,k-1,qty_index) );",
           "val_lo = myhalf * ( m_phi(i,j,k,qty_index) + m_phi(i,j,k+1,qty_index) );", 1)],
+    'update local after its initializer': [('return ( g1*a1 );', 'a1 *= -1;\n        return ( g1*a1 );', 1)],
+    'update UPWINDALL result before return': [('return ( iv );', 'iv *= -1;\n        return ( iv );', 1)],
+    'extra UPWINDALL read after declarations': [('amrex::Real sm3 = (adv_type == AdvType::Upwind_5th || adv_type == '
+          'AdvType::Centered_6th ) ? m_phi(i  , j  , k-3, qty_index) : amrex::Real(0);',
+          'amrex::Real sm3 = (adv_type == AdvType::Upwind_5th || adv_type == '
+          'AdvType::Centered_6th ) ? m_phi(i  , j  , k-3, qty_index) : amrex::Real(0);\n'
+          '            sp2 += m_phi(i,j,k+3,qty_index);',
+          1)],
+    'scale the stored Evaluate result': [('val_lo = Evaluate(s,sm1);', 'val_lo = Evaluate(s,sm1) * amrex::Real(2);', 3)],
 }
 
 
@@ -80,11 +91,8 @@ def main():
         if r.returncode == 77:                  # the checker skipped itself: this interpreter has no z3
             print(r.stdout.strip() or "check_upw_stencils.py skipped (exit 77)")
             return 77
-        fails =[l.strip() for l in r.stdout.splitlines() if l.strip().startswith("FAIL")]
-        if r.returncode and not fails:
-            fails = [(r.stderr.strip().splitlines() or ["crash"])[-1]]
-        caught = bool(r.returncode)
-        bad += caught == (not edits)                       # baseline must pass, mutants must fail
+        caught, expected, fails = mutation_outcome(r, bool(edits))
+        bad += not expected
         print(f"[{'CAUGHT' if caught else 'passes'}] {name}")
         for f in fails[:3]:
             print(f"           {f}")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inject six UPWIND3SL mutations and require the limiter checker to catch them.
+"""Inject UPWIND3SL mutations and require the limiter checker to catch them.
 
 Every mutation is written to a scratch copy of the two headers read by the
 checker. The repository files are never modified.
@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from advection_source import mutation_outcome
 
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).resolve().parent / "check_upw3sl_limiter.py"
@@ -32,6 +34,17 @@ MUTANTS = {
         ("Evaluate(sm1,s  ,sp1)", "Evaluate(sm1,s  ,sm2)", 3)],
     "delete outer max (negative limiter values escape)": [
         (PHI, f"amrex::Real phi = {INNER};", 1)],
+    'update phi after initialization': [('return (sm1 + myhalf * phi * (sm1 - sm2));',
+          'phi *= -1;\n        return (sm1 + myhalf * phi * (sm1 - sm2));',
+          1)],
+    'swap Fhi and Flo destination bindings': [('amrex::Real Fhi = Evaluate(s  ,sm1,sm2);\n'
+          '        amrex::Real Flo = Evaluate(sm1,s  ,sp1);',
+          'amrex::Real Flo = Evaluate(s  ,sm1,sm2);\n'
+          '        amrex::Real Fhi = Evaluate(sm1,s  ,sp1);',
+          3)],
+    'conditional bypass before Evaluate return': [('return (sm1 + myhalf * phi * (sm1 - sm2));',
+          'if (s > sm1) return sm2;\n        return (sm1 + myhalf * phi * (sm1 - sm2));',
+          1)],
 }
 
 
@@ -60,12 +73,8 @@ def main():
         if result.returncode == 77:
             print(result.stdout.strip() or "check_upw3sl_limiter.py skipped (exit 77)")
             return 77
-        failures = [line.strip() for line in result.stdout.splitlines()
-                    if line.strip().startswith("FAIL")]
-        if result.returncode and not failures:
-            failures = [(result.stderr.strip().splitlines() or ["checker crashed"])[-1]]
-        caught = bool(result.returncode)
-        unexpected += caught == (not edits)
+        caught, expected, failures = mutation_outcome(result, bool(edits))
+        unexpected += not expected
         print(f"[{'CAUGHT' if caught else 'passes'}] {name}")
         for failure in failures[:3]:
             print(f"           {failure}")
