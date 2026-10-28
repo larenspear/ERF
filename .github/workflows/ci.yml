@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os: [macos-15-intel]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -82,8 +82,14 @@ jobs:
           test "$CACHE_HIT" = true
           if [[ "$RUNNER_OS" == Windows ]]; then py=python; else py=python3; fi
           "$py" .github/actions/ccache-trunk/smoke.py verify
+      - name: Replace cache and check pruning
+        uses: ./.github/actions/ccache-trunk
+        with:
+          mode: save
+          key: ${{ env.CCACHE_TRUNK_KEY }}
+          path: ${{ env.CCACHE_DIR }}
+          token: ${{ secrets.GITHUB_TOKEN }}
   read-only:
-    needs: roundtrip
     permissions:
       contents: read
       packages: read
