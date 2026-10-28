@@ -57,9 +57,6 @@ jobs:
         submodules: true
         persist-credentials: false
 
-    - name: Check GHCR cache failure handling
-      run: python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_*.py' -v
-
     - name: Free disk space on Ubuntu
       uses: ./.github/actions/free-space-ubuntu
 

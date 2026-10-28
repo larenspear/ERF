@@ -97,4 +97,6 @@ python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_native.py'
 The tests need no network or credentials. They cover retries/timeouts, failed or
 partial restores, rollback, archive integrity/safety, timestamp preservation, failed
 saves, pruning retention/races, credential cleanup, and invalid inputs. The full suite
-also runs in `ci.yml`.
+runs in the existing `shellcheck` job in `lint.yml` for pull requests and development
+pushes that change `.github/**`, and on manual dispatch. It uses the runner's Python
+standard library, Bash, and GNU coreutils, without compiling ERF or accessing GHCR.
