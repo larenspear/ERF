@@ -2430,7 +2430,8 @@ if(ERF_TEST_PYTHON)
     # finite-volume polynomials, then check the parsed source, positivity and
     # nonlinear normalization, then actual constant/affine reconstruction with
     # defined source divisions. Independent nonlinear policies and modular
-    # all-data divisor checks complement affine accuracy. Mutations use scratch headers.
+    # all-data divisor checks complement affine accuracy. Paired source proofs
+    # check offset and epsilon-aware amplitude covariance. Mutations use scratch headers.
     add_test(NAME AdvectionWENOCandidates_Z3
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates.py
                 ${PROJECT_SOURCE_DIR})
@@ -2438,7 +2439,7 @@ if(ERF_TEST_PYTHON)
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates_selftest.py)
     set_tests_properties(AdvectionWENOCandidates_Z3 AdvectionWENOCandidates_Z3_SelfTest
         PROPERTIES
-        TIMEOUT 240
+        TIMEOUT 360
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
@@ -2551,7 +2552,7 @@ if(ERF_TEST_PYTHON)
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_weno_z_flux_selftest.py)
     set_tests_properties(AdvectionMomentumWenoZFlux_Z3 AdvectionMomentumWenoZFlux_Z3_SelfTest
         PROPERTIES
-        TIMEOUT 240
+        TIMEOUT 360
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")

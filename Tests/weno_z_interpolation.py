@@ -85,7 +85,8 @@ class WenoZ:
         # integrals and ideal reconstruction, beta PSD, positive weights and
         # complete return normalization (including the MZQ correction), plus
         # actual nonlinear constant/affine exactness, independent tau/alpha laws,
-        # and all-data division definedness under the proved positivity bounds.
+        # all-data division definedness, and source offset/epsilon-aware amplitude
+        # covariance under the proved positivity bounds.
         expected = scalar.EXPECTED[name]
         candidates = {key: value for key, value in assignments.items() if re.fullmatch(r'v\d+', key)}
         require(set(candidates) == set(expected), f'{name}: candidate set changed')

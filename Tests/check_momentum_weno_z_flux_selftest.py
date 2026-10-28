@@ -109,6 +109,14 @@ def cases(originals):
                      f'{scheme}: reconstructed shared vertical flux agrees [unsat]')
         yield case('positive but wrong scalar smoothness', once(body, ebody, changed),
                    (f'FAIL {name}.b1: equals derivative-integral smoothness indicator',) + preserved)
+        changed = once(ebody, returned[0], 'return (' + returned[1] + ') + amrex::Real(1);')
+        yield case('return bias violates amplitude covariance', once(body, ebody, changed),
+                   (f'ok   {name}: offset covariance of actual nonlinear return [unsat]',
+                    f'FAIL {name}: amplitude covariance of actual nonlinear return [sat]') + preserved)
+        changed = once(ebody, beta[0], beta[0].replace(beta[1], '(' + beta[1] + ') + s*s'))
+        yield case('smoothness violates offset covariance', once(body, ebody, changed),
+                   (f'FAIL {name}: offset covariance of source beta polynomials',
+                    f'ok   {name}: amplitude covariance of actual nonlinear return [unsat]') + preserved)
         changed = once(ebody, returned[0],
                        'amrex::Real unused = amrex::Real(0)/b1;\n' + returned[0])
         yield case('undefined scalar evaluation despite unchanged return', once(body, ebody, changed),
@@ -131,6 +139,10 @@ def cases(originals):
         yield case('positive alpha changes nonlinear policy', once(body, ebody, changed),
                    (f'FAIL {name}: normalized nonlinear weights match independent policy',
                     f'ok   {name}: actual nonlinear return reproduces affine fields for eps>0 [unsat]') + preserved)
+        changed = once(ebody, alpha[0], alpha[0].replace(alpha[1], '(amrex::Real(1)+eps)*(' + alpha[1] + ')'))
+        yield case('alpha violates amplitude covariance', once(body, ebody, changed),
+                   (f'ok   {name}: offset covariance of actual nonlinear return [unsat]',
+                    f'FAIL {name}: amplitude covariance of normalized source weights [sat]') + preserved)
         singular = 'amrex::Real(1)/(amrex::Real(1)-(sp1-amrex::Real(2)*s+sm1)*(sp1-amrex::Real(2)*s+sm1))'
         changed = once(ebody, returned[0], f'amrex::Real unused = {singular};\n' + returned[0])
         yield case('division fails only away from affine data', once(body, ebody, changed),

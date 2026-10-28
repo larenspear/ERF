@@ -9,7 +9,9 @@ and nonlinear-weight normalization with Z3. Independent policies specify squared
 global smoothness and normalized nonlinear alpha ratios. A modular replay proves
 every source division defined for arbitrary real data and positive epsilon; a
 separate actual nonlinear replay proves constant/affine exactness. Polynomial identities use exact
-rational coefficient comparison, not sample testing. Nonlinear convergence order,
+rational coefficient comparison, not sample testing. Paired source proofs establish
+offset covariance and amplitude covariance with epsilon scaled by amplitude squared.
+Exact fixed-epsilon counterexamples describe the latter theorem's scope. Nonlinear convergence order,
 critical-point behavior, nonuniform-grid accuracy, and floating-point rounding
 remain outside these uniform-grid, cell-average checks.
 
@@ -554,7 +556,7 @@ def prove_all_data_definedness(name, assignments, raw, env, return_expr,
     """
     if not positivity_proved:
         check(False, f'{name}: all-data definedness requires proved beta/alpha positivity')
-        return
+        return False
     actual_env = {key: value for key, value in env.items() if key not in assignments}
     facts = [actual_env['eps'] > 0]
     for local, expression in [*raw.items(), ('return', return_expr)]:
@@ -564,7 +566,7 @@ def prove_all_data_definedness(name, assignments, raw, env, return_expr,
         if status != z3.unsat:
             check(False, f'{name}: all-data source divisions are defined for eps>0 '
                   f'({local}) [{status}]')
-            return
+            return False
         if local in beta_names or local in raw_names or local == 't5':
             value = z3.Real(f'{name}_defined_{local}')
             if local in beta_names:
@@ -573,6 +575,121 @@ def prove_all_data_definedness(name, assignments, raw, env, return_expr,
                 facts.append(value > 0)
         actual_env[local] = z3.simplify(value)
     check(True, f'{name}: all-data source divisions are defined for eps>0')
+    return True
+
+
+def prove_covariance(name, assignments, raw, env, params, returned, raw_names, scale, defined):
+    """Compose source-derived offset and epsilon-aware amplitude transformations.
+
+    Each abstraction below is introduced only after proving its paired relation:
+    beta/candidates from actual sample polynomials, tau and alpha ratios from raw
+    declarations, and finally the actual normalizer/normalized weights/return.
+    Positive kappa is independent in the weight proof; instantiate kappa=lambda^2
+    for any nonzero real lambda, including negative amplitudes. No fixed raw-alpha
+    scaling is imposed, since a common positive source factor may cancel.
+    """
+    if not defined:
+        check(False, f'{name}: covariance requires proved source division definedness')
+        return
+    delta, amplitude, kappa, factor = z3.Reals(f'{name}_offset {name}_amplitude {name}_kappa {name}_factor')
+    beta_names = [f'b{i}' for i in range(1, len(raw_names) + 1)]
+    candidate_names = list(EXPECTED[name])
+    variables = [env[param] for param in params] + [delta, amplitude]
+    constants = {key: value for key, value in env.items() if key not in assignments and key not in params}
+    beta = {local: z3.Real(f'{name}_cov_{local}') for local in beta_names}
+    tau = z3.Real(f'{name}_cov_tau')
+    alpha = {local: z3.Real(f'{name}_cov_{local}') for local in raw_names}
+    candidates = {local: z3.Real(f'{name}_cov_{local}') for local in candidate_names}
+    for mode in ('offset', 'amplitude'):
+        multiplier = num(1) if mode == 'offset' else amplitude
+        shift = delta if mode == 'offset' else num(0)
+        substitutions = [(env[param], multiplier * env[param] + shift) for param in params]
+        beta_ok = all(polynomial(z3.substitute(assignments[local], *substitutions), variables) ==
+                      polynomial(multiplier * multiplier * assignments[local], variables)
+                      for local in beta_names)
+        check(beta_ok, f'{name}: {mode} covariance of source beta polynomials')
+        candidate_ok = all(polynomial(z3.substitute(assignments[local], *substitutions), variables) ==
+                           polynomial(multiplier * assignments[local] + num(scale) * shift, variables)
+                           for local in candidate_names)
+        check(candidate_ok, f'{name}: {mode} covariance of source candidate polynomials')
+        if not (beta_ok and candidate_ok):
+            continue
+
+        variance = num(1) if mode == 'offset' else kappa
+        base = {**constants, **beta, 't5': tau}
+        transformed = {**constants, **{local: variance * value for local, value in beta.items()},
+                       'eps': variance * constants['eps'], 't5': variance * tau}
+        facts = [constants['eps'] > 0, *[value >= 0 for value in beta.values()]]
+        if mode == 'amplitude':
+            facts.append(kappa > 0)
+        if 't5' in raw:
+            original_tau = to_z3(raw['t5'], {key: value for key, value in base.items() if key != 't5'})
+            changed_tau = to_z3(raw['t5'], {key: value for key, value in transformed.items() if key != 't5'})
+            status = prove(changed_tau == variance * original_tau, facts)
+            check(status == z3.unsat, f'{name}: {mode} covariance of source global smoothness [{status}]')
+            if status != z3.unsat:
+                continue
+
+        divisors = []
+        original_alpha = [to_z3(raw[local], base, divisors) for local in raw_names]
+        changed_alpha = [to_z3(raw[local], transformed, divisors) for local in raw_names]
+        domain = divisors_defined(divisors, facts)
+        status = (prove(z3.And(*[changed_alpha[i] * original_alpha[0] ==
+                                 original_alpha[i] * changed_alpha[0]
+                                 for i in range(1, len(raw_names))]), facts)
+                  if domain == z3.unsat else domain)
+        check(domain == z3.unsat and status == z3.unsat,
+              f'{name}: {mode} covariance of normalized source weights [{status}]')
+        if domain != z3.unsat or status != z3.unsat:
+            continue
+
+        # Positive source alphas and the ratio identities justify one arbitrary
+        # positive common factor between the two raw-alpha vectors. Replay all
+        # remaining locals/return, without substituting a reference reconstruction.
+        originals = {**beta, 't5': tau, **alpha, **candidates}
+        changes = {**{local: multiplier * multiplier * value for local, value in beta.items()},
+                   't5': multiplier * multiplier * tau,
+                   **{local: factor * value for local, value in alpha.items()},
+                   **{local: multiplier * value + num(scale) * shift for local, value in candidates.items()}}
+        original_env = {**constants, **{param: env[param] for param in params}}
+        changed_env = {**constants, **{param: multiplier * env[param] + shift for param in params},
+                       'eps': multiplier * multiplier * constants['eps']}
+        divisors = []
+        for local, expression in [*raw.items(), ('return', returned)]:
+            original_env[local] = originals[local] if local in originals else to_z3(expression, original_env, divisors)
+            changed_env[local] = changes[local] if local in changes else to_z3(expression, changed_env, divisors)
+        facts = [constants['eps'] > 0, factor > 0,
+                 *[value >= 0 for value in beta.values()], *[value > 0 for value in alpha.values()]]
+        if mode == 'amplitude':
+            facts.append(amplitude != 0)
+        domain = divisors_defined(divisors, facts)
+        status = (prove(changed_env['return'] == multiplier * original_env['return'] + shift, facts)
+                  if domain == z3.unsat else domain)
+        check(domain == z3.unsat and status == z3.unsat,
+              f'{name}: {mode} covariance of actual nonlinear return [{status}]')
+
+
+def show_fixed_epsilon_witness(name, env, params, returned, eps_values, defined):
+    """Exact counterexamples to unqualified amplitude scaling, not sample proofs.
+
+    Use both epsilon constants actually compiled by ERF, with the same non-affine
+    cell averages j^5+j^2 and amplitude two. This checks the parameterized source
+    family; the compiled kernel itself has a fixed epsilon, not an epsilon input.
+    These are scope diagnostics, not a requirement that every admissible future
+    ideal-weight choice must fail scaling at this particular stencil. The baseline
+    self-test requires these witnesses for the current unmodified source.
+    """
+    if not defined or any(eps <= 0 for eps in eps_values):
+        return
+    actual = to_z3(returned, env)
+    for eps in eps_values:
+        def evaluate(multiplier, epsilon):
+            replacements = [(env[param], num(multiplier * (offset(param)**5 + offset(param)**2)))
+                            for param in params] + [(env['eps'], num(epsilon))]
+            return rational(z3.substitute(actual, *replacements))
+        original = evaluate(1, eps)
+        if evaluate(2, eps) != 2 * original:
+            print(f'  witness {name}: fixed-epsilon scaling fails at eps={eps} (exact rational)')
 
 
 def prove_weights(name, body, assignments, raw_assignments, env, params,
@@ -630,8 +747,8 @@ def prove_weights(name, body, assignments, raw_assignments, env, params,
               f"{name}.{label}: unnormalized weight proof returned unknown")
 
     prove_nonlinear_policy(name, raw_assignments, alpha_env, raw_names, beta_symbols, positivity_proved)
-    prove_all_data_definedness(name, assignments, raw_assignments, env, return_expr,
-                              beta_names, raw_names, positivity_proved)
+    defined = prove_all_data_definedness(name, assignments, raw_assignments, env, return_expr,
+                                        beta_names, raw_names, positivity_proved)
 
     alpha_symbols = [z3.Real(f"{name}_alpha{i}") for i in range(1, candidate_count + 1)]
     raw_sum = z3.Sum(alpha_symbols)
@@ -691,6 +808,9 @@ def prove_weights(name, body, assignments, raw_assignments, env, params,
               f"{name}.weight{i}: normalized nonlinear weight is non-negative"
               if result != z3.unknown else
               f"{name}.weight{i}: non-negativity proof returned unknown")
+
+    prove_covariance(name, assignments, raw_assignments, env, params, return_expr, raw_names, scale, defined)
+    show_fixed_epsilon_witness(name, env, params, return_expr, eps_values, defined)
 
 
 def main():

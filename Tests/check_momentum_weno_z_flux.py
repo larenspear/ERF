@@ -11,7 +11,8 @@ All integer lo < k < hi, all real sample values and flow signs (including zero)
 are covered. WENO ignores the supplied blend fraction. Scalar proofs assume
 eps>0, as in both source precision branches. Scalar prerequisites independently
 specify smoothness, ideal reconstruction and nonlinear weight policies; they
-prove actual nonlinear constant/affine exactness and all-data division definedness.
+prove actual nonlinear constant/affine exactness, all-data division definedness,
+and offset/amplitude covariance (scaling epsilon with amplitude squared).
 The interface proof does not
 establish WENO convergence. Dispatch/caller bindings are checked separately; floating
 point, horizontal fluxes, complete divergence and halo validity are excluded.

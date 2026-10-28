@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from fractions import Fraction
 
 from advection_source import mutation_outcome
 
@@ -74,7 +75,13 @@ def cases(originals):
             if originals[header].count(old) != 1:
                 raise AssertionError(f'{name}: ambiguous mutation anchor')
             edits[header] = originals[header].replace(old, new)
-        yield name, edits, edit is not None, ()
+        required = ()
+        if edit is None:
+            required = tuple(f'witness {scheme}: fixed-epsilon scaling fails at eps={Fraction(epsilon)}'
+                             for source in originals.values()
+                             for scheme, body in re.findall(r'^struct (\w+)\s*\n\{(.*?)^\};', source, re.S | re.M)
+                             for epsilon in re.findall(r'const\s+amrex::Real\s+eps\s*=\s*amrex::Real\(([^)]+)\)', body))
+        yield name, edits, edit is not None, required
 
     for header, text in originals.items():
         for struct in re.finditer(r'^struct (\w+)\s*\n\{(.*?)^\};', text, re.S | re.M):
@@ -98,6 +105,47 @@ def cases(originals):
                                f'ok   {exact} affine fields for eps>0 [unsat]')
             raw_prefix = 'a' if name == 'WENO_MZQ3' else 'w'
             weights = list(re.finditer(rf'amrex::Real\s+({raw_prefix}\d+)\s*=\s*([^;]+);', body))
+            offset_return = f'{name}: offset covariance of actual nonlinear return'
+            amplitude_return = f'{name}: amplitude covariance of actual nonlinear return'
+            for label, expression, required in (
+                ('return gains a constant bias', '(' + returned[1] + ') + amrex::Real(1)',
+                 ('ok   ' + offset_return, 'FAIL ' + amplitude_return)),
+                ('return has doubled gain', 'amrex::Real(2)*(' + returned[1] + ')',
+                 ('FAIL ' + offset_return, 'ok   ' + amplitude_return)),
+                ('return swaps candidate pairings', re.sub(r'\bv[12]\b',
+                 lambda match: 'v2' if match[0] == 'v1' else 'v1', returned[1]),
+                 ('ok   ' + offset_return, 'ok   ' + amplitude_return,
+                  f'FAIL {name}: complete source return equals the normalized candidate reconstruction')),
+            ):
+                changed = body[:returned.start(1)] + expression + body[returned.end(1):]
+                yield case(label, changed, required)
+            candidate = re.search(r'amrex::Real\s+v1\s*=\s*([^;]+);', body)
+            for label, extra, required in (
+                ('candidate bias breaks only amplitude law', 'amrex::Real(1)',
+                 ('ok   ' + offset_return, f'FAIL {name}: amplitude covariance of source candidate polynomials')),
+                ('candidate gain breaks only offset law', 's',
+                 (f'FAIL {name}: offset covariance of source candidate polynomials', 'ok   ' + amplitude_return)),
+            ):
+                changed = body[:candidate.start(1)] + '(' + candidate[1] + ') + ' + extra + body[candidate.end(1):]
+                yield case(label, changed, required)
+            first_beta = beta[0]
+            changed = body[:first_beta.start(2)] + '(' + first_beta[2] + ') + s*s' + body[first_beta.end(2):]
+            yield case('beta depends on absolute field offset', changed,
+                       (f'FAIL {name}: offset covariance of source beta polynomials', 'ok   ' + amplitude_return))
+            first_weight = weights[0]
+            changed = body[:first_weight.start(2)] + '(amrex::Real(1)+eps)*(' + first_weight[2] + ')' + body[first_weight.end(2):]
+            yield case('one alpha depends on absolute epsilon scale', changed,
+                       ('ok   ' + offset_return, f'FAIL {name}: amplitude covariance of normalized source weights'))
+            changed = body
+            for weight in reversed(weights):
+                changed = changed[:weight.start(2)] + '(amrex::Real(1)+eps)*(' + weight[2] + ')' + changed[weight.end(2):]
+            yield case('common nonhomogeneous alpha factor cancels', changed,
+                       ('ok   ' + offset_return, 'ok   ' + amplitude_return), False)
+            tau = re.search(r'amrex::Real\s+t5\s*=\s*([^;]+);', body)
+            if tau:
+                changed = body[:tau.start(1)] + '(' + tau[1] + ') + amrex::Real(1)' + body[tau.end(1):]
+                yield case('global smoothness gains an absolute scale', changed,
+                           ('ok   ' + offset_return, f'FAIL {name}: amplitude covariance of source global smoothness'))
             for match in weights:
                 # On constant data beta=0. Positivity of an abstract alpha alone
                 # is not a substitute for checking each actual source divisor.
