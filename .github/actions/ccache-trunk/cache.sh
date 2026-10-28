@@ -26,6 +26,11 @@ if [[ "$CACHE_MODE" == save && -z "$GHCR_TOKEN" ]]; then
   error 'token is required when saving'
 fi
 
+CACHE_TIMEOUT=${CACHE_TIMEOUT:-180}
+if [[ ! "$CACHE_TIMEOUT" =~ ^[1-9][0-9]{0,2}$ ]] || (( CACHE_TIMEOUT > 600 )); then
+  error 'transfer timeout must be between 1 and 600 seconds'
+fi
+
 owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
 tag=$(printf '%s' "$CACHE_KEY" | sed -E 's/[^A-Za-z0-9_.-]+/-/g' | tr '[:upper:]' '[:lower:]')
 if [[ ! "$tag" =~ ^[a-z0-9_][a-z0-9_.-]{0,127}$ ]]; then
@@ -119,7 +124,7 @@ login_to_registry() {
 }
 
 restore_cache() {
-  if ! retry timeout --kill-after=5s 60s docker pull "$image_ref"; then
+  if ! retry timeout --kill-after=5s "${CACHE_TIMEOUT}s" docker pull "$image_ref"; then
     if grep -Eqi 'manifest unknown|manifest.*not found|no such manifest' "$transfer_log"; then
       echo "no trunk at $image_ref: cold build"
     else
@@ -144,7 +149,7 @@ restore_cache() {
     warning 'could not extract ccache trunk; keeping the local cache'
     return 0
   fi
-  if ! timeout --kill-after=5s 60s docker cp "$restore_container:/ccache/." "$staged_cache_dir/" \
+  if ! timeout --kill-after=5s "${CACHE_TIMEOUT}s" docker cp "$restore_container:/ccache/." "$staged_cache_dir/" \
       >"$transfer_log" 2>&1; then
     warning 'could not extract ccache trunk; keeping the local cache'
     return 0
@@ -171,14 +176,14 @@ save_cache() {
   local prune_script
 
   printf 'FROM scratch\nCOPY . /ccache\n' > "$transfer_dir/Dockerfile"
-  if ! timeout --kill-after=5s 60s docker build --quiet -t "$image_ref" \
+  if ! timeout --kill-after=5s "${CACHE_TIMEOUT}s" docker build --quiet -t "$image_ref" \
       --label "org.opencontainers.image.source=$CACHE_SOURCE" \
       --label "org.opencontainers.image.revision=$GITHUB_SHA" \
       -f "$transfer_dir/Dockerfile" "$cache_dir" >"$transfer_log" 2>&1; then
     warning 'could not package ccache trunk; continuing without saving'
     return 0
   fi
-  if ! retry timeout --kill-after=5s 60s docker push --quiet "$image_ref"; then
+  if ! retry timeout --kill-after=5s "${CACHE_TIMEOUT}s" docker push --quiet "$image_ref"; then
     warning 'could not push ccache trunk; continuing without saving'
     return 0
   fi
