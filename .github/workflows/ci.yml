@@ -103,4 +103,6 @@ jobs:
 
           regression-evidence/*.txt
 
-          regression-evidence/build.log'
+          regression-evidence/build.log
+
+          regression-evidence/input-preflight.log'

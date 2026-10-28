@@ -72,6 +72,21 @@ def audit():
     print((OUT / 'audit.json').read_text(), flush=True)
 
 
+def symlink_manifest(root):
+    return {str(path.relative_to(root)): os.readlink(path)
+            for path in root.rglob('*') if path.is_symlink()}
+
+
+def copy_inputs(source, destination):
+    shutil.copytree(source, destination, symlinks=True)
+    assert symlink_manifest(source) == symlink_manifest(destination), 'Input links changed'
+
+
+def restore_inputs():
+    shutil.rmtree(BUILD / 'Tests/test_files')
+    copy_inputs(OUT / 'pristine-test-files', BUILD / 'Tests/test_files')
+
+
 def prepare():
     audit()
     off = json.loads((OUT / 'particles-off-inventory.json').read_text())
@@ -80,7 +95,15 @@ def prepare():
     save('coverage.json', {'particles_off': len(off_names), 'particles_on': len(on_names),
         'off_only': sorted(off_names - on_names), 'on_only': sorted(on_names - off_names)})
     assert off_names <= on_names, 'Particles OFF has tests absent from ON validation'
-    shutil.copytree(BUILD / 'Tests/test_files', OUT / 'pristine-test-files')
+    links = symlink_manifest(BUILD / 'Tests/test_files')
+    assert links['ABL_BndryPlanes_SameFolderLink/BndryIn'] == 'BndryFiles'
+    save('input-symlinks.json', links)
+    copy_inputs(BUILD / 'Tests/test_files', OUT / 'pristine-test-files')
+    restore_inputs()
+    # Prove the restored same-folder link still triggers its intended diagnostic.
+    with (OUT / 'input-preflight.log').open('w') as log:
+        subprocess.run(['ctest', '-R', '^ABL_BndryPlanes_SameFolderLink$', '-VV'],
+                       cwd=BUILD, stdout=log, stderr=subprocess.STDOUT, check=True)
     save('environment.json', {
         'revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
         'nproc': CORES, 'cpu': subprocess.check_output(['lscpu'], text=True),
@@ -95,8 +118,7 @@ def prepare():
 def run_trial(name):
     # Recreate the configured inputs at the same absolute paths for every trial.
     # Also discard CTest's learned costs, so order is not biased by the prior run.
-    shutil.rmtree(BUILD / 'Tests/test_files')
-    shutil.copytree(OUT / 'pristine-test-files', BUILD / 'Tests/test_files')
+    restore_inputs()
     for path in (BUILD / 'Testing/Temporary').glob('*'):
         if path.is_file():
             path.unlink()
