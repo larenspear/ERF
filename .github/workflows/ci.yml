@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/ci-latest-development-test' }}
 
 env:
-  QUEUE_TEST_REVISION: C
-  HOLD_SECONDS: 0
+  QUEUE_TEST_REVISION: A2
+  HOLD_SECONDS: 150
 
 jobs:
   queue-check:
