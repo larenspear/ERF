@@ -1,466 +1,84 @@
-name: Full-build GHCR cache benchmark
+name: CUDA full-build cache benchmark after unit-test fix
 'on':
   workflow_dispatch: {}
 permissions:
   contents: read
   packages: write
 concurrency:
-  group: fork-full-build-cache-benchmark
+  group: fork-full-build-cache-benchmark-gpu-retry
   cancel-in-progress: false
 jobs:
-  cpu-cold:
-    name: cpu-cold
+  gpu-radiation-compile-check:
+    name: gpu-radiation-compile-check
     if: ${{ github.repository == 'larenspear/ERF' && github.ref == 'refs/heads/ci-ghcr-build-benchmark' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 120
-    outputs:
-      ready: ${{ steps.verify.outputs.ready }}
     env:
-      CCACHE_TRUNK_KEY: benchmark-${{ github.run_id }}-${{ github.run_attempt }}-cpu
-      BENCHMARK_CONFIGURATION: cpu
+      CCACHE_TRUNK_KEY: benchmark-${{ github.run_id }}-${{ github.run_attempt }}-gpu
+      BENCHMARK_CONFIGURATION: gpu
       BENCHMARK_PHASE: cold
       BENCHMARK_METRICS: ${{ github.workspace }}/benchmark-metrics
-      BENCHMARK_BUILD: ${{ github.workspace }}/build
+      BENCHMARK_BUILD: ${{ github.workspace }}/build-12-2
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: true
         persist-credentials: false
-    - name: Install Dependencies
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
+    - name: Free up disk space
+      uses: ./.github/actions/free-space-ubuntu
+    - name: Prepare CUDA environment
+      run: Submodules/AMReX/.github/workflows/dependencies/dependencies_nvcc.sh 12.2
     - name: Install CCache
       run: Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
     - name: Record runner and prepare source
       run: python3 .github/benchmarks/metrics.py prepare
-    - name: Restore Cache
-      id: restore
-      uses: ./.github/actions/ccache-trunk
-      with:
-        mode: restore
-        key: ${{ env.CCACHE_TRUNK_KEY }}
-        path: ~/.cache/ccache
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - name: Verify expected cache state
-      env:
-        ACTUAL_HIT: ${{ steps.restore.outputs.hit }}
-      run: test "$ACTUAL_HIT" = "false"
-    - name: Configure Project and Generate Build System
-      run: |
-        date +%s%N > "$BENCHMARK_METRICS/configure-start-ns"
-        cmake \
-          -B${{runner.workspace}}/ERF/build \
-          -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install \
-          -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
-          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
-          -DAMReX_ASSERTIONS:BOOL=ON \
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-          -DERF_DIM:STRING=3 \
-          -DERF_ENABLE_MPI:BOOL=ON \
-          -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
-          '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
-          -DERF_ENABLE_PARTICLES:BOOL=ON \
-          -DERF_PRECISION:STRING=DOUBLE \
-          -DERF_PARTICLES_PRECISION:STRING=DOUBLE \
-          -DERF_ENABLE_TESTS:BOOL=ON \
-          -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
-          -DERF_ENABLE_FCOMPARE:BOOL=ON \
-          -DERF_TEST_SDM_SMOKE_GATED:BOOL=ON \
-          ${{github.workspace}};
-
-        date +%s%N > "$BENCHMARK_METRICS/configure-end-ns"
-    - name: Compile and Link
+    - name: Compile radiation test object with NVCC
+      shell: bash
       run: |
         export CCACHE_COMPRESS=1
         export CCACHE_COMPRESSLEVEL=10
-        export CCACHE_MAXSIZE=600M
+        export CCACHE_MAXSIZE=1100M
         ccache -z
         ccache --print-stats > "$BENCHMARK_METRICS/ccache-before.txt"
-        build_start=$(date +%s)
 
-        date +%s%N > "$BENCHMARK_METRICS/compile-start-ns"
-        cmake --build ${{runner.workspace}}/ERF/build --parallel 2 --verbose \
-        2>&1 | tee -a ${{runner.workspace}}/build-output.txt;
-
-        date +%s%N > "$BENCHMARK_METRICS/compile-end-ns"
-        ccache --print-stats > "$BENCHMARK_METRICS/ccache-after.txt"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        # Keep only what this build used: ccache touches an object on every hit, so
-        # anything older than the build is stale. Without this the cache fills with
-        # objects from superseded commits, hits its cap, and evicts live objects.
-        ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s"
-        ccache -s | tee -a "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        du -hs ~/.cache/ccache
-      id: build
-    - name: Save Cache
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      uses: ./.github/actions/ccache-trunk
-      with:
-        mode: save
-        key: ${{ env.CCACHE_TRUNK_KEY }}
-        path: ~/.cache/ccache
-        token: ${{ secrets.GITHUB_TOKEN }}
-      id: save
-    - name: Verify published cache and executable
-      id: verify
-      if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.save.outcome == 'success' }}
-      run: python3 .github/benchmarks/metrics.py verify
-    - name: Report
-      run: |
-        grep -Ei "warning:|error:" ${{runner.workspace}}/build-output.txt \
-          | grep -Ev "Submodules/(amrex|AMReX|googletest)" | grep -Ev "lto-wrapper: warning:" | sort | uniq \
-          | awk 'BEGIN{i=0}{print $0}{i++}END{print "Warnings: "i}' > ${{runner.workspace}}/build-output-warnings.txt
-        cat ${{runner.workspace}}/build-output-warnings.txt
-        return=$(tail -n 1 ${{runner.workspace}}/build-output-warnings.txt | awk '{print $2}')
-        exit "${return}"
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-    - name: Check Unit Test Registration
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        Tests/Unit/erf_unit_tests --gtest_list_tests | tee ${{runner.workspace}}/unit-test-list.txt
-        grep -Eq '^[A-Za-z0-9_].*\.$' ${{runner.workspace}}/unit-test-list.txt
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Run Serial Unit Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L unit -j 4 --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Run Parallel Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L parallel --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: CMake Regression Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L regression -VV
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: SDM Smoke Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L smoke --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Summarize measurements
-      if: ${{ always() }}
-      env:
-        BENCHMARK_RESTORE_HIT: ${{ steps.restore.outputs.hit }}
-        BENCHMARK_BUILD_OUTCOME: ${{ steps.build.outcome }}
-      run: python3 .github/benchmarks/metrics.py summarize
-    - name: Upload benchmark evidence
-      if: ${{ always() }}
-      uses: actions/upload-artifact@v7
-      with:
-        name: benchmark-cpu-cold
-        retention-days: 14
-        path: |
-          ${{ env.BENCHMARK_METRICS }}
-          ${{ runner.workspace }}/*output*.txt
-          ${{ env.BENCHMARK_BUILD }}/Testing/Temporary/*.log
-          ${{ env.BENCHMARK_BUILD }}/Tests/**/Backtrace.*
-  cpu-warm:
-    name: cpu-warm
-    if: ${{ always() && !cancelled() && github.repository == 'larenspear/ERF' && github.ref == 'refs/heads/ci-ghcr-build-benchmark'
-      && needs.cpu-cold.outputs.ready == 'true' }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
-    outputs:
-      ready: ${{ steps.verify.outputs.ready }}
-    env:
-      CCACHE_TRUNK_KEY: benchmark-${{ github.run_id }}-${{ github.run_attempt }}-cpu
-      BENCHMARK_CONFIGURATION: cpu
-      BENCHMARK_PHASE: warm
-      BENCHMARK_METRICS: ${{ github.workspace }}/benchmark-metrics
-      BENCHMARK_BUILD: ${{ github.workspace }}/build
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        submodules: true
-        persist-credentials: false
-    - name: Install Dependencies
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
-    - name: Install CCache
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
-    - name: Record runner and prepare source
-      run: python3 .github/benchmarks/metrics.py prepare
-    - name: Restore Cache
-      id: restore
-      uses: ./.github/actions/ccache-trunk
-      with:
-        mode: restore
-        key: ${{ env.CCACHE_TRUNK_KEY }}
-        path: ~/.cache/ccache
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - name: Verify expected cache state
-      env:
-        ACTUAL_HIT: ${{ steps.restore.outputs.hit }}
-      run: test "$ACTUAL_HIT" = "true"
-    - name: Configure Project and Generate Build System
-      run: |
+        export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
+        export LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+        which nvcc || echo "nvcc not in PATH!"
         date +%s%N > "$BENCHMARK_METRICS/configure-start-ns"
-        cmake \
-          -B${{runner.workspace}}/ERF/build \
-          -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install \
+        cmake -Bbuild-12-2 \
           -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
-          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
-          -DAMReX_ASSERTIONS:BOOL=ON \
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache \
+          -DAMReX_CUDA_ERROR_CROSS_EXECUTION_SPACE_CALL=ON \
+          -DAMReX_CUDA_ERROR_CAPTURE_THIS=ON \
+          -DAMReX_CUDA_ARCH=8.0 \
           -DERF_DIM:STRING=3 \
           -DERF_ENABLE_MPI:BOOL=ON \
-          -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
-          '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
+          -DERF_ENABLE_CUDA:BOOL=ON \
           -DERF_ENABLE_PARTICLES:BOOL=ON \
+          -DERF_ENABLE_FIRE:BOOL=ON \
           -DERF_PRECISION:STRING=DOUBLE \
           -DERF_PARTICLES_PRECISION:STRING=DOUBLE \
-          -DERF_ENABLE_TESTS:BOOL=ON \
-          -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
-          -DERF_ENABLE_FCOMPARE:BOOL=ON \
-          -DERF_TEST_SDM_SMOKE_GATED:BOOL=ON \
-          ${{github.workspace}};
+          -DERF_TEST_NRANKS:STRING=2 \
+          -DERF_ENABLE_UNIT_TESTS:BOOL=ON .
 
-        date +%s%N > "$BENCHMARK_METRICS/configure-end-ns"
-    - name: Compile and Link
-      run: |
-        export CCACHE_COMPRESS=1
-        export CCACHE_COMPRESSLEVEL=10
-        export CCACHE_MAXSIZE=600M
-        ccache -z
-        ccache --print-stats > "$BENCHMARK_METRICS/ccache-before.txt"
-        build_start=$(date +%s)
-
-        date +%s%N > "$BENCHMARK_METRICS/compile-start-ns"
-        cmake --build ${{runner.workspace}}/ERF/build --parallel 2 --verbose \
-        2>&1 | tee -a ${{runner.workspace}}/build-output.txt;
-
-        date +%s%N > "$BENCHMARK_METRICS/compile-end-ns"
-        ccache --print-stats > "$BENCHMARK_METRICS/ccache-after.txt"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        # Keep only what this build used: ccache touches an object on every hit, so
-        # anything older than the build is stale. Without this the cache fills with
-        # objects from superseded commits, hits its cap, and evicts live objects.
-        ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s"
-        ccache -s | tee -a "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        du -hs ~/.cache/ccache
-      id: build
-    - name: Save Cache
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      uses: ./.github/actions/ccache-trunk
-      with:
-        mode: save
-        key: ${{ env.CCACHE_TRUNK_KEY }}
-        path: ~/.cache/ccache
-        token: ${{ secrets.GITHUB_TOKEN }}
-      id: save
-    - name: Verify published cache and executable
-      id: verify
-      if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.save.outcome == 'success' }}
-      run: python3 .github/benchmarks/metrics.py verify
-    - name: Report
-      run: |
-        grep -Ei "warning:|error:" ${{runner.workspace}}/build-output.txt \
-          | grep -Ev "Submodules/(amrex|AMReX|googletest)" | grep -Ev "lto-wrapper: warning:" | sort | uniq \
-          | awk 'BEGIN{i=0}{print $0}{i++}END{print "Warnings: "i}' > ${{runner.workspace}}/build-output-warnings.txt
-        cat ${{runner.workspace}}/build-output-warnings.txt
-        return=$(tail -n 1 ${{runner.workspace}}/build-output-warnings.txt | awk '{print $2}')
-        exit "${return}"
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-    - name: Check Unit Test Registration
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        Tests/Unit/erf_unit_tests --gtest_list_tests | tee ${{runner.workspace}}/unit-test-list.txt
-        grep -Eq '^[A-Za-z0-9_].*\.$' ${{runner.workspace}}/unit-test-list.txt
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Run Serial Unit Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L unit -j 4 --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Run Parallel Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L parallel --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: CMake Regression Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L regression -VV
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: SDM Smoke Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L smoke --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Summarize measurements
-      if: ${{ always() }}
-      env:
-        BENCHMARK_RESTORE_HIT: ${{ steps.restore.outputs.hit }}
-        BENCHMARK_BUILD_OUTCOME: ${{ steps.build.outcome }}
-      run: python3 .github/benchmarks/metrics.py summarize
-    - name: Upload benchmark evidence
+        make -C build-12-2 -f Tests/Unit/CMakeFiles/erf_unit_tests.dir/build.make \
+          Tests/Unit/CMakeFiles/erf_unit_tests.dir/Radiation/ERF_GTestRadiationSimple.cpp.o \
+          2>&1 | tee "$BENCHMARK_METRICS/radiation-compile.log"
+        if grep -Ei 'warning:|warning #|error:|error #' "$BENCHMARK_METRICS/radiation-compile.log"; then
+          exit 1
+        fi
+    - name: Upload focused compile evidence
       if: ${{ always() }}
       uses: actions/upload-artifact@v7
       with:
-        name: benchmark-cpu-warm
+        name: gpu-radiation-compile-check
+        path: ${{ env.BENCHMARK_METRICS }}
         retention-days: 14
-        path: |
-          ${{ env.BENCHMARK_METRICS }}
-          ${{ runner.workspace }}/*output*.txt
-          ${{ env.BENCHMARK_BUILD }}/Testing/Temporary/*.log
-          ${{ env.BENCHMARK_BUILD }}/Tests/**/Backtrace.*
     needs:
-    - cpu-cold
-  cpu-changed:
-    name: cpu-changed
-    if: ${{ always() && !cancelled() && github.repository == 'larenspear/ERF' && github.ref == 'refs/heads/ci-ghcr-build-benchmark'
-      && needs.cpu-warm.outputs.ready == 'true' }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
-    outputs:
-      ready: ${{ steps.verify.outputs.ready }}
-    env:
-      CCACHE_TRUNK_KEY: benchmark-${{ github.run_id }}-${{ github.run_attempt }}-cpu
-      BENCHMARK_CONFIGURATION: cpu
-      BENCHMARK_PHASE: changed
-      BENCHMARK_METRICS: ${{ github.workspace }}/benchmark-metrics
-      BENCHMARK_BUILD: ${{ github.workspace }}/build
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        submodules: true
-        persist-credentials: false
-    - name: Install Dependencies
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
-    - name: Install CCache
-      run: Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
-    - name: Record runner and prepare source
-      run: python3 .github/benchmarks/metrics.py prepare
-    - name: Restore Cache
-      id: restore
-      uses: ./.github/actions/ccache-trunk
-      with:
-        mode: restore
-        key: ${{ env.CCACHE_TRUNK_KEY }}
-        path: ~/.cache/ccache
-        token: ${{ secrets.GITHUB_TOKEN }}
-    - name: Verify expected cache state
-      env:
-        ACTUAL_HIT: ${{ steps.restore.outputs.hit }}
-      run: test "$ACTUAL_HIT" = "true"
-    - name: Configure Project and Generate Build System
-      run: |
-        date +%s%N > "$BENCHMARK_METRICS/configure-start-ns"
-        cmake \
-          -B${{runner.workspace}}/ERF/build \
-          -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install \
-          -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
-          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g1 -DNDEBUG" \
-          -DAMReX_ASSERTIONS:BOOL=ON \
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-          -DERF_DIM:STRING=3 \
-          -DERF_ENABLE_MPI:BOOL=ON \
-          -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
-          '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
-          -DERF_ENABLE_PARTICLES:BOOL=ON \
-          -DERF_PRECISION:STRING=DOUBLE \
-          -DERF_PARTICLES_PRECISION:STRING=DOUBLE \
-          -DERF_ENABLE_TESTS:BOOL=ON \
-          -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
-          -DERF_ENABLE_FCOMPARE:BOOL=ON \
-          -DERF_TEST_SDM_SMOKE_GATED:BOOL=ON \
-          ${{github.workspace}};
-
-        date +%s%N > "$BENCHMARK_METRICS/configure-end-ns"
-    - name: Compile and Link
-      run: |
-        export CCACHE_COMPRESS=1
-        export CCACHE_COMPRESSLEVEL=10
-        export CCACHE_MAXSIZE=600M
-        ccache -z
-        ccache --print-stats > "$BENCHMARK_METRICS/ccache-before.txt"
-        build_start=$(date +%s)
-
-        date +%s%N > "$BENCHMARK_METRICS/compile-start-ns"
-        cmake --build ${{runner.workspace}}/ERF/build --parallel 2 --verbose \
-        2>&1 | tee -a ${{runner.workspace}}/build-output.txt;
-
-        date +%s%N > "$BENCHMARK_METRICS/compile-end-ns"
-        ccache --print-stats > "$BENCHMARK_METRICS/ccache-after.txt"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        # Keep only what this build used: ccache touches an object on every hit, so
-        # anything older than the build is stale. Without this the cache fills with
-        # objects from superseded commits, hits its cap, and evicts live objects.
-        ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s"
-        ccache -s | tee -a "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        du -hs ~/.cache/ccache
-      id: build
-    - name: Save Cache
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      uses: ./.github/actions/ccache-trunk
-      with:
-        mode: save
-        key: ${{ env.CCACHE_TRUNK_KEY }}
-        path: ~/.cache/ccache
-        token: ${{ secrets.GITHUB_TOKEN }}
-      id: save
-    - name: Verify published cache and executable
-      id: verify
-      if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.save.outcome == 'success' }}
-      run: python3 .github/benchmarks/metrics.py verify
-    - name: Report
-      run: |
-        grep -Ei "warning:|error:" ${{runner.workspace}}/build-output.txt \
-          | grep -Ev "Submodules/(amrex|AMReX|googletest)" | grep -Ev "lto-wrapper: warning:" | sort | uniq \
-          | awk 'BEGIN{i=0}{print $0}{i++}END{print "Warnings: "i}' > ${{runner.workspace}}/build-output-warnings.txt
-        cat ${{runner.workspace}}/build-output-warnings.txt
-        return=$(tail -n 1 ${{runner.workspace}}/build-output-warnings.txt | awk '{print $2}')
-        exit "${return}"
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-    - name: Check Unit Test Registration
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        Tests/Unit/erf_unit_tests --gtest_list_tests | tee ${{runner.workspace}}/unit-test-list.txt
-        grep -Eq '^[A-Za-z0-9_].*\.$' ${{runner.workspace}}/unit-test-list.txt
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Run Serial Unit Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L unit -j 4 --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Run Parallel Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L parallel --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: CMake Regression Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L regression -VV
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: SDM Smoke Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: |
-        ctest -L smoke --output-on-failure --no-tests=error
-      working-directory: ${{runner.workspace}}/ERF/build
-    - name: Summarize measurements
-      if: ${{ always() }}
-      env:
-        BENCHMARK_RESTORE_HIT: ${{ steps.restore.outputs.hit }}
-        BENCHMARK_BUILD_OUTCOME: ${{ steps.build.outcome }}
-      run: python3 .github/benchmarks/metrics.py summarize
-    - name: Upload benchmark evidence
-      if: ${{ always() }}
-      uses: actions/upload-artifact@v7
-      with:
-        name: benchmark-cpu-changed
-        retention-days: 14
-        path: |
-          ${{ env.BENCHMARK_METRICS }}
-          ${{ runner.workspace }}/*output*.txt
-          ${{ env.BENCHMARK_BUILD }}/Testing/Temporary/*.log
-          ${{ env.BENCHMARK_BUILD }}/Tests/**/Backtrace.*
-    needs:
-    - cpu-warm
+    - gpu-radiation-compile-check
+    permissions:
+      contents: read
   gpu-cold:
     name: gpu-cold
     if: ${{ github.repository == 'larenspear/ERF' && github.ref == 'refs/heads/ci-ghcr-build-benchmark' }}
@@ -596,6 +214,8 @@ jobs:
           ${{ runner.workspace }}/*output*.txt
           ${{ env.BENCHMARK_BUILD }}/Testing/Temporary/*.log
           ${{ env.BENCHMARK_BUILD }}/Tests/**/Backtrace.*
+    needs:
+    - gpu-radiation-compile-check
   gpu-warm:
     name: gpu-warm
     if: ${{ always() && !cancelled() && github.repository == 'larenspear/ERF' && github.ref == 'refs/heads/ci-ghcr-build-benchmark'

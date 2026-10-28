@@ -33,6 +33,12 @@ struct SimpleColumn
 
     SimpleColumn ()
     {
+        initialize();
+    }
+
+    // NVCC extended device lambdas need an addressable enclosing function.
+    void initialize ()
+    {
         const amrex::Box domain(amrex::IntVect(0, 0, 0), amrex::IntVect(0, 0, nz - 1));
         const amrex::RealBox rb({0.0, 0.0, 0.0}, {dz, dz, nz * dz});
         geom.define(domain, rb, amrex::CoordSys::cartesian, {1, 1, 0});
@@ -72,8 +78,8 @@ struct SimpleColumn
         const double dt = 1.0;
         amrex::Real declin = 0.0;
         amrex::Real calday = 0.0;
-        const amrex::Vector<const amrex::MultiFab*> lsm_in;
-        const amrex::Vector<amrex::MultiFab*> lsm_out;
+        const amrex::Vector<const amrex::MultiFab*> lsm_in{};
+        const amrex::Vector<amrex::MultiFab*> lsm_out{};
         rad.Run(level, step, time, dt, ba, geom, &cons, nullptr, nullptr, lsm_in, lsm_out,
                 &qheating, nullptr, nullptr, nullptr, nullptr, false, declin, calday);
         amrex::Gpu::streamSynchronize();
