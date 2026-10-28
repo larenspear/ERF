@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from advection_source import CONST_H, mutation_outcome
+from momentum_flux_cases import flux_cases
 
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).resolve().parent / "check_momentum_stretched_dz_fast_path.py"
@@ -82,9 +83,11 @@ def main():
     work = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
         tempfile.mkdtemp(prefix="erf-momentum-stretched-dz-mutants-"))
     originals = {name: (ERF / name).read_text() for name in (MOM_CPP, CONST_H)}
+    flux_mutants, controls = flux_cases(originals[MOM_CPP])
+    cases = {**MUTANTS, **flux_mutants, **controls}
     print(f"mutants in {work}\n")
     unexpected = 0
-    for index, (name, edit) in enumerate(MUTANTS.items()):
+    for index, (name, edit) in enumerate(cases.items()):
         root = work / f"m{index}"
         for relative, original in originals.items():
             target = root / relative
@@ -108,7 +111,7 @@ def main():
         if result.returncode == 77:
             print(result.stdout.strip() or "checker skipped because z3-solver is unavailable")
             return 77
-        caught, expected, failures = mutation_outcome(result, edit is not None)
+        caught, expected, failures = mutation_outcome(result, edit is not None and name not in controls)
         unexpected += not expected
         print(f"[{'CAUGHT' if caught else 'passes'}] {name}")
         for failure in failures[:3]:

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Check the inline centered-2nd momentum divergence on a stretched-z mesh.
+"""Check the inline centered-2nd momentum operator on a stretched-z mesh.
 
 The checker parses the three live ParallelFor lambdas. It proves the mapped
 face-flux divergence and component metrics, checks the X/Y and Z inverse-z
-spacing rules, and checks the top z-face flux special case. It does not prove
-the flux reconstruction formulas or higher-order templated path.
+spacing rules, all staggered flux reconstructions, inverse-map initialization,
+and the top z-face flux special case. The higher-order templated path,
+memory/halo validity, and floating-point rounding remain outside this proof.
 
 usage: check_momentum_stretched_dz_fast_path.py [ERF_ROOT]
 exit:  0 all checks pass, 1 a check fails, 77 z3 is not importable (CTest skip)
@@ -21,6 +22,7 @@ from advection_source import (
 from check_scalar_flux_divergence import (
     brace_block, check, compact, failures, function_body, number, strip_comments, z3,
 )
+from momentum_centered import check_fluxes, check_setup, reconstructed_rhs
 
 MOM_CPP = "Source/Advection/ERF_AdvectionSrcForMom_StretchedDz.cpp"
 ARRAYS = {
@@ -61,9 +63,10 @@ def to_z3(expression, env):
     return eval(expr, {"__builtins__": {}}, {**env, **reads, "_N": number})
 
 
-def prove_equal(actual, expected, description):
+def prove_equal(actual, expected, description, assumptions=()):
     solver = z3.Solver()
-    solver.add(actual != expected)
+    solver.set(timeout=10000)
+    solver.add(*assumptions, actual != expected)
     result = solver.check()
     check(result == z3.unsat, description)
     if result == z3.sat:
@@ -115,6 +118,7 @@ def check_vertical_spacing(body, component, env):
 def check_component(body, component, expected_metric, constants):
     rhs_name = {"X": "rho_u_rhs", "Y": "rho_v_rhs", "Z": "rho_w_rhs"}[component]
     momentum_component(body, rhs_name, stretched=True)
+    actual_fluxes, expected_fluxes = check_fluxes(body, component, constants, to_z3, prove_equal)
     flux_names = [f"{axis}flux_{edge}" for axis in "xyz" for edge in ("hi", "lo")]
     declared = re.findall(r"\bReal\s+([xyz]flux_(?:hi|lo))\s*=", body)
     check(Counter(declared) == Counter(flux_names),
@@ -147,6 +151,9 @@ def check_component(body, component, expected_metric, constants):
                 f"{component}: Z3 proves the stretched-z mapped face-flux divergence")
     prove_equal(actual_rhs, -expected_divergence,
                 f"{component}: RHS stores the negative stretched-z divergence")
+    reconstructed_rhs(source_expr, rhs_expr, {**env, "mfsq": actual_metric, "dzInv": dz_inv},
+                      actual_fluxes, expected_fluxes, expected_metric_term,
+                      component, to_z3, prove_equal)
 
 
 def check_top_z_flux(z_body, constants):
@@ -172,6 +179,7 @@ def main():
           "horiz_adv_type==AdvType::Centered_2nd&&vert_adv_type==AdvType::Centered_2nd",
           "inline path is gated on centered second order in both directions")
     spacing_aliases(body[:branch_match.start()], 2)
+    check_setup(body[:branch_match.start()], True, constants, to_z3, prove_equal)
     branch = brace_block(body, branch_match.end() - 1)
     x_body, y_body, z_body = get_lambdas(branch)
 

@@ -2500,7 +2500,7 @@ if(ERF_TEST_PYTHON)
         LABELS "unit;advection")
 
     # Check the inline centered-second-order constant-dz momentum path, including
-    # its component metrics and the top z-face flux special case.
+    # its staggered flux reconstruction, inverse maps, metrics, and top z-face flux.
     add_test(NAME AdvectionMomentumConstantDzFastPath_Z3
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_constant_dz_fast_path.py
                 ${PROJECT_SOURCE_DIR})
@@ -2515,7 +2515,7 @@ if(ERF_TEST_PYTHON)
         LABELS "unit;advection")
 
     # Check the inline centered-second-order stretched-dz momentum path,
-    # including variable vertical spacing and the top z-face flux special case.
+    # including flux reconstruction, inverse maps, variable spacing, and top flux.
     add_test(NAME AdvectionMomentumStretchedDzFastPath_Z3
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_stretched_dz_fast_path.py
                 ${PROJECT_SOURCE_DIR})
