@@ -101,6 +101,44 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.action()[0], 0)
         self.preserved()
 
+    def test_manifest_misses_are_quiet_but_other_failures_warn(self):
+        ref = 'ghcr.io/example/erf-ccache:macos-x64-clang'
+        cases = [
+            ('manifest unknown', True),
+            ('MANIFEST_UNKNOWN: manifest does not exist', True),
+            (f'Error: {ref}: not found', True),
+            ('registry: 403 Forbidden: permission denied', False),
+            ('registry: 401 Unauthorized', False),
+            ('registry: 503 Service Unavailable', False),
+            ('Get https://ghcr.io/token: 404 Not Found', False),
+            ('manifest unknown: 403 Forbidden', False),
+            ('503 Service Unavailable: manifest unknown', False),
+            ('Get ghcr.io/example/cache:manifest_unknown: 503 Service Unavailable', False),
+        ]
+        for detail, missing in cases:
+            with self.subTest(detail=detail):
+                self.output.unlink(missing_ok=True)
+                self.calls.clear()
+
+                def response(args, **kwargs):
+                    if args[1:3] == ['manifest', 'fetch']:
+                        raise subprocess.CalledProcessError(1, args, stderr=detail)
+                    return subprocess.CompletedProcess(args, 0, self.command(args, **kwargs), '')
+
+                with patch.object(native.subprocess, 'run', side_effect=response), \
+                        patch.object(native.time, 'sleep'), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    status, errors = self.action(command=native.run)
+                self.assertEqual(status, 0)
+                self.preserved()
+                self.assertFalse(any(args[1] == 'blob' for args, _ in self.calls))
+                if missing:
+                    self.assertEqual(errors, '')
+                    self.assertIn('no cache at ' + ref, output.getvalue())
+                else:
+                    self.assertIn('::warning::', errors)
+                    self.assertIn(detail, errors)
+
     def test_rename_failure_rolls_back(self):
         rename = Path.rename
         def fail_promotion(path, target):
@@ -109,6 +147,20 @@ class NativeTests(unittest.TestCase):
             return rename(path, target)
         with patch.object(Path, 'rename', fail_promotion):
             self.assertEqual(self.action()[0], 0)
+        self.preserved()
+
+    def test_missing_blob_is_a_warning_and_preserves_cache(self):
+        def response(args, **kwargs):
+            if args[1:3] == ['blob', 'fetch']:
+                raise subprocess.CalledProcessError(1, args, stderr='404 Not Found: blob unknown')
+            return subprocess.CompletedProcess(args, 0, self.command(args, **kwargs), '')
+
+        with patch.object(native.subprocess, 'run', side_effect=response), \
+                patch.object(native.time, 'sleep'):
+            status, errors = self.action(command=native.run)
+        self.assertEqual(status, 0)
+        self.assertIn('fetch cache archive', errors)
+        self.assertIn('404 Not Found: blob unknown', errors)
         self.preserved()
 
     def test_save_failure_does_not_prune(self):
@@ -128,8 +180,26 @@ class NativeTests(unittest.TestCase):
         status, errors = self.action('save', command=fail_prune)
         self.assertEqual(status, 0)
         self.assertIn('a later save will retry', errors)
+        self.assertIn('simulated prune timeout', errors)
         self.assertEqual(self.calls[-2][0][1], 'push')
         self.assertTrue(self.calls[-1][0][1].endswith('prune.py'))
+
+    def test_prune_command_error_reaches_warning_without_credentials(self):
+        def response(args, **kwargs):
+            output = self.command(args, **kwargs)
+            if args[1].endswith('prune.py'):
+                raise subprocess.CalledProcessError(1, args, stderr=(
+                    'erf-ccache: could not delete version 42: HTTP 403; synthetic-token'))
+            return subprocess.CompletedProcess(args, 0, output, '')
+
+        with patch.object(native.subprocess, 'run', side_effect=response), \
+                patch.object(native.time, 'sleep'):
+            status, errors = self.action('save', command=native.run)
+        self.assertEqual(status, 0)
+        self.assertIn('exit status 1', errors)
+        self.assertIn('could not delete version 42: HTTP 403', errors)
+        self.assertIn('a later save will retry', errors)
+        self.assertNotIn('synthetic-token', errors)
 
     def test_invalid_inputs_fail_and_empty_save_skips_transport(self):
         for env in ({'CACHE_MODE': 'oops'}, {'CACHE_KEY': ''}, {'CACHE_PATH': ''},

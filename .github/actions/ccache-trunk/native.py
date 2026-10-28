@@ -33,21 +33,74 @@ ARCHIVE_NAME = "ccache.tar"
 # Well above the existing 150-1100 MB cache limits; rejects damaged/hostile archives.
 MAX_ARCHIVE_BYTES = 8 * 1024**3
 MAX_MEMBERS = 500_000
+TOKEN_VARIABLES = ("GHCR_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+
+def diagnostic(value, secrets=(), limit=1024):
+    """Redact before truncating, then keep subprocess output on one log line."""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    text = str(value or "")
+    credentials = [*secrets, *(os.environ.get(name) for name in TOKEN_VARIABLES)]
+    for secret in sorted({s for s in credentials if s}, key=len, reverse=True):
+        if isinstance(secret, bytes):
+            secret = secret.decode("utf-8", errors="replace")
+        text = text.replace(secret, "[redacted]")
+    text = re.sub(r"(?i)\b(Bearer|Basic)\s+[^\s,;\"']+", r"\1 [redacted]", text)
+    # Cover JSON/key=value credentials without hiding HTTP status after /token:.
+    text = re.sub(
+        r'''(?i)((?<![\w/])(?:token|access_token|refresh_token|password|auth)\b'''
+        r'''["']?\s*[:=]\s*["']?)[^\s,;&"']+''', r"\1[redacted]", text)
+    text = re.sub(r"(https?://)[^/\s]+@", r"\1[redacted]@", text)
+    text = re.sub(r'''(https?://[^\s?"']+)\?[^\s"']+''', r"\1?[redacted]", text)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + " [truncated]"
+
+
+class CommandError(RuntimeError):
+    def __init__(self, message, detail, returncode=None):
+        super().__init__(message + (f"; {detail}" if detail else ""))
+        self.detail = detail
+        self.returncode = returncode
+
+    def missing_manifest(self, ref):
+        # A generic 404 may be an authentication endpoint failure. Only explicit
+        # manifest errors or ORAS's exact reference-not-found response are misses.
+        if self.returncode is None or self.returncode <= 0 or "[truncated]" in self.detail:
+            return False
+        detail = self.detail.lower()
+        if re.search(r"\b(401|403|5\d\d|unauthorized|forbidden|denied)\b", detail):
+            return False
+        return (bool(re.search(r"(?<![\w/:-])manifest[ _]unknown\b", detail))
+                or f"{ref.lower()}: not found" in detail)
 
 
 def warning(message):
-    print(f"::warning::{message}", file=sys.stderr)
+    print("::warning::" + diagnostic(message, limit=2048).replace("%", "%25"), file=sys.stderr)
 
 
-def run(command, *, timeout=60, attempts=2, **kwargs):
-    """Retry only bounded commands. Keep credentials and command output out of errors."""
+def run(command, *, timeout=60, attempts=2, label=None, **kwargs):
+    """Retry bounded commands; report the final failure without argv or stdin."""
     for attempt in range(attempts):
         try:
             return subprocess.run(command, check=True, capture_output=True,
                                   text=True, timeout=timeout, **kwargs).stdout
-        except (subprocess.SubprocessError, OSError):
+        except (subprocess.SubprocessError, OSError) as exc:
             if attempt + 1 == attempts:
-                raise RuntimeError(f"{Path(command[0]).name} {command[1]} failed or timed out") from None
+                if isinstance(exc, subprocess.CalledProcessError):
+                    reason = f"exit status {exc.returncode}"
+                elif isinstance(exc, subprocess.TimeoutExpired):
+                    reason = f"timed out after {timeout}s"
+                else:
+                    reason = f"could not start ({type(exc).__name__})"
+                detail = ((getattr(exc, "stderr", None) or "").strip()
+                          or getattr(exc, "stdout", None) or getattr(exc, "strerror", ""))
+                env = kwargs.get("env") or os.environ
+                secrets = [kwargs.get("input"), *(env.get(name) for name in TOKEN_VARIABLES)]
+                count = f"{attempts} attempt" + ("s" if attempts != 1 else "")
+                message = f"{label or Path(command[0]).name}: {reason} after {count}"
+                raise CommandError(message, diagnostic(detail, secrets),
+                                   getattr(exc, "returncode", None)) from None
             time.sleep(2)
 
 
@@ -66,7 +119,7 @@ def install_oras(directory, platform):
     run(["curl", "--fail", "--silent", "--show-error", "--location", "--max-time", "60",
          "--output", str(archive),
          f"https://github.com/oras-project/oras/releases/download/v{ORAS_VERSION}/{asset}"],
-        timeout=65)
+        timeout=65, label="download ORAS")
     if sha256(archive) != checksum:
         raise ValueError("ORAS download checksum mismatch")
     executable = "oras.exe" if platform[0] == "Windows" else "oras"
@@ -175,18 +228,24 @@ def transfer(mode, cache, ref, directory, platform, timeout):
     if token:
         run([str(binary), "login", "ghcr.io", *registry_args,
              "--username", os.environ["GITHUB_ACTOR"], "--password-stdin"],
-            input=token, timeout=30)
+            input=token, timeout=30, label="ORAS login")
 
     archive = directory / ARCHIVE_NAME
     if mode == "restore":
-        manifest = json.loads(run([str(binary), "manifest", "fetch", *registry_args, ref],
-                                  timeout=timeout))
+        try:
+            manifest = json.loads(run([str(binary), "manifest", "fetch", *registry_args, ref],
+                                      timeout=timeout, label="fetch cache manifest"))
+        except CommandError as exc:
+            if not exc.missing_manifest(ref):
+                raise
+            print(f"no cache at {ref}; continuing with the local cache")
+            return
         layer = layer_descriptor(manifest)
         # Fetch the immutable blob from this manifest, not the moving configuration tag.
         # An artifact-supplied filename never reaches the filesystem.
         blob_ref = ref.rsplit(":", 1)[0] + "@" + layer["digest"]
         run([str(binary), "blob", "fetch", *registry_args, "--output", str(archive), blob_ref],
-            timeout=timeout)
+            timeout=timeout, label="fetch cache archive")
         if (archive.stat().st_size != layer["size"]
                 or "sha256:" + sha256(archive) != layer["digest"]):
             raise ValueError("cache archive digest/size mismatch")
@@ -205,15 +264,16 @@ def transfer(mode, cache, ref, directory, platform, timeout):
         run([str(binary), "push", *registry_args, "--artifact-type", ARTIFACT_TYPE,
              "--annotation", "org.opencontainers.image.source=" + os.environ["CACHE_SOURCE"],
              "--annotation", "org.opencontainers.image.revision=" + os.environ["GITHUB_SHA"],
-             ref, ARCHIVE_NAME + ":" + LAYER_TYPE], cwd=directory, timeout=timeout)
+             ref, ARCHIVE_NAME + ":" + LAYER_TYPE], cwd=directory, timeout=timeout,
+            label="publish cache")
         print(f"saved {ref}")
         env = dict(os.environ, GH_TOKEN=token, OWNER=os.environ["GITHUB_REPOSITORY_OWNER"],
                    OWNER_TYPE=os.environ["CACHE_OWNER_TYPE"])
         try:
             print(run([sys.executable, str(Path(__file__).with_name("prune.py")), "erf-ccache:0"],
-                      env=env, timeout=65, attempts=1), end="")
-        except RuntimeError:
-            warning("could not prune old GHCR ccache versions; a later save will retry")
+                      env=env, timeout=65, attempts=1, label="prune cache versions"), end="")
+        except RuntimeError as exc:
+            warning(f"could not prune old GHCR ccache versions ({exc}); a later save will retry")
 
 
 def output(value):

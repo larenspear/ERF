@@ -57,6 +57,12 @@ per transfer command (maximum 600), allowing for the existing CUDA cache limit o
 Registry, download, and filesystem failures warn and let compilation/tests continue;
 invalid action inputs fail. `hit` is true only after a complete restore.
 
+Native command failures report the operation, exit status or timeout, and up to
+1024 characters of diagnostic output. Tokens, authentication fields, URL credentials
+and query strings are redacted before truncation. Explicit missing-manifest responses
+are normal cache misses; permission errors and ambiguous failures remain warnings.
+Failed pruning includes the command's diagnostic details and remains nonfatal.
+
 Both transports stage beside the destination before replacing it, keeping the previous
 cache for rollback. The path must be a dedicated cache directory, not home or the root.
 The native helper fetches an immutable blob digest from the manifest, verifies its
@@ -91,12 +97,13 @@ python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_*.py' -v
 Run only the portable tests on macOS or Windows (use `python` on Windows):
 
 ```sh
-python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_native.py' -v
+python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_native*.py' -v
 ```
 
 The tests need no network or credentials. They cover retries/timeouts, failed or
 partial restores, rollback, archive integrity/safety, timestamp preservation, failed
-saves, pruning retention/races, credential cleanup, and invalid inputs. The full suite
-runs in the existing `shellcheck` job in `lint.yml` for pull requests and development
-pushes that change `.github/**`, and on manual dispatch. It uses the runner's Python
+saves, pruning retention/races, credential cleanup, redacted diagnostics, and invalid
+inputs. The full suite runs in the existing `shellcheck` job in `lint.yml` for pull
+requests and development pushes that change `.github/**`, and on manual dispatch.
+It uses the runner's Python
 standard library, Bash, and GNU coreutils, without compiling ERF or accessing GHCR.
