@@ -2540,6 +2540,20 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Compose all WENO Z methods with normal Z-momentum fluxes. Recheck scalar
+    # candidate/weight obligations, then prove sample/flow assembly modularly.
+    add_test(NAME AdvectionMomentumWenoZFlux_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_weno_z_flux.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumWenoZFlux_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_weno_z_flux_selftest.py)
+    set_tests_properties(AdvectionMomentumWenoZFlux_Z3 AdvectionMomentumWenoZFlux_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Check the inline centered-second-order constant-dz momentum path, including
     # its flux reconstruction, inverse maps, shared interior face balance, and top flux.
     add_test(NAME AdvectionMomentumConstantDzFastPath_Z3
