@@ -75,8 +75,6 @@ jobs:
         name: gpu-radiation-compile-check
         path: ${{ env.BENCHMARK_METRICS }}
         retention-days: 14
-    needs:
-    - gpu-radiation-compile-check
     permissions:
       contents: read
   gpu-cold:
