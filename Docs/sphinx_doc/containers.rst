@@ -9,30 +9,72 @@ ERF containers
 Pre-built images on GHCR
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Every night at 05:00 UTC, and for every release, two container images are built from ``development`` and pushed to the GitHub Container Registry, so a current ERF can be pulled rather than built:
+The GitHub Container Registry provides two CPU images:
 
-* ``ghcr.io/erf-model/erf`` holds ``erf_exec`` and its runtime libraries (MPICH).
-* ``ghcr.io/erf-model/erf-dev`` holds the build environment (GCC 11, MPICH, CMake, ccache), the source tree and the ccache of the same build, for recompiling ERF in seconds without installing anything.
+* ``ghcr.io/erf-model/erf`` contains ``erf_exec``, MPICH, and a small example ready to run.
+* ``ghcr.io/erf-model/erf-dev`` contains GCC 11, MPICH, CMake, ccache, and the source tree. Its compiler cache speeds up rebuilding ERF without installing dependencies.
 
-Both are tagged ``development`` (the latest nightly) and, for releases, the release number (``26.09``) and ``latest``; ``erf`` also keeps ``sha-<commit>`` tags for the last 30 nightlies. The build is the Linux GCC Particles ON configuration of ``.github/workflows/ci.yml``: Ubuntu 22.04, RelWithDebInfo, AMReX assertions, tests and fcompare on, NetCDF off. An image exists only for a commit whose build and unit tests passed; a night on which ``development`` has not moved builds nothing. The recipe is ``Build/Containerfile`` and the workflow ``.github/workflows/container.yml``; a fork with Actions enabled pushes to its own ``ghcr.io/<user>/`` namespace.
+These are Linux x86-64 images (``linux/amd64``), using Ubuntu 22.04, double precision, MPI, and particles. NetCDF and fire coupling are disabled. Apple Silicon can run them through Docker's x86 emulation, with a performance cost. GPU and native ARM images are separate future work.
 
-Run ERF from the image, with the run directory mounted as the working directory:
+Nightly builds use ``development`` at 05:00 UTC; release builds use the tagged source commit. The ``development`` image tag means the latest successful nightly, so it can lag the source when tests fail. Release images carry the release tag (for example, ``26.09``) and ``latest``. The runtime package also retains the 30 newest versions tagged only by commit (``sha-<commit>``); named release tags are preserved. An unchanged commit skips the nightly build.
 
-.. code:: shell
+Publication requires passing the build's serial unit tests and running a small simulation with one and two MPI ranks. A separate runner then pulls both published images by digest, repeats the runtime check, and verifies rebuilding in ``erf-dev``. The recipe is ``Build/Containerfile`` and the configuration is ``Build/container-configure.sh``.
 
-  docker run --rm -v "$PWD":/work -w /work ghcr.io/erf-model/erf:development \
+Run the bundled example
+^^^^^^^^^^^^^^^^^^^^^^^
+
+With Docker running, the following Bash commands run five time steps on two MPI ranks. The output is written into ``erf-run`` on the host, owned by your user:
+
+.. code:: bash
+
+  mkdir erf-run
+  cd erf-run
+  docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" \
+      -v "$PWD":/work -w /work ghcr.io/erf-model/erf:development \
+      mpiexec -n 2 erf_exec /usr/local/share/erf/inputs_scalar_advection \
+      max_step=5 'amr.n_cell=16 16 8' amr.max_grid_size=8 \
+      erf.plot_int_1=5 erf.check_int=-1
+
+The log should contain ``Coarse STEP 5 ends``, and ``plt00005/Header`` should exist. The input file is bundled with the image so it matches that version of ERF.
+
+For your own input file, place it in the mounted run directory:
+
+.. code:: bash
+
+  docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" \
+      -v "$PWD":/work -w /work ghcr.io/erf-model/erf:development \
       mpiexec -n 4 erf_exec inputs_ex
 
-  apptainer exec docker://ghcr.io/erf-model/erf:development mpiexec -n 4 erf_exec inputs_ex
+On an x86-64 host with Apptainer, a single-node run using the image's MPI is:
+
+.. code:: bash
+
+  apptainer exec --bind "$PWD":/work --pwd /work \
+      docker://ghcr.io/erf-model/erf:development mpiexec -n 4 erf_exec inputs_ex
+
+Multi-node MPI and scheduler integration depend on the site's MPI and container setup; the Docker checks above validate single-node execution.
+
+Rebuild ERF in the development image
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Recompile inside ``erf-dev``: ``/erf`` is a checkout of the commit, and ``/ccache`` holds the compiled objects, so configuring with the same flags and building compiles only what changed.
 
-.. code:: shell
+.. code:: bash
 
-  docker run -it --rm ghcr.io/erf-model/erf-dev:development
+  docker run -it --rm --platform linux/amd64 ghcr.io/erf-model/erf-dev:development
+  # The following commands run inside the container.
   git fetch origin pull/1234/head:pr-1234 && git checkout pr-1234
-  Build/container-configure.sh . build && cmake --build build --parallel
-  ctest --test-dir build -L unit -j 4
+  git submodule update --init
+  Build/container-configure.sh /erf /erf/build
+  cmake --build /erf/build --parallel 4
+  ctest --test-dir /erf/build -L unit -LE parallel -j 4 --output-on-failure
+
+Changes inside this disposable container are removed when it exits. The image carries no build tree; the compiler cache is reused when configuring and building.
+
+Package setup for maintainers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The workflow publishes into the repository owner's namespace, so fork tests use ``ghcr.io/<fork-owner>/``. After the first upstream publication, make both packages public so users can pull without credentials. Existing packages must grant the publishing repository access, including permission to delete old versions. Superseded development images are removed automatically; release tags are retained. The workflow reports cleanup failures and retries cleanup after a later publication.
 
 ERF containers on Perlmutter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
