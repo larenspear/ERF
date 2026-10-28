@@ -84,8 +84,8 @@ def vertical_flux(model, component, high, reconstruction):
     return mass * value
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(extra_check=None, description=__doc__):
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument('root', nargs='?', type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument('--horizontal', choices=tuple(SCHEMES))
     parser.add_argument('--vertical', choices=tuple(SCHEMES))
@@ -133,6 +133,8 @@ def main():
                 field, x, y, z, q, f, blend_v, selected)
         sequence, tail = bodies[component]
         final = model.execute(sequence, model.env, [])
+        source_fluxes = {f'{axis}flux_{edge}': final[f'{axis}flux_{edge}']
+                         for axis in 'xyz' for edge in ('hi', 'lo')}
         metric, spacing, assumptions = geometry(model, component)
         fluxes = {}
         complete = True
@@ -165,11 +167,13 @@ def main():
             # consumer result is an interface witness, not a field witness.
             fluxes[direction, high] = z3.Real('reconstructed_' + local)
             final[local] = fluxes[direction, high]
+        returned = model.finish(final, tail)
+        actual = model.arithmetic(wrappers[component][1], {**model.env, 'helper_result': returned})
+        if extra_check is not None:
+            extra_check(model, component, h, v, source_fluxes, fluxes, actual, metric, spacing, assumptions)
         if not complete:
             print(f'  skipping {h}/{v}/{component}: unproved reconstructed face')
             continue
-        returned = model.finish(final, tail)
-        actual = model.arithmetic(wrappers[component][1], {**model.env, 'helper_result': returned})
         expected = num(0)
         for direction, scale in [('X', model.env['dxInv'] * metric),
                                  ('Y', model.env['dyInv'] * metric), ('Z', spacing)]:

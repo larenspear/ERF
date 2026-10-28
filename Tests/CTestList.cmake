@@ -2596,6 +2596,20 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Prove neighboring normal-grid momentum cells use a common reconstructed
+    # face flux and give it opposite volume-weighted tendency contributions.
+    add_test(NAME AdvectionMomentumNormalBalance_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_normal_balance.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumNormalBalance_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_normal_balance_selftest.py)
+    set_tests_properties(AdvectionMomentumNormalBalance_Z3 AdvectionMomentumNormalBalance_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Check the inline centered-second-order constant-dz momentum path, including
     # its flux reconstruction, inverse maps, shared interior face balance, and top flux.
     add_test(NAME AdvectionMomentumConstantDzFastPath_Z3
