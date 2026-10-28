@@ -125,6 +125,23 @@ def cases(originals):
         changed = once(body, ideal[0], ideal[0].replace(ideal[1], 'amrex::Real(2) * (' + ideal[1] + ')'))
         yield case('positive but wrong scalar ideal weight', changed,
                    (f'FAIL {name}: source ideal return matches full-stencil reconstruction',) + preserved)
+        prefix = 'a' if name == 'WENO_MZQ3' else 'w'
+        alpha = re.search(rf'amrex::Real {prefix}1\s*=\s*([^;]+);', ebody)
+        changed = once(ebody, alpha[0], alpha[0].replace(alpha[1], 'amrex::Real(2)*(' + alpha[1] + ')'))
+        yield case('positive alpha changes nonlinear policy', once(body, ebody, changed),
+                   (f'FAIL {name}: normalized nonlinear weights match independent policy',
+                    f'ok   {name}: actual nonlinear return reproduces affine fields for eps>0 [unsat]') + preserved)
+        singular = 'amrex::Real(1)/(amrex::Real(1)-(sp1-amrex::Real(2)*s+sm1)*(sp1-amrex::Real(2)*s+sm1))'
+        changed = once(ebody, returned[0], f'amrex::Real unused = {singular};\n' + returned[0])
+        yield case('division fails only away from affine data', once(body, ebody, changed),
+                   (f'FAIL {name}: all-data source divisions are defined for eps>0',
+                    f'ok   {name}: affine source divisions are defined for eps>0') + preserved)
+        tau = re.search(r'amrex::Real t5\s*=\s*([^;]+);', ebody)
+        if tau:
+            changed = once(ebody, tau[0], tau[0].replace(tau[1], 'amrex::Real(0)'))
+            yield case('global smoothness loses nonlinear adaptation', once(body, ebody, changed),
+                       (f'FAIL {name}: squared global smoothness matches independent policy',
+                        f'ok   {name}: actual nonlinear return reproduces affine fields for eps>0 [unsat]') + preserved)
         changed = once(ebody, returned[0], 'v1 *= -1; ' + returned[0])
         yield case('late scalar write', once(body, ebody, changed), ())
         changed = once(zbody, result[0], result[0] + '\n val_lo *= -1;')

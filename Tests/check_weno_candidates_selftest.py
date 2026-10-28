@@ -136,11 +136,77 @@ def cases(originals):
                        ('FAIL ' + defined, 'FAIL ' + affine_defined))
             changed = body[:match.start(2)] + '(' + match[2] + ') * ((eps+b1)/(eps+b1))' + body[match.end(2):]
             yield case('weight has a defined canceling ratio', changed, positive_fields, mutated=False)
-            # Affine accuracy does not uniquely determine nonlinear weighting:
-            # every candidate is already affine-exact. This changes the algorithm
-            # on general data but preserves the CURRENT checked specification.
+            # This used to be an accepted control: affine accuracy alone cannot
+            # determine nonlinear weighting. The new independent policy rejects it.
             changed = body[:match.start(2)] + 'amrex::Real(2)*(' + match[2] + ')' + body[match.end(2):]
-            yield case('alternative positive nonlinear weight', changed, positive_fields, mutated=False)
+            policy = f'{name}: normalized nonlinear weights match independent policy'
+            all_defined = f'{name}: all-data source divisions are defined for eps>0'
+            preserved = positive_fields + ('ok   ' + all_defined,)
+            yield case('alternative positive nonlinear weight', changed,
+                       preserved + ('FAIL ' + policy,))
+            for index, weight in enumerate(weights, 1):
+                for label, expr in (
+                    ('constant ideal alpha', f'g{index}'),
+                    ('wrong beta in alpha', re.sub(rf'\bb{index}\b', f'b{index % len(weights) + 1}', weight[2])),
+                ):
+                    changed = body[:weight.start(2)] + expr + body[weight.end(2):]
+                    yield case(weight[1] + ' ' + label, changed, preserved + ('FAIL ' + policy,))
+            for label, transform in (
+                ('wrong epsilon in every alpha', lambda expr: re.sub(r'\beps\b', '(amrex::Real(2)*eps)', expr)),
+                ('first-power denominators in every alpha', lambda expr: re.sub(
+                    r'\(\s*\(eps \+ (b\d+)\)\s*\*\s*\(eps \+ \1\)\s*\)', r'(eps + \1)', expr)),
+                ('common constant alpha scaling', lambda expr: 'amrex::Real(2)*(' + expr + ')'),
+                ('common positive data-dependent alpha scaling', lambda expr: '(eps+b1)*(' + expr + ')'),
+            ):
+                changed = body
+                for weight in reversed(weights):
+                    changed = changed[:weight.start(2)] + transform(weight[2]) + changed[weight.end(2):]
+                fault = label.startswith(('wrong', 'first-power'))
+                yield case(label, changed, preserved + (('FAIL ' if fault else 'ok   ') + policy,), fault)
+            if tau:
+                tau_policy = f'{name}: squared global smoothness matches independent policy'
+                for label, expr in (
+                    ('scaled global smoothness', 'amrex::Real(2)*(' + tau[1] + ')'),
+                    ('zero global smoothness', 'amrex::Real(0)'),
+                    ('wrong global smoothness combination', 'b1'),
+                    ('opposite global smoothness sign', '-(' + tau[1] + ')'),
+                ):
+                    changed = body[:tau.start(1)] + expr + body[tau.end(1):]
+                    fault = not label.startswith('opposite')
+                    yield case(label, changed, preserved + ('ok   ' + policy,
+                               ('FAIL ' if fault else 'ok   ') + tau_policy), fault)
+                if name != 'WENO_MZQ3':
+                    changed = body[:tau.start(1)] + tau[1].replace('std::abs', '') + body[tau.end(1):]
+                    yield case('signed global difference before squaring', changed,
+                               preserved + ('ok   ' + tau_policy,), False)
+                else:
+                    expr = 'std::abs(amrex::Real(2)*b3 - b1 - b2)/amrex::Real(32)'
+                    changed = body[:tau.start(1)] + expr + body[tau.end(1):]
+                    yield case('magnitude of sum replaces sum of magnitudes', changed,
+                               preserved + ('FAIL ' + tau_policy,))
+                expr = '(' + tau[1] + ') + amrex::Real(0)*(amrex::Real(1)/(amrex::Real(1)-(b1-b2)*(b1-b2)))'
+                changed = body[:tau.start(1)] + expr + body[tau.end(1):]
+                yield case('global smoothness singular only away from affine data', changed,
+                           positive_fields + (f'FAIL {name}: global smoothness divisions are defined',
+                                              'FAIL ' + all_defined))
+            # Curvature vanishes on every affine field, while arbitrary cell
+            # averages can make these denominators zero. Do not assume them away.
+            curvature = '(sp1-amrex::Real(2)*s+sm1)'
+            singular = f'amrex::Real(1)/(amrex::Real(1)-{curvature}*{curvature})'
+            changed = body[:returned.start()] + f'amrex::Real unused = {singular};\n' + body[returned.start():]
+            yield case('unused division singular only away from affine data', changed,
+                       positive_fields + ('FAIL ' + all_defined, 'ok   ' + policy))
+            beta_first = beta[0]
+            expr = '(' + beta_first[2] + ') + amrex::Real(0)*(' + singular + ')'
+            changed = body[:beta_first.start(2)] + expr + body[beta_first.end(2):]
+            yield case('hidden beta division singular only away from affine data', changed,
+                       positive_fields + ('FAIL ' + all_defined,
+                                          f'ok   {name}.b1: smoothness indicator is non-negative'))
+            expr = '(' + match[2] + ') + amrex::Real(0)*(amrex::Real(1)/(amrex::Real(1)-(b1-b2)*(b1-b2)))'
+            changed = body[:match.start(2)] + expr + body[match.end(2):]
+            yield case('hidden alpha division singular only away from affine data', changed,
+                       positive_fields + ('FAIL ' + all_defined,
+                                          f'FAIL {name}: nonlinear weight divisions are defined'))
             changed = body[:returned.start()] + 'amrex::Real unused = amrex::Real(1)/(eps+b1);\n' + body[returned.start():]
             yield case('unused but defined division', changed, positive_fields, mutated=False)
 

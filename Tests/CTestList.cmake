@@ -2429,7 +2429,8 @@ if(ERF_TEST_PYTHON)
     # Derive WENO ideal blends and smoothness indicators from independent
     # finite-volume polynomials, then check the parsed source, positivity and
     # nonlinear normalization, then actual constant/affine reconstruction with
-    # defined source divisions. Mutations edit scratch header copies only.
+    # defined source divisions. Independent nonlinear policies and modular
+    # all-data divisor checks complement affine accuracy. Mutations use scratch headers.
     add_test(NAME AdvectionWENOCandidates_Z3
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates.py
                 ${PROJECT_SOURCE_DIR})
@@ -2437,7 +2438,7 @@ if(ERF_TEST_PYTHON)
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_weno_candidates_selftest.py)
     set_tests_properties(AdvectionWENOCandidates_Z3 AdvectionWENOCandidates_Z3_SelfTest
         PROPERTIES
-        TIMEOUT 120
+        TIMEOUT 240
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
@@ -2550,7 +2551,7 @@ if(ERF_TEST_PYTHON)
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_weno_z_flux_selftest.py)
     set_tests_properties(AdvectionMomentumWenoZFlux_Z3 AdvectionMomentumWenoZFlux_Z3_SelfTest
         PROPERTIES
-        TIMEOUT 180
+        TIMEOUT 240
         PROCESSORS 1
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")

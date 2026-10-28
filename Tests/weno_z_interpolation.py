@@ -84,7 +84,8 @@ class WenoZ:
         # They prove candidate support/moments, independent beta derivative
         # integrals and ideal reconstruction, beta PSD, positive weights and
         # complete return normalization (including the MZQ correction), plus
-        # definedness and actual nonlinear exactness on constant/affine fields.
+        # actual nonlinear constant/affine exactness, independent tau/alpha laws,
+        # and all-data division definedness under the proved positivity bounds.
         expected = scalar.EXPECTED[name]
         candidates = {key: value for key, value in assignments.items() if re.fullmatch(r'v\d+', key)}
         require(set(candidates) == set(expected), f'{name}: candidate set changed')

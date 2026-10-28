@@ -5,9 +5,10 @@ The checker reads candidate and weight expressions from the WENO headers. It pro
 finite-volume candidate moments in exact rational arithmetic, smoothness-indicator
 identities against independent derivative integrals, optimal ideal-weight ratios
 and full-stencil ideal reconstruction, positive semidefiniteness by rational LDLᵀ,
-and nonlinear-weight normalization with Z3. The actual nonlinear return also
-reproduces constant and affine fields for arbitrary positive epsilon, after
-proving every evaluated divisor nonzero on those fields. Polynomial identities use exact
+and nonlinear-weight normalization with Z3. Independent policies specify squared
+global smoothness and normalized nonlinear alpha ratios. A modular replay proves
+every source division defined for arbitrary real data and positive epsilon; a
+separate actual nonlinear replay proves constant/affine exactness. Polynomial identities use exact
 rational coefficient comparison, not sample testing. Nonlinear convergence order,
 critical-point behavior, nonuniform-grid accuracy, and floating-point rounding
 remain outside these uniform-grid, cell-average checks.
@@ -23,6 +24,7 @@ from pathlib import Path
 
 from advection_source import Source, evaluation
 import weno_polynomial as reference
+import weno_weights as weight_reference
 
 try:
     import z3
@@ -483,6 +485,96 @@ def prove_candidate(name, label, expr, env, params, order, scale, support):
           f"{name}.{label}: candidate has exactly order {order} (degree {next_degree} is not exact)")
 
 
+def divisors_defined(divisors, assumptions):
+    """Check inside-out AST divisors; never assume away a singularity."""
+    for divisor in divisors:
+        divisor = z3.simplify(divisor)
+        if z3.is_rational_value(divisor) and rational(divisor) != 0:
+            continue
+        result = prove(divisor != 0, assumptions)
+        if result != z3.unsat:
+            return result
+    return z3.unsat
+
+
+def prove_nonlinear_policy(name, raw, alpha_env, raw_names, beta_symbols, positivity_proved):
+    """Check tau squared and normalized alpha ratios on independent beta>=0.
+
+    The separate PSD proof connects these beta symbols to the actual cell data.
+    Alpha ratios are checked for EVERY real tau, so the subsequent substitution
+    of a defined source tau with the specified square preserves the policy.
+    Positive alphas and correct normalization (checked separately) make these
+    cross-product equalities equivalent to equality of normalized weights.
+    """
+    facts = [alpha_env['eps'] > 0, *[beta >= 0 for beta in beta_symbols]]
+    if name not in ('WENO3', 'WENO5', 'WENO7'):
+        if 't5' not in raw:
+            check(False, f'{name}: missing global smoothness expression')
+            return
+        divisors = []
+        actual = to_z3(raw['t5'], {key: value for key, value in alpha_env.items() if key != 't5'}, divisors)
+        status = divisors_defined(divisors, facts)
+        check(status == z3.unsat, f'{name}: global smoothness divisions are defined [{status}]')
+        if status == z3.unsat:
+            expected = weight_reference.tau_squared(name, beta_symbols,
+                                                    lambda x: z3.If(x >= 0, x, -x))
+            status = prove(actual * actual == expected, facts)
+            check(status == z3.unsat,
+                  f'{name}: squared global smoothness matches independent policy [{status}]')
+
+    divisors = []
+    actual = [to_z3(raw[local], alpha_env, divisors) for local in raw_names]
+    status = divisors_defined(divisors, facts)
+    check(status == z3.unsat, f'{name}: nonlinear weight divisions are defined [{status}]')
+    if status != z3.unsat:
+        return
+    if not positivity_proved:
+        check(False, f'{name}: normalized nonlinear policy requires proved beta/alpha positivity')
+        return
+    ideals = [alpha_env[f'g{i}'] for i in range(1, len(raw_names) + 1)]
+    expected = weight_reference.alphas(name, ideals, beta_symbols, alpha_env['eps'],
+                                       alpha_env.get('t5'))
+    # Anchor to alpha_1, whose strict positivity is a separate prerequisite.
+    # A shared, positive, even data-dependent factor cancels in normalization.
+    status = prove(z3.And(*[actual[i] * expected[0] == actual[0] * expected[i]
+                            for i in range(1, len(actual))]), facts)
+    check(status == z3.unsat,
+          f'{name}: normalized nonlinear weights match independent policy [{status}]')
+
+
+def prove_all_data_definedness(name, assignments, raw, env, return_expr,
+                              beta_names, raw_names, positivity_proved):
+    """Consume every actual declaration/return, with sound modular abstractions.
+
+    Once its own divisions are proved defined, replace a source beta by a fresh
+    nonnegative real, a raw alpha by a fresh positive real, and tau by a fresh
+    unconstrained real. The separate source PSD/alpha proofs justify those
+    overapproximations. All other locals, including unused ones, keep their source
+    expressions. No relation between independent beta/alpha symbols is assumed.
+    """
+    if not positivity_proved:
+        check(False, f'{name}: all-data definedness requires proved beta/alpha positivity')
+        return
+    actual_env = {key: value for key, value in env.items() if key not in assignments}
+    facts = [actual_env['eps'] > 0]
+    for local, expression in [*raw.items(), ('return', return_expr)]:
+        divisors = []
+        value = to_z3(expression, actual_env, divisors)
+        status = divisors_defined(divisors, facts)
+        if status != z3.unsat:
+            check(False, f'{name}: all-data source divisions are defined for eps>0 '
+                  f'({local}) [{status}]')
+            return
+        if local in beta_names or local in raw_names or local == 't5':
+            value = z3.Real(f'{name}_defined_{local}')
+            if local in beta_names:
+                facts.append(value >= 0)
+            elif local in raw_names:
+                facts.append(value > 0)
+        actual_env[local] = z3.simplify(value)
+    check(True, f'{name}: all-data source divisions are defined for eps>0')
+
+
 def prove_weights(name, body, assignments, raw_assignments, env, params,
                   return_expr, candidate_count, scale):
     """Prove source smoothness indicators and normalized nonlinear weights."""
@@ -508,8 +600,10 @@ def prove_weights(name, body, assignments, raw_assignments, env, params,
     check(len(eps_values) == 2 and all(value > 0 for value in eps_values),
           f"{name}: both source precision branches use positive eps values {eps_values}")
     beta_symbols = [z3.Real(f"{name}_{item}") for item in beta_names]
+    positivity_proved = True
     for label, indicator in zip(beta_names, beta):
         psd = quadratic_is_psd(indicator, [env[param] for param in params])
+        positivity_proved &= psd
         check(psd,
               f"{name}.{label}: smoothness indicator is non-negative for all real cell data "
               "(exact rational LDLᵀ)")
@@ -529,10 +623,15 @@ def prove_weights(name, body, assignments, raw_assignments, env, params,
         ideal = rational(env[f"g{i}"]) > 0
         check(ideal, f"{name}.g{i}: source ideal weight is positive")
         result = prove(value > 0, [eps_positive, *beta_facts])
+        positivity_proved &= ideal and result == z3.unsat
         check(result == z3.unsat,
               f"{name}.{label}: unnormalized nonlinear weight is positive for eps>0"
               if result != z3.unknown else
               f"{name}.{label}: unnormalized weight proof returned unknown")
+
+    prove_nonlinear_policy(name, raw_assignments, alpha_env, raw_names, beta_symbols, positivity_proved)
+    prove_all_data_definedness(name, assignments, raw_assignments, env, return_expr,
+                              beta_names, raw_names, positivity_proved)
 
     alpha_symbols = [z3.Real(f"{name}_alpha{i}") for i in range(1, candidate_count + 1)]
     raw_sum = z3.Sum(alpha_symbols)
