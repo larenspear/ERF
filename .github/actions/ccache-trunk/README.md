@@ -1,45 +1,100 @@
-# Linux ccache trunks on GHCR
+# ccache trunks on GHCR
 
-This action stores one ccache snapshot per named build configuration at
-`ghcr.io/<repository-owner>/erf-ccache:<sanitized-key>`. The current caller is `ci.yml`,
-which runs the two Linux MPICH variants on development pushes and manual dispatch.
-Only default-branch runs save. Other CI workflows still use Actions cache.
+This action stores one rolling ccache snapshot per build configuration at
+`ghcr.io/<repository-owner>/erf-ccache:<sanitized-key>`. All eight compiler-cache
+workflows restore from GHCR. Only default-branch runs save; pull requests only read.
+Saves happen before tests so an unrelated test failure does not freeze the cache.
+These are compiler objects for incremental builds, not runnable ERF installations.
 
-The two tags are `ubuntu-22.04-x64-gcc-mpich-double-particles-off` and
-`ubuntu-22.04-x64-gcc-mpich-double-particles-on`: runner environment, architecture,
-compiler, MPI provider, precision, and particle setting.
-`CCACHE_TRUNK_KEY` in the job environment supplies the same key to restore and save,
-independently of the workflow and job names. Include additional matrix dimensions in
-the key when adding distinct build configurations. Renaming a key starts a new trunk;
-retire obsolete named tags separately, since pruning preserves named tags.
+During migration, each workflow falls back to its existing Actions cache on a GHCR
+miss or outage. This fallback is read-only: new snapshots go only to GHCR. The old
+Actions entries eventually expire under GitHub's cache policy. A first run with
+neither cache available builds normally and seeds its GHCR trunk on the default branch.
 
-The runner needs Bash, Docker, GNU coreutils, and `gh` (all present on GitHub's Ubuntu
-runners). The publishing job needs `contents: read` and `packages: write`. A new package
-is linked to its source repository through the image label. If the package already
-exists, grant the publishing repository access to it; deleting superseded versions also
-requires package admin access. Private packages work with an authorized repository
-token. Anonymous pulls require public visibility. Fork-origin PR access is not exercised
-by this workflow and should be checked before migrating PR workflows.
+## Configuration names
 
-Registry login, pull, and push get two attempts, with per-command timeouts. Transport
-failures emit warnings and let compilation/tests continue. A missing image is a normal
-cold build. Restores extract into a temporary sibling directory before replacing the
-cache; failed extraction leaves existing files intact. The path must therefore be a
-dedicated cache directory, not the home directory or filesystem root. Docker credentials
-use a private temporary configuration that is removed when the action exits.
+`CCACHE_TRUNK_KEY` supplies the same key to restore and save, independently of workflow
+and job names. Keys describe the runner environment, architecture, compiler/MPI or GPU
+profile, precision, and relevant options. The current development matrix has 21 trunks:
 
-After a successful push, pruning keeps named variant tags and deletes superseded
-versions. Pruning failures/timeouts are warnings and a later save retries cleanup.
-All helpers live beside the action so `ci.yml`'s `.github/actions/**` path filter covers
-changes to them. Concurrent development runs may publish in completion order; labels
-record the producing revision, but publishing does not enforce revision ordering.
+| Workflow | Profile | Trunks |
+| --- | --- | ---: |
+| `ci.yml` | Ubuntu 22.04, x64, GCC, MPICH, double, particles off/on | 2 |
+| `gcc.yml` | Ubuntu 22.04, x64, GCC, Open MPI, precision/particles | 3 |
+| `gcc-rrtmgp.yml` | Ubuntu 22.04, x64, GCC, Spack/Open MPI, Kokkos, NetCDF/RRTMGP | 3 |
+| `cuda-ci.yml` | Ubuntu 22.04, x64, CUDA 12.2, target 8.0, Open MPI, precision | 2 |
+| `hip.yml` | Ubuntu 22.04, x64, ROCm 6.3.2, gfx908, Open MPI, precision | 2 |
+| `sycl.yml` | Ubuntu 24.04, x64, oneAPI/SYCL, Intel MPI, precision | 2 |
+| `macos.yml` | macOS latest, actual runner architecture, Apple Clang, Open MPI, precision | 2 |
+| `windows.yml` | Windows latest, actual runner architecture, MSVC, MPI/precision/particles | 5 |
 
-Run the fault-injection checks on Linux with:
+For example, `ubuntu-22.04-x64-gcc-mpich-double-particles-off` and
+`ubuntu-22.04-x64-gcc-mpich-double-particles-on` retain the Linux pilot's names.
+Matching mesh/particle precision and the other fixed build options are defined by
+those workflows. Include new independent matrix dimensions in the key if coverage
+expands. Update explicit version/target names when dependency profiles change.
+
+`latest` describes the selected native runner image, not a pinned OS or toolchain.
+ccache still checks source, compiler, headers, and flags; a toolchain or large header
+update can cause a cold build even when the trunk downloads successfully. GHCR improves
+cache availability and retention, not ccache's ability to reuse incompatible objects.
+
+## Transports and failure handling
+
+With `transport: auto`, Linux uses the existing Docker scratch-image transport;
+macOS and Windows use an OCI artifact containing `ccache.tar` through ORAS. Tags must
+not be shared between transports: their formats differ. The explicit `docker` and
+`oras` settings are available for transport checks.
+
+The native helper downloads ORAS 1.3.0 from its official GitHub release and verifies a
+platform-specific SHA256 before execution. It needs Python 3, curl, and gh, supplied by
+GitHub's hosted runners. Linux Docker also needs Bash and GNU coreutils. No Python
+packages or Docker daemon are required on native runners.
+
+Login and transfer commands get two attempts. `transfer-timeout` defaults to 180 seconds
+per transfer command (maximum 600), allowing for the existing CUDA cache limit of
+1100 MB. Login has a 30-second limit and pruning has a 60-second overall budget.
+Registry, download, and filesystem failures warn and let compilation/tests continue;
+invalid action inputs fail. `hit` is true only after a complete restore.
+
+Both transports stage beside the destination before replacing it, keeping the previous
+cache for rollback. The path must be a dedicated cache directory, not home or the root.
+The native helper fetches an immutable blob digest from the manifest, verifies its
+size/checksum, and rejects archive traversal, links, and special files. It preserves
+file timestamps so CI's existing stale-object eviction remains effective. Credentials
+use a private temporary configuration removed after the transfer.
+
+## Access and retention
+
+Publishing jobs need `contents: read` and `packages: write`. Source labels/annotations
+link a new package to its repository. If it already exists, grant the publishing
+repository access; deleting superseded versions also requires package admin access.
+Private packages need an authorized token. Public visibility permits anonymous reads.
+Verify package access from fork-origin PRs when adopting this upstream: those tokens
+are read-only, and a denied restore warns and falls back to the old cache or a cold build.
+
+After a successful push, `prune.py` keeps every named configuration tag and deletes
+superseded untagged versions. Failed pruning is retried after a later save. There is no
+age-based expiration of the active trunks. Renaming/retiring configurations requires
+separate cleanup of their named tags. Concurrent development runs can publish in
+completion order; revision metadata records the producer but does not enforce ordering.
+All snapshots are transferred as complete archives/images, not per-object registry diffs.
+
+## Local checks
+
+Run all fault-injection tests on Linux:
 
 ```sh
-python3 .github/actions/ccache-trunk/test_cache.py -v
+python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_*.py' -v
 ```
 
-The checks use mocked Docker/GitHub commands, require no network or credentials, and
-also run in `ci.yml`. They cover retries, timeouts, failed/partial restores, replacement
-rollback, failed saves, pruning races, credential cleanup, and invalid inputs.
+Run only the portable tests on macOS or Windows (use `python` on Windows):
+
+```sh
+python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_native.py' -v
+```
+
+The tests need no network or credentials. They cover retries/timeouts, failed or
+partial restores, rollback, archive integrity/safety, timestamp preservation, failed
+saves, pruning retention/races, credential cleanup, and invalid inputs. The full suite
+also runs in `ci.yml`.
