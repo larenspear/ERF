@@ -2582,6 +2582,20 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Compose all six reconstructed faces with the complete helper/wrapper
+    # tendency for every horizontal/vertical momentum policy pair.
+    add_test(NAME AdvectionMomentumTendency_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_tendency.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumTendency_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_tendency_selftest.py)
+    set_tests_properties(AdvectionMomentumTendency_Z3 AdvectionMomentumTendency_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Check the inline centered-second-order constant-dz momentum path, including
     # its flux reconstruction, inverse maps, shared interior face balance, and top flux.
     add_test(NAME AdvectionMomentumConstantDzFastPath_Z3

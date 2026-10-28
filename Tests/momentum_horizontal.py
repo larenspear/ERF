@@ -45,7 +45,8 @@ def conditional(source):
     return [('if', condition, yes, no)]
 
 
-def read_helper(text, component):
+def read_helper(text, component, with_tail=False):
+    """Consume the helper; optionally return its metric/divergence/return tail."""
     velocity = 'uvw'['XYZ'.index(component)]
     pattern = (r'template\s*<([^>]+)>\s*AMREX_GPU_DEVICE\s*AMREX_FORCE_INLINE\s*'
                rf'amrex::Real\s+AdvectionSrcFor{component}Mom_N\s*\(([^()]*)\)\s*\{{')
@@ -85,7 +86,7 @@ def read_helper(text, component):
     for expression in tail:
         pure_expression(expression)
     source.done()
-    return result
+    return (result, tail) if with_tail else result
 
 
 class HorizontalModel(Model):
