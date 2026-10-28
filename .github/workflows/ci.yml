@@ -32,10 +32,10 @@ jobs:
         \ \\\n  -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \\\n  -DCMAKE_CXX_FLAGS_RELWITHDEBINFO=\"-O2 -g1 -DNDEBUG\"\
         \ \\\n  -DAMReX_ASSERTIONS:BOOL=ON \\\n  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \\\n  -DERF_DIM:STRING=3 \\\
         \n  -DERF_ENABLE_MPI:BOOL=ON \\\n  -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \\\n  '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4'\
-        \ \\\n  -DERF_ENABLE_PARTICLES:BOOL=OFF \\\n  -DERF_PRECISION:STRING=DOUBLE \\\n  -DERF_PARTICLES_PRECISION:STRING=DOUBLE\
-        \ \\\n  -DERF_ENABLE_TESTS:BOOL=ON \\\n  -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \\\n  -DERF_ENABLE_FCOMPARE:BOOL=ON\
-        \ \\\n  -DERF_TEST_SDM_SMOKE_GATED:BOOL=ON \\\n  ${{github.workspace}};\n\nctest --test-dir build-off -L\
-        \ regression --show-only=json-v1 > regression-evidence/particles-off-inventory.json"
+        \ \\\n  -DERF_ENABLE_PARTICLES:BOOL=OFF \\\n  -DERF_ENABLE_UNIT_TESTS:BOOL=OFF \\\n  -DERF_PRECISION:STRING=DOUBLE\
+        \ \\\n  -DERF_PARTICLES_PRECISION:STRING=DOUBLE \\\n  -DERF_ENABLE_TESTS:BOOL=ON \\\n  -DERF_ENABLE_ALL_WARNINGS:BOOL=ON\
+        \ \\\n  -DERF_ENABLE_FCOMPARE:BOOL=ON \\\n  -DERF_TEST_SDM_SMOKE_GATED:BOOL=ON \\\n  ${{github.workspace}};\n\
+        \nctest --test-dir build-off -L regression --show-only=json-v1 > regression-evidence/particles-off-inventory.json"
     - name: Configure particles ON build
       run: "cmake \\\n  -B${{runner.workspace}}/ERF/build \\\n  -DCMAKE_INSTALL_PREFIX:PATH=${{runner.workspace}}/ERF/install\
         \ \\\n  -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \\\n  -DCMAKE_CXX_FLAGS_RELWITHDEBINFO=\"-O2 -g1 -DNDEBUG\"\

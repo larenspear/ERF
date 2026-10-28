@@ -115,6 +115,8 @@ def run_trial(name):
         status = 'passed'
         if case.find('failure') is not None or case.find('error') is not None:
             status = 'failed'
+        elif case.get('status') == 'disabled':
+            status = 'disabled'
         elif case.find('skipped') is not None:
             status = 'skipped'
         assert case.attrib['name'] not in results
