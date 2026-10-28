@@ -2554,6 +2554,20 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Reconstruct X/Y fluxes for all normal momentum components and policies,
+    # including staggered mass averages, inverse maps, and shared-face agreement.
+    add_test(NAME AdvectionMomentumHorizontalFlux_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_horizontal_flux.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMomentumHorizontalFlux_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_horizontal_flux_selftest.py)
+    set_tests_properties(AdvectionMomentumHorizontalFlux_Z3 AdvectionMomentumHorizontalFlux_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Check the inline centered-second-order constant-dz momentum path, including
     # its flux reconstruction, inverse maps, shared interior face balance, and top flux.
     add_test(NAME AdvectionMomentumConstantDzFastPath_Z3

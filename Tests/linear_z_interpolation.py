@@ -1,4 +1,4 @@
-"""Source-derived linear Z interpolation and an independent rational-weight oracle.
+"""Source-derived linear interpolation and an independent rational-weight oracle.
 
 The source model retains constructors, signatures, load offsets, Evaluate call
 bindings, normalization/blending, and the complete returned expression. The
@@ -45,10 +45,16 @@ def sign(value):
     return z3.If(value > 0, num(1), z3.If(value < 0, num(-1), num(0)))
 
 
-def reference(scheme, field, i, j, q, component, flow, blend):
+def reference(scheme, field, i, j, q, component, flow, blend, direction='Z'):
+    axis = 'XYZ'.index(direction)
+
     def reconstruct(row):
-        return sum((num(coefficient) * field(i, j, q + offset, component)
-                    for offset, coefficient in row), num(0))
+        result = num(0)
+        for offset, coefficient in row:
+            point = [i, j, q]
+            point[axis] += offset
+            result += num(coefficient) * field(*point, component)
+        return result
     if scheme.startswith('Centered_'):
         return reconstruct(WEIGHTS[int(scheme.split('_')[1][0])])
     left, right = UPWIND_WEIGHTS[int(scheme.split('_')[1][0])]
@@ -60,7 +66,9 @@ def reference(scheme, field, i, j, q, component, flow, blend):
 
 
 class LinearZ:
-    def __init__(self, name, body, constants, enums):
+    # Keep the original name/default for the existing vertical checkers.
+    def __init__(self, name, body, constants, enums, direction='Z'):
+        require(direction in ('X', 'Y', 'Z'), 'unsupported interpolation direction')
         self.name, self.enums = name, enums
         self.dispatcher = name == 'UPWINDALL'
         self.upwind = name in ('UPWIND3', 'UPWIND5', 'UPWINDALL')
@@ -75,12 +83,12 @@ class LinearZ:
         require(compact(initializers) == expected_init and not constructor_body.strip(),
                 f'{name}: constructor field bindings/body changed')
 
-        matches = list(re.finditer(r'void\s+InterpolateInZ\s*\(([^()]*)\)\s*const\s*\{', body))
-        require(len(matches) == 1, f'{name}: expected one Z interpolation definition')
+        matches = list(re.finditer(rf'void\s+InterpolateIn{direction}\s*\(([^()]*)\)\s*const\s*\{{', body))
+        require(len(matches) == 1, f'{name}: expected one {direction} interpolation definition')
         signature = compact(matches[0][1])
         expected = ('constint&i,constint&j,constint&k,constint&qty_index,amrex::Real&val_lo,amrex::Real'
                     + ('upw_lo' if self.upwind else '') + (',constAdvTypeadv_type' if self.dispatcher else ''))
-        require(signature == expected, f'{name}: Z interpolation parameter bindings changed')
+        require(signature == expected, f'{name}: {direction} interpolation parameter bindings changed')
         source = Source(brace_block(body, matches[0].end() - 1))
         self.early = None
         if self.dispatcher:

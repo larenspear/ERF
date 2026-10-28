@@ -1,4 +1,4 @@
-"""Read WENO Z interpolation and compose its checked scalar kernel modularly.
+"""Read WENO interpolation and compose its checked scalar kernel modularly.
 
 The existing candidate/weight proofs check the complete scalar Evaluate body.
 The transport proof treats that pure kernel as an arbitrary function of its
@@ -21,7 +21,10 @@ WENO = {'Weno_3': 'WENO3', 'Weno_3Z': 'WENO_Z3', 'Weno_3MZQ': 'WENO_MZQ3',
 
 
 class WenoZ:
-    def __init__(self, name, body):
+    # Keep the original name/default for the existing vertical checker.
+    def __init__(self, name, body, direction='Z'):
+        require(direction in ('X', 'Y', 'Z'), 'unsupported interpolation direction')
+        self.direction = direction
         self.name = name
         self.radius = (int(name[-1]) - 1) // 2
         self.canonical = ['s' if offset == 0 else f's{"p" if offset > 0 else "m"}{abs(offset)}'
@@ -34,11 +37,11 @@ class WenoZ:
         require(compact(initializers) == 'm_phi(phi)' and not constructor_body.strip(),
                 f'{name}: constructor must bind phi and ignore the blend fraction')
 
-        signatures = list(re.finditer(r'void\s+InterpolateInZ\s*\(([^()]*)\)\s*const\s*\{', body))
-        require(len(signatures) == 1, f'{name}: expected one Z method')
+        signatures = list(re.finditer(rf'void\s+InterpolateIn{direction}\s*\(([^()]*)\)\s*const\s*\{{', body))
+        require(len(signatures) == 1, f'{name}: expected one {direction} method')
         require(compact(signatures[0][1]) ==
                 'constint&i,constint&j,constint&k,constint&qty_index,amrex::Real&val_lo,amrex::Realupw_lo',
-                f'{name}: Z method parameter bindings changed')
+                f'{name}: {direction} method parameter bindings changed')
         source = Source(brace_block(body, signatures[0].end() - 1))
         source.take(NORMALIZE)
         # Preserve declaration order, including the binding of each Evaluate
@@ -106,7 +109,11 @@ class WenoZ:
     def reference(self, field, i, j, q, component, flow):
         # Evaluate's center is the cell to the left of the face for positive
         # flow; negative flow reflects the sample order around that face.
+        def sample(offset):
+            point = [i, j, q]
+            point['XYZ'.index(self.direction)] += offset
+            return field(*point, component)
         offsets = range(-self.radius, self.radius + 1)
-        left = self.kernel(*[field(i, j, q - 1 + offset, component) for offset in offsets])
-        right = self.kernel(*[field(i, j, q - offset, component) for offset in offsets])
+        left = self.kernel(*[sample(offset - 1) for offset in offsets])
+        right = self.kernel(*[sample(-offset) for offset in offsets])
         return z3.If(flow > 0, left, z3.If(flow < 0, right, (left + right) / 2))
