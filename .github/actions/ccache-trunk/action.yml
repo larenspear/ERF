@@ -39,18 +39,8 @@ runs:
         CACHE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
         CACHE_OWNER_TYPE: ${{ github.event.repository.owner.type }}
       run: |
-        transport=$CACHE_TRANSPORT
-        if [[ "$transport" == auto ]]; then
-          if [[ "$RUNNER_OS" == Linux ]]; then transport=docker; else transport=oras; fi
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          python "$ACTION_PATH/cache.py"
+        else
+          python3 "$ACTION_PATH/cache.py"
         fi
-        case "$transport" in
-          docker) bash "$ACTION_PATH/cache.sh" ;;
-          oras)
-            if [[ "$RUNNER_OS" == Windows ]]; then
-              python "$ACTION_PATH/native.py"
-            else
-              python3 "$ACTION_PATH/native.py"
-            fi
-            ;;
-          *) echo '::error::transport must be auto, docker, or oras' >&2; exit 2 ;;
-        esac

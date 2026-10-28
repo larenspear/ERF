@@ -46,10 +46,10 @@ macOS and Windows use an OCI artifact containing `ccache.tar` through ORAS. Tags
 not be shared between transports: their formats differ. The explicit `docker` and
 `oras` settings are available for transport checks.
 
-The native helper downloads ORAS 1.3.0 from its official GitHub release and verifies a
+The ORAS backend downloads ORAS 1.3.0 from its official GitHub release and verifies a
 platform-specific SHA256 before execution. It needs Python 3, curl, and gh, supplied by
-GitHub's hosted runners. Linux Docker also needs Bash and GNU coreutils. No Python
-packages or Docker daemon are required on native runners.
+GitHub's hosted runners. The Docker backend needs Python 3, Docker, and gh. Both use
+only the Python standard library; native runners do not need a Docker daemon.
 
 Login and transfer commands get two attempts. `transfer-timeout` defaults to 180 seconds
 per transfer command (maximum 600), allowing for the existing CUDA cache limit of
@@ -57,7 +57,7 @@ per transfer command (maximum 600), allowing for the existing CUDA cache limit o
 Registry, download, and filesystem failures warn and let compilation/tests continue;
 invalid action inputs fail. `hit` is true only after a complete restore.
 
-Native command failures report the operation, exit status or timeout, and up to
+Both backends report command failures with the operation, exit status or timeout, and up to
 1024 characters of diagnostic output. Tokens, authentication fields, URL credentials
 and query strings are redacted before truncation. Explicit missing-manifest responses
 are normal cache misses; permission errors and ambiguous failures remain warnings.
@@ -88,16 +88,10 @@ All snapshots are transferred as complete archives/images, not per-object regist
 
 ## Local checks
 
-Run all fault-injection tests on Linux:
+Run all fault-injection tests on Linux or macOS (use `python` on Windows):
 
 ```sh
 python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_*.py' -v
-```
-
-Run only the portable tests on macOS or Windows (use `python` on Windows):
-
-```sh
-python3 -m unittest discover -s .github/actions/ccache-trunk -p 'test_native*.py' -v
 ```
 
 The tests need no network or credentials. They cover retries/timeouts, failed or
@@ -105,13 +99,33 @@ partial restores, rollback, archive integrity/safety, timestamp preservation, fa
 saves, pruning retention/races, credential cleanup, redacted diagnostics, and invalid
 inputs. The full suite runs in the existing `shellcheck` job in `lint.yml` for pull
 requests and development pushes that change `.github/**`, and on manual dispatch.
-It uses the runner's Python
-standard library, Bash, and GNU coreutils, without compiling ERF or accessing GHCR.
+It uses only the runner's Python standard library, without compiling ERF or accessing
+GHCR. The same contract tests exercise both real backends with mocked external commands.
 
-The native helper reads action configuration once in `read_config()`. Its separate
-`setup_registry()`, `restore()`, `save()`, and `prune()` functions use that configuration.
-`main()` owns temporary-file cleanup and calls pruning only after a successful save.
-Archive verification, safe extraction, and rollback remain in focused helpers.
+## Shared transport interface
+
+`cache.py` is the entry point for both backends. It validates configuration once and
+owns hit outputs, staging, cache promotion/rollback, temporary-file cleanup, warning
+policy, and pruning after a successful save. `transport.py` defines the interface and
+shared configuration, bounded command retries, and redacted diagnostics.
+
+`DockerTransport` in `docker.py` and `OrasTransport` in `oras.py` each implement:
+
+| Method | Responsibility |
+| --- | --- |
+| `setup()` | Prepare the executable and isolated credentials. |
+| `restore(destination) -> bool` | Fill an empty staging directory; return false only for an explicit missing cache. Raise on other failures. |
+| `save()` | Publish the configured cache; return only when publication succeeds. |
+| `close()` | Release backend resources, including after a partial failure. |
+
+Backends never replace the live cache, write action outputs, or prune registry versions.
+The driver calls `close()` even after setup/transfer failure or interruption. Promotion
+rolls back if interrupted between renames and propagates cancellation. `cache.sh` remains
+a compatibility entry point for the original Docker helper.
+
+To add a backend, implement these four methods, register its selection in `cache.py`,
+and run the shared contract scenarios against it. Docker images and ORAS artifacts
+retain their existing formats; a shared interface does not make their tags interchangeable.
 
 ## Manual GHCR smoke test
 

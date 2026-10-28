@@ -8,15 +8,15 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-import native
+import transport
 
 
 class CommandTests(unittest.TestCase):
     def failure(self, exception, **kwargs):
-        with patch.object(native.subprocess, 'run', side_effect=exception) as command, \
-                patch.object(native.time, 'sleep'):
+        with patch.object(transport.subprocess, 'run', side_effect=exception) as command, \
+                patch.object(transport.time, 'sleep'):
             with self.assertRaises(RuntimeError) as caught:
-                native.run(['oras', 'manifest', 'fetch', 'private-command-argument'], **kwargs)
+                transport.run(['oras', 'manifest', 'fetch', 'private-command-argument'], **kwargs)
         self.assertEqual(command.call_count, kwargs.get('attempts', 2))
         message = str(caught.exception)
         self.assertNotIn('private-command-argument', message)
@@ -84,7 +84,7 @@ class CommandTests(unittest.TestCase):
     def test_warning_is_a_single_escaped_annotation(self):
         with patch.dict(os.environ, GHCR_TOKEN='synthetic-warning-token'), \
                 contextlib.redirect_stderr(io.StringIO()) as output:
-            native.warning('failed: synthetic-warning-token\n::error::external%0Amessage')
+            transport.warning('failed: synthetic-warning-token\n::error::external%0Amessage')
         self.assertEqual(output.getvalue(),
                          '::warning::failed: [redacted] ::error::external%250Amessage\n')
 

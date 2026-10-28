@@ -14,7 +14,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import native
+import cache
+import oras
+import transport
 import prune
 
 
@@ -34,9 +36,9 @@ class NativeTests(unittest.TestCase):
         (self.source / 'a' / 'object').write_bytes(b'new object')
         os.utime(self.source / 'a' / 'object', (1_600_000_000, 1_600_000_000))
         self.archive = self.root / 'remote.tar'
-        native.pack(self.source, self.archive)
-        self.manifest = {'artifactType': native.ARTIFACT_TYPE, 'layers': [{
-            'mediaType': native.LAYER_TYPE, 'digest': 'sha256:' + native.sha256(self.archive),
+        oras.pack(self.source, self.archive)
+        self.manifest = {'artifactType': oras.ARTIFACT_TYPE, 'layers': [{
+            'mediaType': oras.LAYER_TYPE, 'digest': 'sha256:' + oras.sha256(self.archive),
             'size': self.archive.stat().st_size}]}
         self.env = dict(CACHE_MODE='restore', CACHE_KEY='macOS-X64-Clang',
                         CACHE_PATH=str(self.cache), GHCR_TOKEN='synthetic-token',
@@ -61,12 +63,12 @@ class NativeTests(unittest.TestCase):
 
     def action(self, mode='restore', command=None, missing=(), **env):
         with patch.dict(os.environ, {**self.env, "CACHE_MODE": mode, **env}), \
-                patch.object(native, 'install_oras', return_value=Path('oras')), \
-                patch.object(native, 'run', side_effect=command or self.command), \
+                patch.object(oras, 'install_oras', return_value=Path('oras')), \
+                patch.object(transport, 'run', side_effect=command or self.command), \
                 contextlib.redirect_stderr(io.StringIO()) as err:
             for name in missing:
                 os.environ.pop(name, None)
-            status = native.main()
+            status = cache.main()
         self.assertEqual(list(self.runner.iterdir()), [], 'temporary credentials leaked')
         self.assertFalse(list(self.root.glob('*.ghcr-*')), 'staging directory leaked')
         return status, err.getvalue()
@@ -148,7 +150,7 @@ class NativeTests(unittest.TestCase):
                     self.assertEqual(env['GH_TOKEN'], 'synthetic-token')
 
     def test_config_repr_does_not_expose_credentials(self):
-        config = native.read_config({**self.env, 'CACHE_MODE': 'save'})
+        config = cache.read_config({**self.env, 'CACHE_MODE': 'save'})
         self.assertNotIn('synthetic-token', repr(config))
 
     def test_corrupt_blob_preserves_cache(self):
@@ -180,10 +182,10 @@ class NativeTests(unittest.TestCase):
                         raise subprocess.CalledProcessError(1, args, stderr=detail)
                     return subprocess.CompletedProcess(args, 0, self.command(args, **kwargs), '')
 
-                with patch.object(native.subprocess, 'run', side_effect=response), \
-                        patch.object(native.time, 'sleep'), \
+                with patch.object(transport.subprocess, 'run', side_effect=response), \
+                        patch.object(transport.time, 'sleep'), \
                         contextlib.redirect_stdout(io.StringIO()) as output:
-                    status, errors = self.action(command=native.run)
+                    status, errors = self.action(command=transport.run)
                 self.assertEqual(status, 0)
                 self.preserved()
                 self.assertFalse(any(args[1] == 'blob' for args, _ in self.calls))
@@ -210,9 +212,9 @@ class NativeTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, args, stderr='404 Not Found: blob unknown')
             return subprocess.CompletedProcess(args, 0, self.command(args, **kwargs), '')
 
-        with patch.object(native.subprocess, 'run', side_effect=response), \
-                patch.object(native.time, 'sleep'):
-            status, errors = self.action(command=native.run)
+        with patch.object(transport.subprocess, 'run', side_effect=response), \
+                patch.object(transport.time, 'sleep'):
+            status, errors = self.action(command=transport.run)
         self.assertEqual(status, 0)
         self.assertIn('fetch cache archive', errors)
         self.assertIn('404 Not Found: blob unknown', errors)
@@ -247,9 +249,9 @@ class NativeTests(unittest.TestCase):
                     'erf-ccache: could not delete version 42: HTTP 403; synthetic-token'))
             return subprocess.CompletedProcess(args, 0, output, '')
 
-        with patch.object(native.subprocess, 'run', side_effect=response), \
-                patch.object(native.time, 'sleep'):
-            status, errors = self.action('save', command=native.run)
+        with patch.object(transport.subprocess, 'run', side_effect=response), \
+                patch.object(transport.time, 'sleep'):
+            status, errors = self.action('save', command=transport.run)
         self.assertEqual(status, 0)
         self.assertIn('exit status 1', errors)
         self.assertIn('could not delete version 42: HTTP 403', errors)
@@ -278,7 +280,7 @@ class NativeTests(unittest.TestCase):
                     member.type = kind
                     member.linkname = '../escape' if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else ''
                     bundle.addfile(member)
-                self.manifest['layers'][0].update(digest='sha256:' + native.sha256(self.archive),
+                self.manifest['layers'][0].update(digest='sha256:' + oras.sha256(self.archive),
                                                   size=self.archive.stat().st_size)
                 self.output.unlink(missing_ok=True)
                 self.assertEqual(self.action()[0], 0)
@@ -287,29 +289,29 @@ class NativeTests(unittest.TestCase):
 
     def test_wrong_artifact_format_rejected(self):
         for manifest in ([], {}, {'artifactType': 'wrong', 'layers': []},
-                         {'artifactType': native.ARTIFACT_TYPE, 'layers': [None]}):
+                         {'artifactType': oras.ARTIFACT_TYPE, 'layers': [None]}):
             with self.assertRaises(ValueError):
-                native.layer_descriptor(manifest)
+                oras.layer_descriptor(manifest)
 
     def test_oras_checksum_verified_before_extracting(self):
         def wrong_download(args, **kwargs):
             Path(args[args.index('--output') + 1]).write_bytes(b'wrong executable')
-        with patch.object(native, 'run', side_effect=wrong_download):
+        with patch.object(transport, 'run', side_effect=wrong_download):
             with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
-                native.install_oras(self.runner, ('macOS', 'ARM64'))
+                oras.install_oras(self.runner, ('macOS', 'ARM64'))
         self.assertFalse((self.runner / 'oras').exists())
 
     def test_timeout_and_transient_command_retry(self):
         timeout = subprocess.TimeoutExpired('oras', 1)
         good = subprocess.CompletedProcess(['oras'], 0, 'complete', '')
         with patch.object(subprocess, 'run', side_effect=[timeout, good]) as command, \
-                patch.object(native.time, 'sleep'):
-            self.assertEqual(native.run(['oras', 'pull'], timeout=1), 'complete')
+                patch.object(transport.time, 'sleep'):
+            self.assertEqual(transport.run(['oras', 'pull'], timeout=1), 'complete')
             self.assertEqual(command.call_count, 2)
         with patch.object(subprocess, 'run', side_effect=timeout) as command, \
-                patch.object(native.time, 'sleep'):
+                patch.object(transport.time, 'sleep'):
             with self.assertRaises(RuntimeError):
-                native.run(['oras', 'pull'], timeout=1)
+                transport.run(['oras', 'pull'], timeout=1)
             self.assertEqual(command.call_count, 2)
 
 

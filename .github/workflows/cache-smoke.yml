@@ -58,9 +58,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Run helper tests
-        run: |
-          if [[ "$RUNNER_OS" == Linux ]]; then pattern='test_*.py'; else pattern='test_native*.py'; fi
-          "$SMOKE_PYTHON" -m unittest discover -s .github/actions/ccache-trunk -p "$pattern" -v
+        run: '"$SMOKE_PYTHON" -m unittest discover -s .github/actions/ccache-trunk -p "test_*.py" -v'
       - name: Populate compiler cache
         run: '"$SMOKE_PYTHON" .github/actions/ccache-trunk/smoke.py populate'
       - name: Publish cache
