@@ -134,7 +134,7 @@ jobs:
   install:
     name: spack install ${{ matrix.spec }}
     needs: plan
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && needs.plan.outputs.install != '[]'
     runs-on: ubuntu-22.04
     timeout-minutes: 300
     strategy:
@@ -322,8 +322,8 @@ jobs:
           spack_ref: ${{ env.SPACK_REF }}
           packages_ref: ${{ env.PACKAGES_REF }}
 
-      # ROCm is registered as externals, like a site installation would be; rocprim is
-      # header-only and is built from source by Spack.
+      # ROCm is registered as externals, like a site installation would be; rocprim and
+      # rocThrust are header-only and are built from source by Spack.
       - name: Register the recipe, externals, ROCm and the project build cache
         run: |
           . spack_install_dir/share/spack/setup-env.sh
@@ -405,7 +405,8 @@ jobs:
 
       # An externally installed oneAPI needs the environment setvars.sh sets (Spack's
       # compiler package only fixes rpaths for a oneAPI it installed itself), so the
-      # compilers, MKL and Intel MPI are registered by hand with that environment attached.
+      # compilers, MKL, Intel MPI and oneDPL are registered by hand with that environment
+      # attached.
       - name: Register the recipe, externals, oneAPI and the project build cache
         run: |
           . spack_install_dir/share/spack/setup-env.sh
@@ -415,6 +416,9 @@ jobs:
           cc_version=$(basename "$(readlink -f /opt/intel/oneapi/compiler/latest)")
           mkl_version=$(basename "$(readlink -f /opt/intel/oneapi/mkl/latest)")
           mpi_version=$(basename "$(readlink -f /opt/intel/oneapi/mpi/latest)")
+          dpl_version=$(basename "$(readlink -f /opt/intel/oneapi/dpl/latest)")
+          ls /opt/intel/oneapi/dpl
+          test -f "/opt/intel/oneapi/dpl/$dpl_version/lib/cmake/oneDPL/oneDPLConfig.cmake"
           ld_path=$(bash -c 'source /opt/intel/oneapi/setvars.sh --force > /dev/null 2>&1; echo "$LD_LIBRARY_PATH"')
           bin_path=$(bash -c 'source /opt/intel/oneapi/setvars.sh --force > /dev/null 2>&1; echo "$PATH"')
           cat > oneapi-externals.yaml <<EOF
@@ -442,6 +446,11 @@ jobs:
               buildable: false
               externals:
               - spec: intel-oneapi-mpi@${mpi_version}
+                prefix: /opt/intel/oneapi
+            intel-oneapi-dpl:
+              buildable: false
+              externals:
+              - spec: intel-oneapi-dpl@${dpl_version}
                 prefix: /opt/intel/oneapi
           EOF
           spack config add -f oneapi-externals.yaml

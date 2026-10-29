@@ -5,8 +5,8 @@ The lists below hold variant strings. The workflow's plan job prefixes each with
 manual run builds the whole matrix at a release. Entries that name a version themselves are
 built as written on development runs and dropped on release runs: ``erf@develop`` entries use
 options the development branch alone has, and the pinned-release entries keep a release path
-proven alongside development. A ``spec`` input replaces the install matrix with that one spec
-and empties the platform matrices.
+proven alongside development. A ``spec`` input builds that one spec alone: in the ROCm or
+SYCL job when it asks for that backend, otherwise in the install job.
 
     python3 Build/spack/ci_matrix.py                   # development, every job
     python3 Build/spack/ci_matrix.py --version 26.09   # the same at the 26.09 release
@@ -73,7 +73,8 @@ def specs(entries, version):
 
 def matrix(version="", spec=""):
     if spec:
-        return {"install": [spec], "macos": [], "rocm": [], "sycl": []}
+        job = "rocm" if "+rocm" in spec else "sycl" if "+sycl" in spec else "install"
+        return {name: [spec] if name == job else [] for name in JOBS}
     version = version or "develop"
     return {job: specs(entries, version) for job, entries in JOBS.items()}
 
