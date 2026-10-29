@@ -185,8 +185,12 @@ demand:
 * ``concretization sweep`` runs ``Build/spack/erf_sweep.py`` and ``spack audit``: every
   supported variant combination concretizes, every unsupported one is refused with the
   recipe's own message. Minutes, no build.
-* ``spack install`` builds ten representative configurations and runs the stand-alone tests
-  (merges, weekly and on demand; a manual run can build one spec).
+* ``spack install`` builds every configuration that changes what is compiled (the lists in
+  ``Build/spack/ci_matrix.py``, each traced to the ERF workflow, build script or
+  documentation page that builds it) and runs the stand-alone tests; ``macOS``, ``ROCm``
+  and ``oneAPI SYCL`` do the same on those platforms. Merges, weekly and on demand. A
+  manual run (Actions, *Spack package*, *Run workflow*) builds the whole matrix at a release
+  with the ``version`` input (``26.09``) or one spec with the ``spec`` input.
 
 What to do when:
 
