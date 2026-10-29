@@ -134,7 +134,9 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
    * - ``rrtmgp`` (off, 25.10+)
      - ``ERF_ENABLE_RRTMGP``
      - RTE-RRTMGP radiation. Builds EKAT with its bundled Kokkos, yaml-cpp, spdlog and Catch2
-       from the commits ERF pins; needs ``+netcdf``. On GPUs, Kokkos takes one architecture.
+       from the commits ERF pins; needs ``+netcdf``. On GPUs, Kokkos takes one architecture
+       and needs rocThrust (``rocthrust``) with ``+rocm`` or oneDPL (``intel-oneapi-dpl``)
+       with ``+sycl``.
    * - ``noahmp`` (off, 25.12+)
      - ``ERF_ENABLE_NOAHMP``
      - Noah-MP from the commit ERF pins for that release; needs ``+netcdf``, adds Fortran,
@@ -190,7 +192,8 @@ demand:
   documentation page that builds it) and runs the stand-alone tests; ``macOS``, ``ROCm``
   and ``oneAPI SYCL`` do the same on those platforms. Merges, weekly and on demand. A
   manual run (Actions, *Spack package*, *Run workflow*) builds the whole matrix at a release
-  with the ``version`` input (``26.09``) or one spec with the ``spec`` input.
+  with the ``version`` input (``26.09``) or one spec with the ``spec`` input (a ``+rocm`` or
+  ``+sycl`` spec runs in that platform's job).
 
 What to do when:
 
