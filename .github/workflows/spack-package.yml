@@ -94,7 +94,7 @@ jobs:
         # particles), on development and on the last release so the recipe's CUDA path
         # stays proven while development is red. A manual run with a spec builds only
         # that spec.
-        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop precision=single +particles +ml_uphys_diagnostics", "erf@develop +particles +cuda cuda_arch=80 ^cuda@12"]') }}
+        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop +particles +cuda cuda_arch=80 ^cuda@12"]') }}
     env:
       SPEC: ${{ matrix.spec }}
       GHCR_USER: ${{ github.actor }}
