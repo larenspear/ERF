@@ -14,7 +14,8 @@ name: Spack package
 #   sycl        a compile-only SYCL build with Intel oneAPI from apt registered as Spack
 #               externals, as ERF's sycl.yml installs it (no GPU on these runners)
 # Dependencies come from the project build cache on GHCR after the first run; ERF itself is
-# always built. A manual run can build one spec instead of the matrix, and can point at
+# always built. The build lists live in Build/spack/ci_matrix.py. A manual run can build the
+# whole matrix at a release (version input) or one spec (spec input), and can point at
 # another spack/spack-packages ref to try a dependency recipe change.
 
 on:
@@ -48,6 +49,9 @@ on:
       spec:
         description: build this one spec instead of the matrix (empty = the matrix)
         default: ""
+      version:
+        description: build the matrix at this ERF version, e.g. 26.09 (empty = develop)
+        default: ""
       packages_ref:
         description: spack/spack-packages git ref (empty = the pinned one)
         default: ""
@@ -57,7 +61,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-spack-package-${{ inputs.spec }}
+  group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-spack-package-${{ inputs.spec }}-${{ inputs.version }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 env:
@@ -104,20 +108,41 @@ jobs:
           spack audit packages erf
           python3 Build/spack/erf_sweep.py
 
+  plan:
+    name: build matrix
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      install: ${{ steps.matrix.outputs.install }}
+      macos: ${{ steps.matrix.outputs.macos }}
+      rocm: ${{ steps.matrix.outputs.rocm }}
+      sycl: ${{ steps.matrix.outputs.sycl }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Specs for this run
+        id: matrix
+        env:
+          VERSION: ${{ inputs.version }}
+          ONE_SPEC: ${{ inputs.spec }}
+        run: |
+          matrix=$(python3 Build/spack/ci_matrix.py --version "$VERSION" --spec "$ONE_SPEC")
+          echo "$matrix" | python3 -m json.tool
+          for job in install macos rocm sycl; do
+            echo "$job=$(echo "$matrix" | jq -c ".$job")" >> "$GITHUB_OUTPUT"
+          done
+
   install:
     name: spack install ${{ matrix.spec }}
+    needs: plan
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        # Representative builds: every variant that changes what is compiled, on the
-        # development branch, plus pinned releases. CUDA mirrors cuda-ci.yml (CUDA 12,
-        # particles), on development and on the last release so the recipe's CUDA path
-        # stays proven while development is red. A manual run with a spec builds only
-        # that spec.
-        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop", "erf@develop ~mpi", "erf@develop +openmp +particles +tests +fcompare", "erf@develop +netcdf +noahmp +particles", "erf@develop +netcdf +rrtmgp", "erf@develop +netcdf +tools", "erf@develop +windfarm +wsm6_fort +wdm6_fort", "erf@develop precision=single particles_precision=single +particles", "erf@develop precision=double particles_precision=single +particles", "erf@develop +particles +ml_uphys_diagnostics", "erf@develop +eamxx_shoc +tests ~unit_tests", "erf@develop +fire", "erf@develop +particles +tests +fcompare ^mpich", "erf@develop +particles +cuda cuda_arch=80 ^cuda@12", "erf@26.09 +particles +cuda cuda_arch=80 ^cuda@12", "erf@26.09 +netcdf +noahmp +particles +tests"]') }}
+        # Every variant that changes what is compiled, on development plus pinned releases
+        # (Build/spack/ci_matrix.py); a manual run can build one spec or a release instead.
+        spec: ${{ fromJSON(needs.plan.outputs.install) }}
     env:
       SPEC: ${{ matrix.spec }}
       GHCR_USER: ${{ github.actor }}
@@ -195,14 +220,15 @@ jobs:
 
   macos:
     name: macOS ${{ matrix.spec }}
-    if: github.event_name != 'pull_request'
+    needs: plan
+    if: github.event_name != 'pull_request' && needs.plan.outputs.macos != '[]'
     runs-on: macos-latest
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         # What macos.yml builds: Apple Clang, MPI on, particles, double and single precision.
-        spec: ["erf@develop +particles +tests +fcompare", "erf@develop +particles precision=single"]
+        spec: ${{ fromJSON(needs.plan.outputs.macos) }}
     env:
       SPEC: ${{ matrix.spec }}
       GHCR_USER: ${{ github.actor }}
@@ -261,14 +287,16 @@ jobs:
 
   rocm:
     name: ROCm ${{ matrix.spec }}
-    if: github.event_name != 'pull_request'
+    needs: plan
+    if: github.event_name != 'pull_request' && needs.plan.outputs.rocm != '[]'
     runs-on: ubuntu-22.04
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        # What hip.yml builds: ROCm from AMD's apt repository, gfx908, MPI on, particles.
-        spec: ["erf@develop +rocm amdgpu_target=gfx908 +particles"]
+        # What hip.yml builds (ROCm from AMD's apt repository, gfx908, MPI on, particles)
+        # and the radiation build of Build/cmake_with_kokkos_many_hip.sh.
+        spec: ${{ fromJSON(needs.plan.outputs.rocm) }}
     env:
       SPEC: ${{ matrix.spec }}
       ROCM_VERSION: "6.3.2"
@@ -332,14 +360,16 @@ jobs:
 
   sycl:
     name: oneAPI SYCL ${{ matrix.spec }}
-    if: github.event_name != 'pull_request'
+    needs: plan
+    if: github.event_name != 'pull_request' && needs.plan.outputs.sycl != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        # What sycl.yml builds: Intel oneAPI icx/icpx, Intel MPI, particles.
-        spec: ["erf@develop +sycl +particles %oneapi ^[virtuals=mpi] intel-oneapi-mpi"]
+        # What sycl.yml builds (Intel oneAPI icx/icpx, Intel MPI, particles) and the Aurora
+        # configuration of Docs/sphinx_doc/aurora_build_run.rst.
+        spec: ${{ fromJSON(needs.plan.outputs.sycl) }}
     env:
       SPEC: ${{ matrix.spec }}
       GHCR_USER: ${{ github.actor }}
