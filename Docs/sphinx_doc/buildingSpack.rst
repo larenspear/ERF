@@ -125,8 +125,9 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
      - AMReX is built with the same precision.
    * - ``particles_precision=same`` (26.06+: ``double``, ``single``)
      - ``ERF_PARTICLES_PRECISION``
-     - ``same`` follows ``precision``. A mixed-precision build is refused until Spack's
-       ``amrex`` recipe can build particles at a precision of their own.
+     - ``same`` follows ``precision``. AMReX is built with the same particle precision
+       (this repository carries an ``amrex`` recipe adding that variant until Spack's own
+       has it).
    * - ``tools`` (off, 25.07+)
      - ``ERF_ENABLE_TOOLS``
      - Needs ``+netcdf``.

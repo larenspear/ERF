@@ -234,6 +234,12 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("amrex precision=double", when="@:26.05")
         for _p in ("double", "single"):
             depends_on(f"amrex precision={_p}", when=f"@26.06:precision={_p}")
+        # The same call asks for the PSINGLE/PDOUBLE particle component chosen by
+        # ERF_PARTICLES_PRECISION, so AMReX's particle precision must match it.
+        # Spack's builtin amrex has no such variant yet; this repository's amrex
+        # (packages/amrex) adds it until spack-packages does.
+        for _p in ("double", "single"):
+            depends_on(f"amrex particles_precision={_p}", when=f"@26.06:particles_precision={_p}")
         # Every ERF regression test pipes its plotfile through AMReX's fcompare,
         # and ERF looks for it at <amrex prefix>/bin/amrex_fcompare, which an
         # installed AMReX only ships with +plotfile_tools.
@@ -299,21 +305,6 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # The checked-in eamxx_config.h builds EAMxx in double precision.
     conflicts("+eamxx_shoc", when="precision=single", msg="EAMxx SHOC is double precision only")
     conflicts("+tools", when="~netcdf", msg="The tools require NetCDF")
-    # The same call asks for the PSINGLE/PDOUBLE particle component chosen by
-    # ERF_PARTICLES_PRECISION. Spack's amrex recipe builds the particles at
-    # the mesh precision (it has no AMReX_PARTICLES_PRECISION variant yet),
-    # so until it does a mixed-precision build is refused rather than failing
-    # in find_package(AMReX).
-    conflicts(
-        "particles_precision=single",
-        when="precision=double",
-        msg="mixed precision needs an amrex particles_precision variant (not in Spack yet)",
-    )
-    conflicts(
-        "particles_precision=double",
-        when="precision=single",
-        msg="mixed precision needs an amrex particles_precision variant (not in Spack yet)",
-    )
     conflicts(
         "+ml_uphys_diagnostics",
         when="~particles",
