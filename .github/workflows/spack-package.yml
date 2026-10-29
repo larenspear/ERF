@@ -111,9 +111,11 @@ jobs:
       fail-fast: false
       matrix:
         # Representative builds: every variant that changes what is compiled, on the
-        # development branch, plus one pinned release. A manual run with a spec builds
-        # only that spec.
-        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop", "erf@develop ~mpi", "erf@develop +openmp +particles +tests +fcompare", "erf@develop +netcdf +noahmp +particles", "erf@develop +netcdf +rrtmgp", "erf@develop +netcdf +tools", "erf@develop +windfarm +wsm6_fort +wdm6_fort", "erf@develop precision=single particles_precision=single +particles", "erf@develop precision=double particles_precision=single +particles", "erf@develop +particles +ml_uphys_diagnostics", "erf@develop +eamxx_shoc +tests ~unit_tests", "erf@develop +fire", "erf@develop +particles +tests +fcompare ^mpich", "erf@develop +cuda cuda_arch=80", "erf@26.09 +netcdf +noahmp +particles +tests"]') }}
+        # development branch, plus pinned releases. CUDA mirrors cuda-ci.yml (CUDA 12,
+        # particles), on development and on the last release so the recipe's CUDA path
+        # stays proven while development is red. A manual run with a spec builds only
+        # that spec.
+        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop", "erf@develop ~mpi", "erf@develop +openmp +particles +tests +fcompare", "erf@develop +netcdf +noahmp +particles", "erf@develop +netcdf +rrtmgp", "erf@develop +netcdf +tools", "erf@develop +windfarm +wsm6_fort +wdm6_fort", "erf@develop precision=single particles_precision=single +particles", "erf@develop precision=double particles_precision=single +particles", "erf@develop +particles +ml_uphys_diagnostics", "erf@develop +eamxx_shoc +tests ~unit_tests", "erf@develop +fire", "erf@develop +particles +tests +fcompare ^mpich", "erf@develop +particles +cuda cuda_arch=80 ^cuda@12", "erf@26.09 +particles +cuda cuda_arch=80 ^cuda@12", "erf@26.09 +netcdf +noahmp +particles +tests"]') }}
     env:
       SPEC: ${{ matrix.spec }}
       GHCR_USER: ${{ github.actor }}
