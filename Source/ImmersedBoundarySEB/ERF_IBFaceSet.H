@@ -347,6 +347,28 @@ public:
      */
     void check_canopy_layout (const amrex::MultiFab& cons, const TwoStreamCanopyView& canopy) const;
 
+    // Public only because a CUDA extended lambda cannot sit in a private member
+    // function (the ray-map fill); the constructor and the multilevel rebuild call it.
+    /**
+     * Build the ray map (m_ray_patch) from m_col_valid and the levels below.
+     * The halo is sized for the shallowest ray the map must follow to its
+     * end: the shallowest ray of the hemisphere sampling
+     * (ibseb::hemisphere_min_sz()) and a sun ``erf.ibseb.sun_min_elev_deg``
+     * above the horizon, over the tallest column of this level and the levels
+     * below, ``height / tan(elevation)`` cells in x and in y
+     * (ibseb::ray_halo_cells()). A rising ray stops above the tallest column
+     * and a falling one at the ground, so within that reach the walk is exact,
+     * and beyond it only a sun lower than the floor is concerned, whose
+     * direct beam the clear-sky attenuation has all but removed; a building
+     * farther than the halo from a face then casts no shadow on it (the far
+     * field is open ground). The patch is this rank's boxes grown by the
+     * halo, clipped to the domain where it is not periodic and, where it is,
+     * reduced to one domain width when the grown box is at least that wide,
+     * in which case the walk wraps round and is exact for any reach.
+     * @param below Face sets of the levels below (empty on level 0), each with its build() done.
+     */
+    void build_ray_map (const std::vector<const IBFaceSet*>& below);
+
     // The two-stream branches of compute_shortwave() (once the sun is placed) and
     // compute_longwave(). Public only because a CUDA extended lambda cannot sit in
     // a private member function; call the two functions above instead.
@@ -580,26 +602,6 @@ private:
     double m_cost_s = 0.0;        ///< Wall-clock seconds spent in the per-step update on this rank
     amrex::Long m_cost_n = 0;     ///< Number of per-step updates timed
     double m_init_cost_s = 0.0;   ///< Wall-clock seconds of build() and compute_view_fractions()
-
-    /**
-     * Build the ray map (m_ray_patch) from m_col_valid and the levels below.
-     * The halo is sized for the shallowest ray the map must follow to its
-     * end: the shallowest ray of the hemisphere sampling
-     * (ibseb::hemisphere_min_sz()) and a sun ``erf.ibseb.sun_min_elev_deg``
-     * above the horizon, over the tallest column of this level and the levels
-     * below, ``height / tan(elevation)`` cells in x and in y
-     * (ibseb::ray_halo_cells()). A rising ray stops above the tallest column
-     * and a falling one at the ground, so within that reach the walk is exact,
-     * and beyond it only a sun lower than the floor is concerned, whose
-     * direct beam the clear-sky attenuation has all but removed; a building
-     * farther than the halo from a face then casts no shadow on it (the far
-     * field is open ground). The patch is this rank's boxes grown by the
-     * halo, clipped to the domain where it is not periodic and, where it is,
-     * reduced to one domain width when the grown box is at least that wide,
-     * in which case the walk wraps round and is exact for any reach.
-     * @param below Face sets of the levels below (empty on level 0), each with its build() done.
-     */
-    void build_ray_map (const std::vector<const IBFaceSet*>& below);
 
     /** Warn once when a fixed sun stands below ``erf.ibseb.sun_min_elev_deg`` and the map does not span the domain. */
     void warn_fixed_sun_below_floor () const;
