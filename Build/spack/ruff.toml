@@ -1,0 +1,7 @@
+# Lint settings for the Spack recipe and its helpers (`ruff format` / `ruff check` here).
+# Same line length as spack/spack-packages; Spack recipes import their directives with
+# `from spack.package import *`, which is what F403/F405 object to.
+line-length = 99
+
+[lint]
+ignore = ["F403", "F405"]
