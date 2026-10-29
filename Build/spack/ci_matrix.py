@@ -51,12 +51,12 @@ ROCM = [
     "+rocm amdgpu_target=gfx908 +particles",
     "+netcdf +rrtmgp +fft +rocm amdgpu_target=gfx908",
 ]
-# sycl.yml: Intel oneAPI, Intel MPI, particles; and the Aurora configuration of
-# Docs/sphinx_doc/aurora_build_run.rst.
-SYCL = [
-    "+sycl +particles %oneapi ^[virtuals=mpi] intel-oneapi-mpi",
-    "+netcdf +noahmp +rrtmgp +sycl %oneapi ^[virtuals=mpi] intel-oneapi-mpi",
-]
+# sycl.yml: Intel oneAPI, Intel MPI, particles. The Aurora configuration of
+# Docs/sphinx_doc/aurora_build_run.rst (+netcdf +noahmp +rrtmgp +sycl) concretizes but does
+# not compile with the oneAPI the runner image installs (2026.x): EKAT's bundled Kokkos 4.5.1
+# requires SYCL_EXT_INTEL_USM_ADDRESS_SPACES, which those releases no longer define (Kokkos
+# dropped the check in 5.1, the version EKAT now bundles upstream).
+SYCL = ["+sycl +particles %oneapi ^[virtuals=mpi] intel-oneapi-mpi"]
 JOBS = {"install": INSTALL, "macos": MACOS, "rocm": ROCM, "sycl": SYCL}
 
 

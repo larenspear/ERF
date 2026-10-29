@@ -367,8 +367,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # What sycl.yml builds (Intel oneAPI icx/icpx, Intel MPI, particles) and the Aurora
-        # configuration of Docs/sphinx_doc/aurora_build_run.rst.
+        # What sycl.yml builds (Intel oneAPI icx/icpx, Intel MPI, particles); ci_matrix.py
+        # says why the Aurora radiation configuration is not here.
         spec: ${{ fromJSON(needs.plan.outputs.sycl) }}
     env:
       SPEC: ${{ matrix.spec }}
