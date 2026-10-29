@@ -29,9 +29,24 @@ class Amrex(BuiltinAmrex):
 
     def cmake_args(self):
         args = super().cmake_args()
-        if self.spec.satisfies("+particles"):
-            precision = self.spec.variants["particles_precision"].value
-            if precision == "same":
-                precision = self.spec.variants["precision"].value
-            args.append(self.define("AMReX_PARTICLES_PRECISION", precision.upper()))
+        if self.spec.satisfies("+particles") and not self.spec.satisfies(
+            "particles_precision=same"
+        ):
+            # The builtin recipe configures AMReX in xSDK mode, where AMReX's
+            # CMake assigns the particle precision from XSDK_PRECISION with a
+            # plain set() that shadows any -DAMReX_PARTICLES_PRECISION. Leave
+            # xSDK mode for this build and state both precisions directly;
+            # everything else xSDK mode would default (BUILD_SHARED_LIBS) the
+            # builtin recipe already passes explicitly.
+            args = [a for a in args if not a.startswith("-DUSE_XSDK_DEFAULTS")]
+            args.extend(
+                [
+                    self.define("USE_XSDK_DEFAULTS", False),
+                    self.define("AMReX_PRECISION", self.spec.variants["precision"].value.upper()),
+                    self.define(
+                        "AMReX_PARTICLES_PRECISION",
+                        self.spec.variants["particles_precision"].value.upper(),
+                    ),
+                ]
+            )
         return args
