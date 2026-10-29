@@ -29,7 +29,9 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
 
     homepage = "https://erf.readthedocs.io/en/latest/index.html"
     url = "https://github.com/erf-model/ERF/archive/refs/tags/26.09.tar.gz"
-    git = "https://github.com/erf-model/ERF.git"
+    # TEST BRANCH ONLY: build development from the fork branch that carries the two
+    # ERF fixes (CUDA extended lambda, single-precision ML diagnostics).
+    git = "https://github.com/larenspear/ERF.git"
 
     maintainers("larenspear", "jmsexton03")
 
@@ -42,7 +44,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # by amrex@26.04. Declare each release together with its matching AMReX pin
     # so a new version cannot be added without one. The development branch
     # tracks AMReX's development branch the same way.
-    version("develop", branch="development")
+    version("develop", branch="spack-in-tree-fixes")
     depends_on("amrex@develop", when="@develop", type=("build", "link"))
 
     for _v, _sha in (
