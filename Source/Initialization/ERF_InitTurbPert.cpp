@@ -105,9 +105,9 @@ sample_perturbation_wind (const Box& region, Real height_agl,
                        (znext == bogus_large_value && height_agl >= z && height_agl <= a(i,j,k,4))) {
                 // Constant extension within the first/last half-cell only.
             } else {
-                return {zero, zero, zero};
+                return {Real(0.0), Real(0.0), Real(0.0)};
             }
-            return {u, v, one};
+            return {u, v, Real(1.0)};
         });
         const auto values = data.value(op);
         sums[0] += amrex::get<0>(values);
@@ -267,9 +267,9 @@ ERF::turbPert_update_automatic (int lev, double time)
             using Tuple = typename decltype(data)::Type;
             op.eval(bx, data, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple {
                 const Real h = ha(amrex::coarsen(i,hrx), amrex::coarsen(j,hry), hklo);
-                const bool valid = h >= zero && h < amrex::Real(1.e10);
-                const Real bottom = (k == pklo) ? one : zero;
-                if (!valid) { return {zero, zero, zero, zero, bottom, one}; }
+                const bool valid = h >= Real(0.0) && h < amrex::Real(1.e10);
+                const Real bottom = (k == pklo) ? Real(1.0) : Real(0.0);
+                if (!valid) { return {Real(0.0), Real(0.0), Real(0.0), Real(0.0), bottom, Real(1.0)}; }
                 Real zlo = (k-pklo)*pdx[2];
                 Real zhi = zlo + pdx[2];
                 if (terrain) {
@@ -278,10 +278,10 @@ ERF::turbPert_update_automatic (int lev, double time)
                     zlo = fourth*(nd(i,j,k) + nd(i+1,j,k) + nd(i,j+1,k) + nd(i+1,j+1,k)) - zs;
                     zhi = fourth*(nd(i,j,k+1) + nd(i+1,j,k+1) + nd(i,j+1,k+1) + nd(i+1,j+1,k+1)) - zs;
                 }
-                const Real weight = amrex::max(Real(zero), amrex::min(zhi, fraction*h) - amrex::max(Real(zero), zlo));
+                const Real weight = amrex::max(Real(0.0), amrex::min(zhi, fraction*h) - amrex::max(Real(0.0), zlo));
                 const Real u = myhalf*(ua(i,j,k) + ua(i+1,j,k));
                 const Real v = myhalf*(va(i,j,k) + va(i,j+1,k));
-                return {u*weight, v*weight, weight, bottom*h, bottom, zero};
+                return {u*weight, v*weight, weight, bottom*h, bottom, Real(0.0)};
             });
             const auto r = data.value(op);
             sums[nsum*f  ] += amrex::get<0>(r);

@@ -1168,7 +1168,11 @@ private:
 
     // Initialize the Turbulent perturbation
     void turbPert_update (const int lev, const double dt);
+public:
+    // Public only because a CUDA extended lambda cannot sit in a private member
+    // function (the face-sampling reduction inside); call turbPert_update instead.
     void turbPert_update_automatic (int lev, double time);
+private:
     void turbPert_update_uniform_wind (int lev, double time);
     void turbPert_amplitude (const int lev);
     void turbPert_amplitude_w (const int lev);
