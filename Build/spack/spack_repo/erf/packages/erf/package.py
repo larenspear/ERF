@@ -148,9 +148,38 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         description="Enable the WDM6 Fortran microphysics bridge",
         when="@26.09:",
     )
-    # ERF_ENABLE_EAMXX_SHOC (26.09+) compiles EAMxx sources that ERF's CMake
-    # expects from a separate E3SM checkout (Build/GNU_Ekat/eamxx_clone.sh),
-    # so it is not offered until ERF's build fetches them itself.
+    variant(
+        "eamxx_shoc",
+        default=False,
+        description="Build the EAMxx SHOC turbulence parameterization (EKAT, Kokkos and "
+        "a sparse checkout of E3SM's EAMxx sources at the commit ERF pins)",
+        when="@26.09:",
+    )
+    # ERF_ENABLE_FIRE is on the development branch only at the time of writing;
+    # the first release to carry it will be 26.10 or later.
+    variant(
+        "fire",
+        default=False,
+        description="Enable the fire coupling (atmosphere side; fire engines are external)",
+        when="@26.10:",
+    )
+    # ERF 26.06 split the gtest unit tests from the regression tests
+    # (ERF_ENABLE_UNIT_TESTS, on by default whenever the tests are on).
+    variant(
+        "unit_tests",
+        default=True,
+        description="Build the GoogleTest unit tests alongside the regression tests",
+        when="@26.06:+tests",
+    )
+    # ERF 26.06 added ERF_PARTICLES_PRECISION, defaulting to ERF_PRECISION.
+    variant(
+        "particles_precision",
+        default="same",
+        values=("same", "double", "single"),
+        multi=False,
+        description="Floating point precision of the particle data ('same' follows precision)",
+        when="@26.06:",
+    )
 
     with default_args(type="build"):
         depends_on("cmake@3.20:")
@@ -162,6 +191,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("fortran", when="+wsm6_fort")
         depends_on("fortran", when="+wdm6_fort")
         depends_on("fortran", when="+rrtmgp")
+        depends_on("fortran", when="+eamxx_shoc")
         # The Noah-MP ERF driver generates part of its interface with Python (26.09+).
         depends_on("python@3:", when="+noahmp")
         # ERF's FindNetCDF tries pkg-config before nc-config.
@@ -169,7 +199,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         # ERF 26.06 added gtest-based unit tests, enabled by default alongside the
         # regression tests. Supply GoogleTest from Spack rather than the bundled
         # Submodules/googletest checkout (see patch()).
-        depends_on("googletest", when="@26.06:+tests")
+        depends_on("googletest", when="@26.06:+tests+unit_tests")
 
     with default_args(type=("build", "link")):
         # AMReX must be built for the same programming model as ERF.
@@ -204,7 +234,6 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("amrex precision=double", when="@:26.05")
         for _p in ("double", "single"):
             depends_on(f"amrex precision={_p}", when=f"@26.06:precision={_p}")
-
         # Every ERF regression test pipes its plotfile through AMReX's fcompare,
         # and ERF looks for it at <amrex prefix>/bin/amrex_fcompare, which an
         # installed AMReX only ships with +plotfile_tools.
@@ -266,7 +295,25 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("+noahmp", when="~netcdf", msg="Noah-MP requires NetCDF")
     conflicts("+rrtmgp", when="~netcdf", msg="RRTMGP requires NetCDF")
     conflicts("+rrtmgp", when="~mpi", msg="RRTMGP (EKAT) requires MPI")
+    conflicts("+eamxx_shoc", when="~mpi", msg="SHOC (EKAT) requires MPI")
+    # The checked-in eamxx_config.h builds EAMxx in double precision.
+    conflicts("+eamxx_shoc", when="precision=single", msg="EAMxx SHOC is double precision only")
     conflicts("+tools", when="~netcdf", msg="The tools require NetCDF")
+    # The same call asks for the PSINGLE/PDOUBLE particle component chosen by
+    # ERF_PARTICLES_PRECISION. Spack's amrex recipe builds the particles at
+    # the mesh precision (it has no AMReX_PARTICLES_PRECISION variant yet),
+    # so until it does a mixed-precision build is refused rather than failing
+    # in find_package(AMReX).
+    conflicts(
+        "particles_precision=single",
+        when="precision=double",
+        msg="mixed precision needs an amrex particles_precision variant (not in Spack yet)",
+    )
+    conflicts(
+        "particles_precision=double",
+        when="precision=single",
+        msg="mixed precision needs an amrex particles_precision variant (not in Spack yet)",
+    )
     conflicts(
         "+ml_uphys_diagnostics",
         when="~particles",
@@ -351,15 +398,33 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             "Submodules/ekat/extern/Catch2",
         ),
     )
+    # EAMxx SHOC needs EKAT too (ERF's CMake turns EKAT on for either); the two
+    # conditions are disjoint so a +rrtmgp+eamxx_shoc build fetches each once.
     for _name, _repo, _commit, _ in _rrtmgp_stack:
-        resource(
-            name=_name,
-            git=f"https://github.com/E3SM-Project/{_repo}.git",
-            commit=_commit,
-            destination="spack-resources",
-            placement=_name,
-            when="+rrtmgp",
-        )
+        for _when in ("+rrtmgp", "~rrtmgp+eamxx_shoc"):
+            resource(
+                name=_name,
+                git=f"https://github.com/E3SM-Project/{_repo}.git",
+                commit=_commit,
+                destination="spack-resources",
+                placement=_name,
+                when=_when,
+            )
+
+    # The EAMxx sources SHOC is compiled from: the two directories ERF's CMake
+    # reads under external/E3SM/components/eamxx/src, out of E3SM at the commit
+    # Build/GNU_Ekat/eamxx_clone.sh checks out (check_pins.py compares the two).
+    # Spack 1.1+ makes a sparse, blob-filtered clone; older Spack clones all of E3SM.
+    _e3sm_commit = "2eb52d9b3d452e593f3825f9408507cae3519bf6"
+    resource(
+        name="e3sm-eamxx",
+        git="https://github.com/E3SM-Project/E3SM.git",
+        commit=_e3sm_commit,
+        git_sparse_paths=["components/eamxx/src/physics", "components/eamxx/src/share"],
+        destination="spack-resources",
+        placement="e3sm",
+        when="+eamxx_shoc",
+    )
 
     # Noah-MP's ERF coupling layer (drivers/erf) is versioned with ERF, not with
     # Noah-MP's own releases: ERF's pin is well past the last Noah-MP tag and
@@ -399,9 +464,13 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         os.rename(src, dst)
 
     def patch(self):
-        if self.spec.satisfies("+rrtmgp"):
+        if self.spec.satisfies("+rrtmgp") or self.spec.satisfies("+eamxx_shoc"):
             for name, _, _, target in self._rrtmgp_stack:
                 self._move_into_place(join_path("spack-resources", name), target)
+        if self.spec.satisfies("+eamxx_shoc"):
+            self._move_into_place(
+                join_path("spack-resources", "e3sm"), join_path("external", "E3SM")
+            )
         if self.spec.satisfies("+noahmp"):
             self._move_into_place(join_path("spack-resources", "noahmp"), "Submodules/Noah-MP")
 
@@ -410,7 +479,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         # GoogleTest: both test executables already link GTest::gtest, the target
         # name that find_package(GTest) defines, and Tests/Unit already
         # include(GoogleTest) for gtest_discover_tests.
-        if self.spec.satisfies("@26.06:+tests"):
+        if self.spec.satisfies("@26.06:+tests+unit_tests"):
             unit_cmakelists = join_path("Tests", "Unit", "CMakeLists.txt")
             marker = (
                 "add_subdirectory(${PROJECT_SOURCE_DIR}/Submodules/googletest\n"
@@ -448,6 +517,8 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("ERF_ENABLE_ML_UPHYS_DIAGNOSTICS", "ml_uphys_diagnostics"),
             self.define_from_variant("ERF_ENABLE_WSM6_FORT", "wsm6_fort"),
             self.define_from_variant("ERF_ENABLE_WDM6_FORT", "wdm6_fort"),
+            self.define_from_variant("ERF_ENABLE_EAMXX_SHOC", "eamxx_shoc"),
+            self.define_from_variant("ERF_ENABLE_FIRE", "fire"),
             self.define("ERF_PRECISION", spec.variants["precision"].value.upper()),
         ]
 
@@ -455,7 +526,16 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         # defaults to ON whenever the regression tests are on; state it
         # explicitly so ~tests never drags in a GoogleTest build.
         if spec.satisfies("@26.06:"):
-            args.append(self.define_from_variant("ERF_ENABLE_UNIT_TESTS", "tests"))
+            args.append(self.define("ERF_ENABLE_UNIT_TESTS", spec.satisfies("+tests+unit_tests")))
+            particles_precision = spec.variants["particles_precision"].value
+            if particles_precision == "same":
+                particles_precision = spec.variants["precision"].value
+            args.append(self.define("ERF_PARTICLES_PRECISION", particles_precision.upper()))
+
+        # ERF_ENABLE_NVHPC (25.11+) makes ERF's CMake look for the NVHPC SDK's
+        # CUDA and math libraries; only meaningful with the NVHPC compilers.
+        if spec.satisfies("@25.11:+cuda%nvhpc"):
+            args.append(self.define("ERF_ENABLE_NVHPC", True))
 
         # Only ERF's test harness reads MPIEXEC_PREFLAGS, and --oversubscribe is
         # an Open MPI spelling that other MPI launchers reject.

@@ -110,15 +110,23 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
      - ``ERF_ENABLE_FFT``
      - AMReX's FFT-based solvers (``amrex+fft``).
    * - ``tests`` (off)
-     - ``ERF_ENABLE_TESTS``, ``ERF_ENABLE_UNIT_TESTS``
-     - Regression and unit tests; GoogleTest comes from Spack. The Open MPI launcher gets
+     - ``ERF_ENABLE_TESTS``
+     - Regression tests, and from 26.06 the unit tests too; the Open MPI launcher gets
        ``--oversubscribe`` for the parallel tests.
+   * - ``unit_tests`` (on, 26.06+, with ``+tests``)
+     - ``ERF_ENABLE_UNIT_TESTS``
+     - The GoogleTest unit tests; GoogleTest comes from Spack. ``~unit_tests`` is ERF's
+       regression-tests-only build.
    * - ``fcompare`` (off)
      - ``ERF_ENABLE_FCOMPARE``
      - AMReX's ``fcompare`` (``amrex+plotfile_tools``).
    * - ``precision=double`` (26.06+: ``single``)
      - ``ERF_PRECISION``
      - AMReX is built with the same precision.
+   * - ``particles_precision=same`` (26.06+: ``double``, ``single``)
+     - ``ERF_PARTICLES_PRECISION``
+     - ``same`` follows ``precision``. A mixed-precision build is refused until Spack's
+       ``amrex`` recipe can build particles at a precision of their own.
    * - ``tools`` (off, 25.07+)
      - ``ERF_ENABLE_TOOLS``
      - Needs ``+netcdf``.
@@ -136,9 +144,22 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
    * - ``wsm6_fort`` (off, 26.05+), ``wdm6_fort`` (off, 26.09+)
      - ``ERF_ENABLE_WSM6_FORT`` / ``_WDM6_FORT``
      - Fortran microphysics bridges; double precision only.
+   * - ``eamxx_shoc`` (off, 26.09+)
+     - ``ERF_ENABLE_EAMXX_SHOC``
+     - The EAMxx SHOC turbulence scheme. Builds EKAT like ``rrtmgp`` and fetches the two
+       EAMxx source directories from E3SM at the commit ``Build/GNU_Ekat/eamxx_clone.sh``
+       pins (a sparse clone on Spack 1.1+). Needs ``+mpi``; double precision only.
+   * - ``fire`` (off, development)
+     - ``ERF_ENABLE_FIRE``
+     - The fire coupling, atmosphere side. Fire engines are separate code
+       (``ERF_FIRE_ENGINE_DIRS``) and are not built by the recipe.
 
-Not covered: ``ERF_ENABLE_EAMXX_SHOC`` (26.09+), which compiles EAMxx sources from a separate
-E3SM checkout that ERF's CMake does not fetch; WW3 coupling; and the GNU Make build.
+``%nvhpc +cuda`` builds also set ``ERF_ENABLE_NVHPC`` (25.11+); no CI covers them yet.
+
+Not covered, on purpose: the documentation build (``ERF_ENABLE_DOCUMENTATION``), code
+coverage, the warning flags, fire engine directories, the bundled-AMReX build
+(``ERF_USE_INTERNAL_AMREX``; Spack always builds against its own ``amrex``), the GNU Make
+build, WW3 coupling, and Windows.
 
 Build cache
 -----------

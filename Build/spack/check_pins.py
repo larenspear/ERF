@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Check that ERF's Spack recipe pins the same submodule commits as ERF's tree.
+"""Check that ERF's Spack recipe pins the same external commits as ERF's tree.
 
 The recipe (Build/spack/spack_repo/erf/packages/erf/package.py) fetches the RRTMGP/EKAT
-stack and Noah-MP as pinned git resources instead of submodules, so release tarballs can
-be built. This compares those pins with the gitlinks in ERF's own tree:
+stack, Noah-MP and the EAMxx sources as pinned git resources instead of submodules or
+clone scripts, so release tarballs can be built. This compares those pins with ERF's tree:
 
-  * the @develop pins against the ref given with --ref (default HEAD);
+  * the @develop pins against the ref given with --ref (default HEAD): the RRTMGP, ekat and
+    Noah-MP gitlinks, and the E3SM commit in Build/GNU_Ekat/eamxx_clone.sh;
   * each tagged release the recipe offers against that tag, for the tags available locally
     (`git fetch --tags` to get them all);
   * EKAT's own extern/* pins against EKAT's tree at the pinned EKAT commit, read from a
@@ -31,8 +32,10 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACKAGE_PY = os.path.join(HERE, "spack_repo", "erf", "packages", "erf", "package.py")
+EAMXX_CLONE = "Build/GNU_Ekat/eamxx_clone.sh"
 EKAT_EXTERNS = ("kokkos", "yaml-cpp", "spdlog", "Catch2")
 RELEASE_TAG = re.compile(r"^\d\d\.\d\d$")
+E3SM_CHECKOUT = re.compile(r"^\s*git checkout ([0-9a-f]{40})\s*$", re.M)
 
 
 def git(*args, cwd=None, check=True):
@@ -52,8 +55,19 @@ def gitlinks(ref, path, cwd):
     return out
 
 
+def e3sm_commit_at(ref, cwd):
+    """The E3SM commit Build/GNU_Ekat/eamxx_clone.sh checks out at ref, or None."""
+    r = subprocess.run(
+        ["git", "show", f"{ref}:{EAMXX_CLONE}"], cwd=cwd, capture_output=True, text=True
+    )
+    if r.returncode != 0:
+        return None
+    m = E3SM_CHECKOUT.search(r.stdout)
+    return m.group(1) if m else None
+
+
 def recipe_pins(path):
-    """The pin tables and the versions the recipe declares, read from its AST."""
+    """The pin tables, the E3SM commit and the versions the recipe declares (from its AST)."""
     tree = ast.parse(open(path, encoding="utf-8").read(), filename=path)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Erf")
     tables = {}
@@ -61,7 +75,7 @@ def recipe_pins(path):
     for node in cls.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             name = getattr(node.targets[0], "id", None)
-            if name in ("_rrtmgp_stack", "_noahmp_pins"):
+            if name in ("_rrtmgp_stack", "_noahmp_pins", "_e3sm_commit"):
                 tables[name] = ast.literal_eval(node.value)
         if isinstance(node, ast.For) and isinstance(node.iter, ast.Tuple):
             for entry in ast.literal_eval(node.iter):
@@ -75,10 +89,15 @@ def recipe_pins(path):
             and isinstance(node.args[0], ast.Constant)
         ):
             versions.append(node.args[0].value)
-    missing = {"_rrtmgp_stack", "_noahmp_pins"} - set(tables)
+    missing = {"_rrtmgp_stack", "_noahmp_pins", "_e3sm_commit"} - set(tables)
     if missing:
         raise RuntimeError(f"{path}: could not read {', '.join(sorted(missing))}")
-    return tables["_rrtmgp_stack"], tables["_noahmp_pins"], sorted(set(versions))
+    return (
+        tables["_rrtmgp_stack"],
+        tables["_noahmp_pins"],
+        tables["_e3sm_commit"],
+        sorted(set(versions)),
+    )
 
 
 def vtuple(v):
@@ -134,7 +153,7 @@ def main():
     args = ap.parse_args()
 
     root = git("rev-parse", "--show-toplevel", cwd=HERE).strip()
-    stack, noahmp, versions = recipe_pins(PACKAGE_PY)
+    stack, noahmp, e3sm_commit, versions = recipe_pins(PACKAGE_PY)
     stack_by_path = {dest: commit for _, _, commit, dest in stack}
     failures = []
     rows = []
@@ -151,19 +170,18 @@ def main():
     check("develop Noah-MP", links.get("Submodules/Noah-MP"), develop_noahmp)
     for path in ("Submodules/RRTMGP", "Submodules/ekat"):
         check(f"develop {path}", links.get(path), stack_by_path.get(path))
+    check("develop E3SM (eamxx_clone.sh)", e3sm_commit_at(args.ref, root), e3sm_commit)
 
     # Each release the recipe offers, where the tag is available locally.
     skipped_tags = []
     for v in versions:
         if not RELEASE_TAG.match(v):
             continue
-        if (
-            subprocess.run(
-                ["git", "-C", root, "rev-parse", "-q", "--verify", f"refs/tags/{v}^{{commit}}"],
-                capture_output=True,
-            ).returncode
-            != 0
-        ):
+        probe = subprocess.run(
+            ["git", "-C", root, "rev-parse", "-q", "--verify", f"refs/tags/{v}^{{commit}}"],
+            capture_output=True,
+        )
+        if probe.returncode != 0:
             skipped_tags.append(v)
             continue
         tag_links = gitlinks(v, "Submodules", cwd=root)
@@ -172,6 +190,8 @@ def main():
                 check(f"{v} {path}", tag_links.get(path), stack_by_path.get(path))
         if vtuple(v) >= (25, 12):
             check(f"{v} Noah-MP", tag_links.get("Submodules/Noah-MP"), noahmp_pin_for(v, noahmp))
+        if vtuple(v) >= (26, 9):
+            check(f"{v} E3SM (eamxx_clone.sh)", e3sm_commit_at(v, root), e3sm_commit)
 
     # EKAT's own submodules at the pinned EKAT commit.
     externs = ekat_externs(stack_by_path["Submodules/ekat"], root)
@@ -196,9 +216,8 @@ def main():
     if skipped_tags:
         print(f"note: tags not available locally, not checked: {', '.join(skipped_tags)}")
     if unoffered:
-        print(
-            f"{'FAIL' if args.strict else 'warning'}: release tags the recipe does not offer: {', '.join(unoffered)}"
-        )
+        kind = "FAIL" if args.strict else "warning"
+        print(f"{kind}: release tags the recipe does not offer: {', '.join(unoffered)}")
         if args.strict:
             failures.append("unoffered releases")
 
@@ -218,9 +237,11 @@ def main():
         failures.remove("develop Noah-MP")
     if any(f.startswith("develop Submodules/") for f in failures):
         print(
-            "The RRTMGP/EKAT pins moved: update _rrtmgp_stack in package.py (ERF's RRTMGP and ekat gitlinks, "
-            "then EKAT's extern/* gitlinks at the new EKAT commit) and rerun this check."
+            "The RRTMGP/EKAT pins moved: update _rrtmgp_stack in package.py (ERF's RRTMGP and "
+            "ekat gitlinks, then EKAT's extern/* gitlinks at the new EKAT commit) and rerun."
         )
+    if "develop E3SM (eamxx_clone.sh)" in failures:
+        print("The E3SM commit moved: update _e3sm_commit in package.py and rerun.")
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
