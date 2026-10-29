@@ -11,6 +11,8 @@ name: Spack package
 #   macos       the same on a macOS runner with Homebrew's Open MPI, as ERF's macos.yml builds
 #   rocm        a compile-only HIP build with ROCm from AMD's apt repository registered as
 #               Spack externals, as ERF's hip.yml installs it (no GPU on these runners)
+#   sycl        a compile-only SYCL build with Intel oneAPI from apt registered as Spack
+#               externals, as ERF's sycl.yml installs it (no GPU on these runners)
 # Dependencies come from the project build cache on GHCR after the first run; ERF itself is
 # always built. A manual run can build one spec instead of the matrix, and can point at
 # another spack/spack-packages ref to try a dependency recipe change.
@@ -328,3 +330,124 @@ jobs:
           spack buildcache push --unsigned --update-index --only dependencies \
             --without-build-dependencies erf-buildcache "$SPEC"
 
+  sycl:
+    name: oneAPI SYCL ${{ matrix.spec }}
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        # What sycl.yml builds: Intel oneAPI icx/icpx, Intel MPI, particles.
+        spec: ["erf@develop +sycl +particles %oneapi ^[virtuals=mpi] intel-oneapi-mpi"]
+    env:
+      SPEC: ${{ matrix.spec }}
+      GHCR_USER: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        uses: ./.github/actions/free-space-ubuntu
+
+      # The same oneAPI install ERF's sycl.yml uses (AMReX's dependency script):
+      # dpcpp compilers, Fortran, MKL, Intel MPI.
+      - name: Install oneAPI and the base toolchain
+        run: |
+          git submodule update --init --depth 1 Submodules/AMReX
+          Submodules/AMReX/.github/workflows/dependencies/dependencies_dpcpp.sh
+          sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip \
+            cmake pkg-config
+          # The runner image's Android NDK carries libc/libm/libstdc++ stubs for other
+          # architectures under /usr/local/lib/android. An external with a /usr prefix in
+          # the oneAPI build's link set (gcc, which the oneAPI compiler package pulls in
+          # for its C++ runtime) has its libraries searched recursively, so every NDK
+          # sysroot directory reaches the linker and a hello world no longer links.
+          # free-space-ubuntu removes the NDK only when it needs the space; remove it
+          # here regardless.
+          sudo rm -rf /usr/local/lib/android
+
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          spack_ref: ${{ env.SPACK_REF }}
+          packages_ref: ${{ env.PACKAGES_REF }}
+
+      # An externally installed oneAPI needs the environment setvars.sh sets (Spack's
+      # compiler package only fixes rpaths for a oneAPI it installed itself), so the
+      # compilers, MKL and Intel MPI are registered by hand with that environment attached.
+      - name: Register the recipe, externals, oneAPI and the project build cache
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack repo add "$GITHUB_WORKSPACE/Build/spack/spack_repo/erf"
+          spack compiler find
+          spack external find --all --not-buildable
+          cc_version=$(basename "$(readlink -f /opt/intel/oneapi/compiler/latest)")
+          mkl_version=$(basename "$(readlink -f /opt/intel/oneapi/mkl/latest)")
+          mpi_version=$(basename "$(readlink -f /opt/intel/oneapi/mpi/latest)")
+          ld_path=$(bash -c 'source /opt/intel/oneapi/setvars.sh --force > /dev/null 2>&1; echo "$LD_LIBRARY_PATH"')
+          bin_path=$(bash -c 'source /opt/intel/oneapi/setvars.sh --force > /dev/null 2>&1; echo "$PATH"')
+          cat > oneapi-externals.yaml <<EOF
+          packages:
+            intel-oneapi-compilers:
+              buildable: false
+              externals:
+              - spec: intel-oneapi-compilers@${cc_version}
+                prefix: /opt/intel/oneapi
+                extra_attributes:
+                  compilers:
+                    c: /opt/intel/oneapi/compiler/${cc_version}/bin/icx
+                    cxx: /opt/intel/oneapi/compiler/${cc_version}/bin/icpx
+                    fortran: /opt/intel/oneapi/compiler/${cc_version}/bin/ifx
+                  environment:
+                    prepend_path:
+                      LD_LIBRARY_PATH: "${ld_path}"
+                      PATH: "${bin_path}"
+            intel-oneapi-mkl:
+              buildable: false
+              externals:
+              - spec: intel-oneapi-mkl@${mkl_version}
+                prefix: /opt/intel/oneapi
+            intel-oneapi-mpi:
+              buildable: false
+              externals:
+              - spec: intel-oneapi-mpi@${mpi_version}
+                prefix: /opt/intel/oneapi
+          EOF
+          spack config add -f oneapi-externals.yaml
+          spack config get packages | grep -A14 -E "^  intel-oneapi-compilers:" || true
+          spack mirror add --unsigned \
+            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
+            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+
+      - name: Recipe checks
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack compiler list
+          spack spec -I -N "$SPEC"
+
+      - name: spack install
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack install --verbose --fail-fast --keep-stage "$SPEC"
+
+      # What a failed AMReX configure saw: the compiler and library paths Spack set up and
+      # the CMake compiler-check transcript (CMakeConfigureLog.yaml since CMake 3.26).
+      - name: Build environment and CMake log of a failed AMReX build
+        if: failure()
+        run: |
+          stage=$(find /tmp/runner/spack-stage -maxdepth 1 -name 'spack-stage-amrex-*-*' 2>/dev/null | head -1); echo "stage=$stage"
+          if [ -n "$stage" ]; then
+            grep -E "^(export )?(PATH|LD_LIBRARY_PATH|CC|CXX|FC|SPACK_CC|SPACK_CXX|SPACK_LINK_DIRS|SPACK_RPATH_DIRS|SPACK_INCLUDE_DIRS)=" "$stage/spack-build-env.txt" | cut -c1-500
+            log=$(find "$stage" -name CMakeConfigureLog.yaml 2>/dev/null | head -1); echo "log=$log"
+            if [ -n "$log" ]; then awk '/CMAKE_HAVE_LIBC_PTHREAD/{p=1} p' "$log" | head -80 | cut -c1-400; fi
+            out=$(find "$stage" -maxdepth 1 -name spack-build-out.txt | head -1); [ -n "$out" ] && grep -n -E "error|Error|cannot|undefined|not found" "$out" | head -10 | cut -c1-300
+          fi
+
+      - name: Push dependencies to the build cache
+        if: always()
+        continue-on-error: true
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack buildcache push --unsigned --update-index --only dependencies \
+            --without-build-dependencies erf-buildcache "$SPEC"
