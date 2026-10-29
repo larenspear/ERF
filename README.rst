@@ -22,6 +22,8 @@ Getting Started
 See `Getting Started <https://erf.readthedocs.io/en/latest/GettingStarted.html>`_ for instructions as to how to clone the ERF
 and AMReX codes, and for how to build and run an ERF example.  Minimum requirements for system software are also given there.
 
+ERF can also be installed with `Spack <https://erf.readthedocs.io/en/latest/buildingSpack.html>`_, using the package recipe kept in this repository under ``Build/spack``.
+
 Python tools for pre- and post-processing ERF can be found in the companion `erftools repository <https://github.com/erf-model/erftools/>`_.
 
 Documentation

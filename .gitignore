@@ -73,6 +73,7 @@ build_*.log
 
 # Python cache
 __pycache__
+.ruff_cache/
 
 # Development scratch and run artifacts
 Source/ImmersedBoundarySEB/IBSEB_DEVELOPMENT.md
