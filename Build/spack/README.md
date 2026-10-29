@@ -18,7 +18,7 @@ spack install erf
 | `spack_repo/erf/repo.yaml` | repository namespace (`erf`) and package API version |
 | `check_pins.py` | the recipe's RRTMGP/EKAT and Noah-MP pins must equal ERF's submodule gitlinks; `--fix` updates the develop Noah-MP pin |
 | `erf_sweep.py` | concretization sweep: supported variant combinations concretize, unsupported ones are refused |
-| `ci_matrix.py` | the workflow's build lists, as JSON for a version (`--version 26.09`) or one spec |
+| `ci_matrix.py` | the workflow's build lists, as JSON for a version (`--version 26.09`) or one spec (run in the ROCm or SYCL job when it asks for that backend) |
 | `../../spack-repo-index.yaml` | tells `spack repo add <git URL>` where this repository is |
 | `../../.github/workflows/spack-package.yml` | runs the pin check and the sweep on relevant PRs, and the build matrix on merges, weekly and on demand (at a release with the `version` input) |
 

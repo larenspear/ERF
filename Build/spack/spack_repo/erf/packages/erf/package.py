@@ -253,6 +253,13 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         # The Noah-MP ERF driver (built in-tree, see the resources below) is Fortran
         # and reads NetCDF through the Fortran interface.
         depends_on("netcdf-fortran", when="+noahmp")
+        # EKAT's bundled Kokkos (see _rrtmgp_stack) imports rocThrust for its HIP backend
+        # and oneDPL for its SYCL backend (Kokkos_ENABLE_ROCTHRUST and Kokkos_ENABLE_ONEDPL
+        # default on). A ROCm or oneAPI installation carries them; Spack's kokkos package
+        # depends on the same two.
+        for _ekat in ("+rrtmgp", "+eamxx_shoc"):
+            depends_on("rocthrust", when=f"{_ekat}+rocm")
+            depends_on("intel-oneapi-dpl", when=f"{_ekat}+sycl")
 
     # Spack cuda_arch / amdgpu_target -> Kokkos_ARCH_<name> for the Kokkos 4.5.1
     # that EKAT bundles (its cmake/kokkos_arch.cmake option names; Spack's own
@@ -320,30 +327,35 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         when="precision=single",
         msg="the WDM6 Fortran bridge is double precision only",
     )
-    # +rrtmgp builds the Kokkos bundled with EKAT, which needs its GPU
-    # architecture as Kokkos_ARCH_<name> (see cmake_args): it ignores
+    # +rrtmgp and +eamxx_shoc build the Kokkos bundled with EKAT, which needs its
+    # GPU architecture as Kokkos_ARCH_<name> (see cmake_args): it ignores
     # CMAKE_CUDA_ARCHITECTURES, autodetects otherwise (and fails on a node
     # without the GPU) and accepts exactly one GPU architecture.
-    for _sm in CudaPackage.cuda_arch_values:
-        if _sm not in _kokkos_cuda_arch:
+    for _ekat in ("+rrtmgp", "+eamxx_shoc"):
+        for _sm in CudaPackage.cuda_arch_values:
+            if _sm not in _kokkos_cuda_arch:
+                conflicts(
+                    f"cuda_arch={_sm}",
+                    when=f"{_ekat}+cuda",
+                    msg="EKAT's bundled Kokkos has no architecture for this cuda_arch",
+                )
+        for _tgt in ROCmPackage.amdgpu_targets:
+            if _tgt not in _kokkos_amdgpu_arch:
+                conflicts(
+                    f"amdgpu_target={_tgt}",
+                    when=f"{_ekat}+rocm",
+                    msg="EKAT's bundled Kokkos has no architecture for this amdgpu_target",
+                )
+        for _a, _b in itertools.combinations(sorted(_kokkos_cuda_arch), 2):
             conflicts(
-                f"cuda_arch={_sm}",
-                when="+rrtmgp+cuda",
-                msg="EKAT's bundled Kokkos has no architecture for this cuda_arch",
+                f"cuda_arch={_a},{_b}", when=f"{_ekat}+cuda", msg="Kokkos takes one cuda_arch"
             )
-    for _tgt in ROCmPackage.amdgpu_targets:
-        if _tgt not in _kokkos_amdgpu_arch:
+        for _a, _b in itertools.combinations(sorted(_kokkos_amdgpu_arch), 2):
             conflicts(
-                f"amdgpu_target={_tgt}",
-                when="+rrtmgp+rocm",
-                msg="EKAT's bundled Kokkos has no architecture for this amdgpu_target",
+                f"amdgpu_target={_a},{_b}",
+                when=f"{_ekat}+rocm",
+                msg="Kokkos takes one amdgpu_target",
             )
-    for _a, _b in itertools.combinations(sorted(_kokkos_cuda_arch), 2):
-        conflicts(f"cuda_arch={_a},{_b}", when="+rrtmgp+cuda", msg="Kokkos takes one cuda_arch")
-    for _a, _b in itertools.combinations(sorted(_kokkos_amdgpu_arch), 2):
-        conflicts(
-            f"amdgpu_target={_a},{_b}", when="+rrtmgp+rocm", msg="Kokkos takes one amdgpu_target"
-        )
 
     # RRTMGP, EKAT and EKAT's bundled Kokkos, yaml-cpp, spdlog and Catch2, at the
     # commits ERF pins as submodules (Submodules/RRTMGP and Submodules/ekat in
@@ -538,7 +550,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         if spec.satisfies("@25.10:25.11+rrtmgp"):
             args.append(self.define("ERF_ENABLE_EKAT", True))
 
-        if spec.satisfies("+rrtmgp"):
+        if spec.satisfies("+rrtmgp") or spec.satisfies("+eamxx_shoc"):
             # The bundled Kokkos's GPU architecture (see the conflicts above).
             if spec.satisfies("+cuda"):
                 (sm,) = spec.variants["cuda_arch"].value
@@ -546,6 +558,11 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             if spec.satisfies("+rocm"):
                 (tgt,) = spec.variants["amdgpu_target"].value
                 args.append(self.define("Kokkos_ARCH_" + self._kokkos_amdgpu_arch[tgt], True))
+            if spec.satisfies("+sycl"):
+                # Kokkos's FindTPLONEDPL falls back to find_package(oneDPL) when the
+                # compiler does not see the headers; the config lives in the component.
+                dpl = spec["intel-oneapi-dpl"].package.component_prefix
+                args.append(self.define("oneDPL_DIR", dpl.lib.cmake.oneDPL))
 
         # ERF's CMake prepends NETCDF_DIR to CMAKE_PREFIX_PATH before its FindNetCDF.
         if spec.satisfies("+netcdf"):
