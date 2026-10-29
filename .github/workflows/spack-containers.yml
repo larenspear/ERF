@@ -1,0 +1,179 @@
+name: Spack containers
+
+# Runnable ERF images on GHCR, made from the Spack recipe in Build/spack. Spack installs
+# the image configurations listed in Build/spack/ci_matrix.py (ERF with MPI, NetCDF I/O,
+# Noah-MP, RRTMGP, FFT and particles, at develop and at the latest release, built for
+# the portable x86_64_v3 target), then pushes the installed packages with their runtime
+# dependencies as image layers on top of a base image (`spack buildcache push
+# --base-image ... --tag ...`). erf_exec is on the image's PATH and the example cases are
+# under share/erf/examples of the ERF prefix:
+#
+#   docker run --rm ghcr.io/erf-model/erf:26.09 erf_exec --help
+#   apptainer pull docker://ghcr.io/erf-model/erf:26.09
+#
+# Tags: <version>, rebuilt weekly so it moves with the dependencies, and
+# <version>-<build date>, which does not. A manual run builds one spec under a tag of
+# its choice, the list at a release, or on another base image. The runtime dependencies
+# also go to the project build cache. GHCR packages start private: make
+# ghcr.io/<owner>/erf public once in the package settings.
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'   # Mondays 08:00 UTC, after the Spack package matrix
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: build this one spec instead of the image list (empty = the list)
+        default: ""
+      tag:
+        description: image tag for that spec (empty = the version the spec names)
+        default: ""
+      version:
+        description: build the image list at this ERF version, e.g. 26.09 (empty = the list's versions)
+        default: ""
+      base_image:
+        description: base image for the Spack layers (may be pinned, ubuntu:22.04@sha256:...)
+        default: "ubuntu:22.04"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.ref }}-spack-containers-${{ inputs.spec }}-${{ inputs.version }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
+
+env:
+  # The same Spack and spack/spack-packages refs as spack-package.yml.
+  SPACK_REF: 3e19345b6e12f5ff1b874f4059622fc6a1fd804a
+  PACKAGES_REF: 01edd466b4da9e0e3c50fe18f58d46dca97e4b97
+
+jobs:
+  plan:
+    name: image list
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.matrix.outputs.images }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Images for this run
+        id: matrix
+        env:
+          VERSION: ${{ inputs.version }}
+          ONE_SPEC: ${{ inputs.spec }}
+          ONE_TAG: ${{ inputs.tag }}
+        run: |
+          matrix=$(python3 Build/spack/ci_matrix.py --version "$VERSION" --spec "$ONE_SPEC" --tag "$ONE_TAG")
+          echo "$matrix" | jq .images
+          echo "images=$(echo "$matrix" | jq -c .images)" >> "$GITHUB_OUTPUT"
+
+  images:
+    name: image ${{ matrix.image.tag }}
+    needs: plan
+    # The base image's Ubuntu release: what Spack builds against here must be what the
+    # image runs on (glibc above all).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    env:
+      SPEC: ${{ matrix.image.spec }}
+      TAG: ${{ matrix.image.tag }}
+      BASE_IMAGE: ${{ inputs.base_image || 'ubuntu:22.04' }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/erf
+      GHCR_USER: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        uses: ./.github/actions/free-space-ubuntu
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip \
+            cmake pkg-config
+          # A short install tree root, so the image holds /opt/software/... rather than
+          # the runner's workspace path.
+          sudo mkdir -p /opt/software && sudo chown "$(id -u):$(id -g)" /opt/software
+
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          spack_ref: ${{ env.SPACK_REF }}
+          packages_ref: ${{ env.PACKAGES_REF }}
+
+      # Only build tools come from the runner. Every library the executable needs at run
+      # time must be a Spack-installed package, since only those become image layers
+      # (`spack external find --all` would take libxml2, bzip2, ncurses and more from the
+      # runner, and the image would lack them). x86_64_v3 keeps the binaries portable
+      # across the runner's and most users' x86 CPUs; the project build cache serves
+      # whatever it holds for that target.
+      - name: Register the recipe, the build tools, the build cache and the image registry
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack repo add "$GITHUB_WORKSPACE/Build/spack/spack_repo/erf"
+          spack config add "config:install_tree:root:/opt/software"
+          spack config add "packages:all:target:[x86_64_v3]"
+          spack compiler find
+          spack external find --not-buildable \
+            cmake gmake git python perl pkgconf autoconf automake libtool m4 bison flex
+          spack mirror add --unsigned \
+            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
+            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+          spack mirror add --unsigned \
+            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
+            erf-images "oci://$IMAGE"
+
+      - name: Recipe checks
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack --version
+          spack spec -I -N "$SPEC"
+
+      - name: spack install
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack install --verbose --fail-fast "$SPEC"
+
+      # The tag's manifest holds the base image's layers, then one layer per installed
+      # package of the spec's runtime closure; the image config gets PATH and the other
+      # variables `spack load` would set for those packages.
+      - name: Push the image
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          dated="$TAG-$(date -u +%Y%m%d)"
+          spack buildcache push --unsigned --without-build-dependencies \
+            --base-image "$BASE_IMAGE" --tag "$TAG" erf-images "$SPEC"
+          spack buildcache push --unsigned --without-build-dependencies \
+            --base-image "$BASE_IMAGE" --tag "$dated" erf-images "$SPEC"
+          echo "pushed $IMAGE:$TAG and $IMAGE:$dated"
+
+      # What a user gets: the usage text and two steps of the shipped scalar advection
+      # case, run by the image's own erf_exec.
+      - name: Run the image
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker pull "$IMAGE:$TAG"
+          docker image inspect "$IMAGE:$TAG" \
+            --format 'digest {{index .RepoDigests 0}}, {{len .RootFS.Layers}} layers, {{.Size}} bytes'
+          docker run --rm "$IMAGE:$TAG" erf_exec --help
+          docker run --rm "$IMAGE:$TAG" bash -c '
+            set -e
+            prefix=$(dirname "$(dirname "$(command -v erf_exec)")")
+            mkdir -p /tmp/run && cd /tmp/run
+            cp -r "$prefix/share/erf/examples/ScalarAdvDiff/." .
+            erf_exec inputs_advect_uniformU max_step=2 erf.plot_int_1=-1 erf.check_int=-1'
+
+      # Share the runtime dependencies built for x86_64_v3 (not ERF itself) with the next run.
+      - name: Push dependencies to the build cache
+        if: always()
+        continue-on-error: true
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack buildcache push --unsigned --update-index --only dependencies \
+            --without-build-dependencies erf-buildcache "$SPEC"

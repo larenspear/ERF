@@ -175,6 +175,44 @@ The CI workflow pushes ERF's dependencies to an OCI build cache on GHCR. To reus
 
    spack mirror add --unsigned erf-buildcache oci://ghcr.io/erf-model/spack-buildcache
 
+Container images
+----------------
+
+The ``Spack containers`` workflow (``.github/workflows/spack-containers.yml``) turns the
+same recipe into runnable images on GHCR. Spack installs ERF with MPI, NetCDF I/O, Noah-MP,
+RRTMGP, FFT and particles (``IMAGE_OPTIONS`` in ``Build/spack/ci_matrix.py``), built for
+the portable ``x86_64_v3`` target, and pushes the installed packages with their runtime
+dependencies as layers on top of ``ubuntu:22.04`` (``spack buildcache push --base-image
+--tag``). ``erf_exec`` is on the image's ``PATH`` and the example cases are under
+``share/erf/examples`` of the ERF prefix.
+
+.. code-block:: bash
+
+   docker run --rm ghcr.io/erf-model/erf:26.09 erf_exec --help
+   docker run --rm -v "$PWD:/work" -w /work ghcr.io/erf-model/erf:26.09 \
+       erf_exec inputs max_step=10
+   apptainer pull erf-26.09.sif docker://ghcr.io/erf-model/erf:26.09   # on a cluster
+   apptainer exec erf-26.09.sif erf_exec inputs
+
+Tags are ``develop`` and the latest release (``26.09``), rebuilt weekly so they move with
+their dependencies, plus a dated copy of each (``26.09-20261029``) that does not move;
+pin a run to a dated tag or a digest. The images carry their own Open MPI: on a cluster,
+launch with the host's ``mpirun`` or ``srun`` only if that MPI is ABI-compatible with
+Open MPI 5, otherwise run on one node with the container's (under Docker as root,
+``mpirun --allow-run-as-root``). There are no GPU images: the CUDA, ROCm and SYCL
+toolkits would have to come from a matching base image rather than from Spack. A manual
+run (Actions, *Spack containers*, *Run workflow*) builds one spec under a tag of its
+choice (``spec`` and ``tag`` inputs), the list at a release (``version``), or on another
+base image (``base_image``, which may be pinned by digest, ``ubuntu:22.04@sha256:...``).
+GHCR packages are private when first created; make ``ghcr.io/erf-model/erf`` public once
+in the package settings. The same two commands make an image from any Spack that has the
+recipe registered and a GHCR mirror added with a token:
+
+.. code-block:: bash
+
+   spack install erf@26.09 +netcdf +noahmp +rrtmgp +fft +particles target=x86_64_v3
+   spack buildcache push --base-image ubuntu:22.04 --tag 26.09 <mirror> erf@26.09
+
 Maintaining the recipe
 ----------------------
 

@@ -8,13 +8,20 @@ options the development branch alone has, and the pinned-release entries keep a 
 proven alongside development. A ``spec`` input builds that one spec alone: in the ROCm or
 SYCL job when it asks for that backend, otherwise in the install job.
 
+The ``images`` list is for .github/workflows/spack-containers.yml: one image per entry,
+``{"spec": ..., "tag": ...}``, the image configuration at each of IMAGE_VERSIONS (or at the
+``version`` input), or the ``spec`` input under the ``tag`` input (default: the version the
+spec names).
+
     python3 Build/spack/ci_matrix.py                   # development, every job
     python3 Build/spack/ci_matrix.py --version 26.09   # the same at the 26.09 release
     python3 Build/spack/ci_matrix.py --spec "erf@develop +fft"
+    python3 Build/spack/ci_matrix.py --spec "erf@26.09 +netcdf ~hdf5" --tag 26.09-nohdf5
 """
 
 import argparse
 import json
+import re
 
 # Every variant that changes what is compiled, each with the ERF workflow, build script or
 # documentation page that builds that configuration. CUDA mirrors cuda-ci.yml (CUDA 12,
@@ -58,6 +65,12 @@ ROCM = [
 # dropped the check in 5.1, the version EKAT now bundles upstream).
 SYCL = ["+sycl +particles %oneapi ^[virtuals=mpi] intel-oneapi-mpi"]
 JOBS = {"install": INSTALL, "macos": MACOS, "rocm": ROCM, "sycl": SYCL}
+# spack-containers.yml: runnable images on GHCR, ghcr.io/<owner>/erf:<version>. One CPU
+# configuration with the options most of ERF's documented workflows use, at development
+# and at the latest release. (No GPU images: the CUDA, ROCm and SYCL toolkits would have to
+# come from a matching base image rather than from Spack.)
+IMAGE_OPTIONS = "+netcdf +noahmp +rrtmgp +fft +particles"
+IMAGE_VERSIONS = ["develop", "26.09"]
 
 
 def specs(entries, version):
@@ -71,20 +84,37 @@ def specs(entries, version):
     return out
 
 
-def matrix(version="", spec=""):
+def image_tag(spec):
+    """The version an ``erf@<version> ...`` spec names, else ``custom``."""
+    m = re.match(r"erf@([^\s%^+~]+)", spec)
+    return m.group(1) if m else "custom"
+
+
+def images(version="", spec="", tag=""):
+    if spec:
+        return [{"spec": spec, "tag": tag or image_tag(spec)}]
+    versions = [version] if version else IMAGE_VERSIONS
+    return [{"spec": f"erf@{v} {IMAGE_OPTIONS}", "tag": v} for v in versions]
+
+
+def matrix(version="", spec="", tag=""):
+    out = {"images": images(version, spec, tag)}
     if spec:
         job = "rocm" if "+rocm" in spec else "sycl" if "+sycl" in spec else "install"
-        return {name: [spec] if name == job else [] for name in JOBS}
-    version = version or "develop"
-    return {job: specs(entries, version) for job, entries in JOBS.items()}
+        out.update({name: [spec] if name == job else [] for name in JOBS})
+    else:
+        version = version or "develop"
+        out.update({job: specs(entries, version) for job, entries in JOBS.items()})
+    return out
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--version", default="", help="ERF version to build (default: develop)")
     ap.add_argument("--spec", default="", help="build this one spec instead of the matrix")
+    ap.add_argument("--tag", default="", help="image tag for --spec (default: its version)")
     a = ap.parse_args()
-    print(json.dumps(matrix(a.version, a.spec)))
+    print(json.dumps(matrix(a.version, a.spec, a.tag)))
 
 
 if __name__ == "__main__":
