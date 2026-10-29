@@ -8,6 +8,9 @@ name: Spack package
 #               refused with the recipe's own message (minutes, no build)
 #   install     representative configurations through `spack install`, then the recipe's
 #               stand-alone tests (hours; on merges that touch the recipe, weekly, on demand)
+#   macos       the same on a macOS runner with Homebrew's Open MPI, as ERF's macos.yml builds
+#   rocm        a compile-only HIP build with ROCm from AMD's apt repository registered as
+#               Spack externals, as ERF's hip.yml installs it (no GPU on these runners)
 # Dependencies come from the project build cache on GHCR after the first run; ERF itself is
 # always built. A manual run can build one spec instead of the matrix, and can point at
 # another spack/spack-packages ref to try a dependency recipe change.
@@ -110,7 +113,7 @@ jobs:
         # Representative builds: every variant that changes what is compiled, on the
         # development branch, plus one pinned release. A manual run with a spec builds
         # only that spec.
-        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop", "erf@develop ~mpi", "erf@develop +openmp +particles +tests +fcompare", "erf@develop +netcdf +noahmp +particles", "erf@develop +netcdf +rrtmgp", "erf@develop +netcdf +tools", "erf@develop +windfarm +wsm6_fort +wdm6_fort", "erf@develop precision=single +particles +ml_uphys_diagnostics", "erf@develop +cuda cuda_arch=80", "erf@26.09 +netcdf +noahmp +particles +tests"]') }}
+        spec: ${{ fromJSON(inputs.spec && format('["{0}"]', inputs.spec) || '["erf@develop", "erf@develop ~mpi", "erf@develop +openmp +particles +tests +fcompare", "erf@develop +netcdf +noahmp +particles", "erf@develop +netcdf +rrtmgp", "erf@develop +netcdf +tools", "erf@develop +windfarm +wsm6_fort +wdm6_fort", "erf@develop precision=single particles_precision=single +particles", "erf@develop +particles +ml_uphys_diagnostics", "erf@develop +eamxx_shoc +tests ~unit_tests", "erf@develop +fire", "erf@develop +particles +tests +fcompare ^mpich", "erf@develop +cuda cuda_arch=80", "erf@26.09 +netcdf +noahmp +particles +tests"]') }}
     env:
       SPEC: ${{ matrix.spec }}
       GHCR_USER: ${{ github.actor }}
@@ -121,11 +124,13 @@ jobs:
       - name: Free up disk space
         uses: ./.github/actions/free-space-ubuntu
 
+      # Both MPIs ERF's CI builds with: Open MPI is Spack's default provider, `^mpich`
+      # picks the other (and the non-Open MPI launcher path in the recipe).
       - name: Install toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip \
-            libopenmpi-dev openmpi-bin cmake pkg-config
+            libopenmpi-dev openmpi-bin libmpich-dev mpich cmake pkg-config
 
       - uses: spack/setup-spack@v3
         with:
@@ -183,3 +188,141 @@ jobs:
           . spack_install_dir/share/spack/setup-env.sh
           spack buildcache push --unsigned --update-index --only dependencies \
             --without-build-dependencies erf-buildcache "$SPEC"
+
+  macos:
+    name: macOS ${{ matrix.spec }}
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        # What macos.yml builds: Apple Clang, MPI on, particles, double and single precision.
+        spec: ["erf@develop +particles +tests +fcompare", "erf@develop +particles precision=single"]
+    env:
+      SPEC: ${{ matrix.spec }}
+      GHCR_USER: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain from Homebrew
+        run: brew install open-mpi cmake pkgconf
+
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          spack_ref: ${{ env.SPACK_REF }}
+          packages_ref: ${{ env.PACKAGES_REF }}
+
+      - name: Register the recipe, externals and the project build cache
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack repo add "$GITHUB_WORKSPACE/Build/spack/spack_repo/erf"
+          spack compiler find
+          spack external find --all --not-buildable
+          spack mirror add --unsigned \
+            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
+            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+
+      - name: Recipe checks
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack compiler list
+          spack spec -I -N "$SPEC"
+
+      - name: spack install
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack install --verbose --fail-fast "$SPEC"
+
+      - name: Stand-alone tests
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack test run --alias erf-ci "$SPEC"
+
+      - name: Stand-alone test logs
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack test results -l erf-ci || true
+
+      - name: Push dependencies to the build cache
+        if: always()
+        continue-on-error: true
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack buildcache push --unsigned --update-index --only dependencies \
+            --without-build-dependencies erf-buildcache "$SPEC"
+
+  rocm:
+    name: ROCm ${{ matrix.spec }}
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        # What hip.yml builds: ROCm from AMD's apt repository, gfx908, MPI on, particles.
+        spec: ["erf@develop +rocm amdgpu_target=gfx908 +particles"]
+    env:
+      SPEC: ${{ matrix.spec }}
+      ROCM_VERSION: "6.3.2"
+      GHCR_USER: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free up disk space
+        uses: ./.github/actions/free-space-ubuntu
+
+      # The same ROCm install ERF's hip.yml uses (AMReX's dependency script).
+      - name: Install ROCm and the base toolchain
+        run: |
+          git submodule update --init --depth 1 Submodules/AMReX
+          Submodules/AMReX/.github/workflows/dependencies/dependencies_hip.sh "$ROCM_VERSION"
+          sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip \
+            libopenmpi-dev openmpi-bin cmake pkg-config
+
+      - uses: spack/setup-spack@v3
+        with:
+          spack_path: ${{ github.workspace }}/spack_install_dir
+          spack_ref: ${{ env.SPACK_REF }}
+          packages_ref: ${{ env.PACKAGES_REF }}
+
+      # ROCm is registered as externals, like a site installation would be; rocprim is
+      # header-only and is built from source by Spack.
+      - name: Register the recipe, externals, ROCm and the project build cache
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          source /etc/profile.d/rocm.sh
+          spack repo add "$GITHUB_WORKSPACE/Build/spack/spack_repo/erf"
+          spack compiler find
+          spack external find --all --not-buildable
+          spack external find --not-buildable --path "/opt/rocm-$ROCM_VERSION" \
+            hip hipcc llvm-amdgpu hsa-rocr-dev comgr rocrand hiprand rocsparse rocfft \
+            rocminfo rocm-core rocm-cmake rocm-smi-lib hipsparse rocblas rocsolver hipblas
+          spack config get packages | grep -E "^  (hip|hipcc|llvm-amdgpu|hsa-rocr-dev|comgr|rocrand|hiprand|rocsparse|rocfft|rocm-core):" || true
+          spack mirror add --unsigned \
+            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
+            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+
+      - name: Recipe checks
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack compiler list
+          spack spec -I -N "$SPEC"
+
+      - name: spack install
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack install --verbose --fail-fast "$SPEC"
+
+      - name: Push dependencies to the build cache
+        if: always()
+        continue-on-error: true
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          spack buildcache push --unsigned --update-index --only dependencies \
+            --without-build-dependencies erf-buildcache "$SPEC"
+
