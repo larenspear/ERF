@@ -120,7 +120,7 @@ def run(spec):
         ["spack", "spec", "--fresh", "--format", "{name}@{version}{variants}", spec],
         capture_output=True,
         text=True,
-        timeout=900,
+        timeout=1800,
     )
     full = r.stderr + r.stdout
     err = full.strip().split("\n")
@@ -154,7 +154,8 @@ def refused(rc, full):
 
 # One solve first so the bootstrap and the repository index are built once, then the rest
 # a few at a time: concurrent first solves have been killed without any output on a
-# 7 GB runner.
+# 7 GB runner. A ROCm spec with the radiation stack takes close to 15 minutes
+# on a loaded runner, hence the generous per-spec timeout.
 run(POS[0])
 with cf.ThreadPoolExecutor(int(os.environ.get("ERF_SWEEP_JOBS", "3"))) as ex:
     res = list(ex.map(run, POS + NEG))
