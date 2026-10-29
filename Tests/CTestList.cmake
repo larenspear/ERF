@@ -2600,7 +2600,8 @@ if(ERF_TEST_PYTHON)
         LABELS "unit;advection")
 
     # Prove the Z-momentum shrink preserves precisely the domain-interior nodes,
-    # including split faces; audit its caller and normal-grid boundary bindings.
+    # including split faces; guard caller boundary, spacing and map-factor origins
+    # through both normal-grid entry points, including intentional enum aliases.
     add_test(NAME AdvectionMomentumDomain_Z3
         COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_momentum_domain.py
                 ${PROJECT_SOURCE_DIR})

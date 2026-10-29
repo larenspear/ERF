@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the Z-momentum box contract and check selected caller bindings.
+"""Prove the Z-momentum box contract and guard domain/geometry caller bindings.
 
 The complete ShrinkZmomBoxAtDomainEnds body is interpreted in source order over
 integer box endpoints. For arbitrary contained Z-nodal boxes (also empty ones),
@@ -12,8 +12,12 @@ sequence. Between those regions it audits every tbz occurrence, allowing only
 the existing setVal read. Domain occurrences before the call are restricted to
 the const Geometry binding, endpoint reads and a named set of call arguments.
 The two normal-grid routing arms and relevant ordered callee parameters are
-checked too. Other caller computations and later boundary overwrites are NOT
-interpreted: approved calls must not mutate boxes/geometry through aliases.
+checked too. Geometry guards connect the const Geometry spacing, six tile-local
+map-factor views and supplied dz vector through the router to both normal-grid
+entry points. They account for intentional same-grid X/Y enum aliases and reject
+unmodeled explicit uses, writes, shadowing and reference escapes in that slice.
+Other caller computations and later boundary overwrites are NOT interpreted:
+approved calls must not mutate protected inputs, including through aliases.
 
 Assumptions: AMReX inclusive box endpoints, growLo subtracts its amount and
 growHi adds it, Box copies preserve index type, nodaltilebox(2) supplies contained
@@ -21,7 +25,10 @@ Z-nodal tiles covering the domain, empty boxes launch no work, pure endpoint
 reads, ordinary C++/AMReX names (no macro rewriting), and no integer overflow.
 The production positive-k assertions additionally require domain.smallEnd(2)
 >= 0; the general helper theorem does not. No halo, allocation, floating-point,
-terrain/EB arithmetic, boundary budget or whole-RHS conservation proof is made.
+terrain/EB arithmetic, metric generation/allocation/positivity, control-volume
+construction, boundary budget or whole-RHS conservation proof is made. Geometry
+accessors and const_array use their ordinary AMReX meaning. This binding check
+does not establish that supplied stretched spacings equal Geometry's dz.
 
 usage: check_momentum_domain.py [ERF_ROOT]
 exit: 0 success, 1 contract failure, 77 z3 unavailable (CTest skip)
@@ -32,8 +39,10 @@ import sys
 from pathlib import Path
 
 from advection_source import Source, pure_expression
-from check_momentum_dispatch import block, compact, require, split_parameters
+from check_momentum_dispatch import block, compact, require
 from check_upwindall_z_reach import brace_block, strip_comments
+from momentum_geometry import (MAPFAC_H, balanced_region, definition, geometry_bindings,
+                               literal, unique)
 
 try:
     import z3
@@ -59,17 +68,6 @@ def prove(claim, name, assumptions):
     if outcome != z3.unsat:
         failures.append(name)
         print(f'       {solver.model() if outcome == z3.sat else solver.reason_unknown()}')
-
-
-def literal(source, text):
-    tokens = re.findall(r'\w+|::|[^\s]', text)
-    source.take(r'\s*'.join(re.escape(token) for token in tokens))
-
-
-def unique(pattern, text, description):
-    matches = list(re.finditer(pattern, text, re.S))
-    require(len(matches) == 1, f'{description}: expected exactly one supported occurrence')
-    return matches[0]
 
 
 def read_program(text):
@@ -192,18 +190,6 @@ def contains(box, point):
                     for axis in range(3)])
 
 
-def definition(text, name):
-    match = unique(r'\bvoid\s+' + name + r'\s*\(([^()]*)\)\s*\{', text, name)
-    parameters = split_parameters(match[1])
-    names, types = [], {}
-    for parameter in parameters:
-        binding = re.fullmatch(r'(.+?)\b(\w+)\s*', parameter, re.S)
-        require(binding is not None and binding[2] not in types, 'unsupported/duplicate parameter')
-        names.append(binding[2])
-        types[binding[2]] = compact(binding[1]).replace('amrex::', '')
-    return names, types, brace_block(text, match.end() - 1)
-
-
 def check_arguments(arguments, signature, expected, label):
     names, types, _ = signature
     args = [compact(arg) for arg in arguments.split(',')]
@@ -234,21 +220,6 @@ def audit_domain(text):
             args = re.sub(r'(?<=,)\s*domain\s*(?=,)', ' DOMAIN_ARGUMENT ', args)
             text = text[:start] + args + text[end - 1:]
     require(not re.search(r'\bdomain\b', text), 'unmodeled domain use before momentum call')
-
-
-def balanced_region(text):
-    """Require a complete statement region, not a net-zero scope count."""
-    text = re.sub(r'"(?:\\.|[^"\\])*"', 'STRING', text)
-    stack = []
-    pairs = {')': '(', ']': '[', '}': '{'}
-    for char in text:
-        if char in '([{':
-            stack.append(char)
-        elif char in pairs:
-            require(stack and stack.pop() == pairs[char], 'caller slice crosses a scope boundary')
-    require(not stack, 'caller slice ends inside a nested scope/expression')
-    require(not text.strip() or text.rstrip().endswith((';', '}')),
-            'caller slice must end at a statement boundary')
 
 
 def caller_bindings(text, router):
@@ -338,9 +309,12 @@ def main():
     read = lambda name: strip_comments((root / name).read_text())
     program = read_program(read(HEADER))
     router = definition(read(ROUTER), 'AdvectionSrcForMom')
-    low_expr, high_expr = caller_bindings(read(CALLER), router)
-    route_bindings(router, {kind: definition(read(path), 'AdvectionSrcForMom_' + kind)
-                            for kind, path in GRIDS.items()})
+    caller = read(CALLER)
+    grids = {kind: definition(read(path), 'AdvectionSrcForMom_' + kind)
+             for kind, path in GRIDS.items()}
+    low_expr, high_expr = caller_bindings(caller, router)
+    route_bindings(router, grids)
+    geometry_bindings(caller, router, grids, read(MAPFAC_H))
     domain = [list(z3.Ints('domain_lo_x domain_lo_y domain_lo_z')),
               list(z3.Ints('domain_hi_x domain_hi_y domain_hi_z'))]
     initial = [list(z3.Ints('box_lo_x box_lo_y box_lo_z')),
@@ -401,6 +375,6 @@ def main():
 if __name__ == '__main__':
     try:
         sys.exit(main())
-    except (ValueError, SyntaxError) as error:
+    except (OSError, ValueError, SyntaxError) as error:
         print(f'  FAIL source contract: {error}')
         sys.exit(1)

@@ -4,7 +4,9 @@
 Arithmetic faults must give the specified SAT counterexamples. Structural
 faults must be explicit parser/contract rejections, never crashes or unknown.
 Positive controls include alternative comparisons under containment, reversed
-independent branches, setSmall/setBig and equivalent boundary expressions.
+independent branches, setSmall/setBig, equivalent boundary expressions and
+intentional map-factor aliases. Independent-axis enum slots are an admissible
+binding configuration, not a claim of whole-program numerical equivalence.
 """
 import re
 import subprocess
@@ -15,6 +17,7 @@ from pathlib import Path
 from advection_source import mutation_outcome
 from check_momentum_dispatch_selftest import replace_once, signature_swap
 from check_upwindall_z_reach import brace_block
+from momentum_geometry import MAPFAC_H, METRICS
 
 ERF = Path(__file__).resolve().parent.parent
 VERIFY = Path(__file__).with_name('check_momentum_domain.py')
@@ -152,11 +155,168 @@ def cases(originals):
     # Reformat every source file; comments and whitespace do not define semantics.
     yield 'whitespace and comments', {path: text.replace(',', ', /* gap */ ').replace(';', ';\n')
                                       for path, text in originals.items()}, False, ()
+    yield from geometry_cases(originals)
+
+
+def geometry_cases(originals):
+    """Separate input provenance from the already-proved box/interior laws."""
+    preserved = ('ok   caller tile/shrink setup, protected uses and ordered box/boundary bindings',
+                 'ok   both normal-grid routing arms preserve ordered box/boundary bindings')
+    success = ('ok   spacing and domain originate from the same const Geometry input',
+               'ok   metric tile iterator has only supported nonmutating uses before call',
+               'ok   all six momentum metrics use the intended map-factor slots and tile iterator',
+               'ok   protected geometry has no unmodeled uses before the momentum call',
+               'ok   router and both normal-grid callees preserve all eight ordered geometry bindings')
+
+    def case(name, edits, diagnostic='', mutated=True):
+        required = preserved + (('FAIL source contract: ' + diagnostic,) if mutated else success)
+        return 'geometry ' + name, edits, mutated, required
+
+    enum = originals[MAPFAC_H]
+    match = re.search(r'\benum MapFacType\s*\{[^{}]*\};', enum)
+
+    def enum_body(body):
+        return enum[:match.start()] + 'enum MapFacType { ' + body + ' };' + enum[match.end():]
+
+    for name, body, diagnostic in (
+        ('mass/U alias', 'm_x,u_x,v_x,num,m_y=1,u_y=1,v_y=2', 'map-factor indices alias different staggerings'),
+        ('U/V alias', 'm_x,u_x,v_x,num,m_y=0,u_y=2,v_y=2', 'map-factor indices alias different staggerings'),
+        ('V/mass alias', 'm_x,u_x,v_x,num,m_y=0,u_y=1,v_y=0', 'map-factor indices alias different staggerings'),
+        ('container too small', 'm_x,u_x,v_x,num=2,m_y=0,u_y=1,v_y=2', 'map-factor container size'),
+        ('container has an unused slot', 'm_x,u_x,v_x,num=4,m_y=0,u_y=1,v_y=2', 'map-factor indices must fill'),
+        ('out of range', 'm_x,u_x,v_x,num,m_y=0,u_y=1,v_y=4', 'map-factor indices must fill'),
+        ('unsupported octal', 'm_x=00,u_x,v_x,num,m_y=0,u_y=1,v_y=2', 'unsupported map-factor enum value'),
+        ('duplicate member', 'm_x,u_x,v_x,num,m_y=0,u_y=1,v_y=2,m_y=0', 'duplicate map-factor index'),
+        ('missing member', 'm_x,u_x,v_x,num,m_y=0,u_y=1', 'map-factor enum member set changed'),
+    ):
+        yield case(name, {MAPFAC_H: enum_body(body)}, diagnostic)
+    yield case('duplicate enum', {MAPFAC_H: enum + '\n' + match[0]}, 'MapFacType enum:')
+    for name, body in (
+        ('explicit enum values', 'm_x=0,u_x=1,v_x=2,num=3,m_y=m_x,u_y=u_x,v_y=v_x'),
+        ('permuted enum slots', 'm_x=2,u_x=0,v_x=1,num=3,m_y=2,u_y=0,v_y=1'),
+        ('independent axis slots', 'm_x,u_x,v_x,m_y,u_y,v_y,num'),
+    ):
+        yield case(name, {MAPFAC_H: enum_body(body)}, mutated=False)
+
+    caller = originals[CALLER]
+    shrink = caller.index('tbz = ShrinkZmomBoxAtDomainEnds')
+    call = re.search(r'AdvectionSrcForMom\([^;]+;', caller)
+    local = caller[shrink:call.start()]
+    definitions = []
+    for name, slot in METRICS.items():
+        binding = re.search(r'const Array4<const Real>& ' + name + r'\s*=\s*mapfac\[MapFacType::' + slot + r'\]->const_array\(mfi\);', local)
+        assert binding is not None
+        old = binding[0]
+        definitions.append(old)
+
+        def change_definition(new):
+            return caller[:shrink] + replace_once(local, old, new) + caller[call.start():]
+
+        wrong = {'m': 'u', 'u': 'v', 'v': 'm'}[slot[0]] + slot[1:]
+        yield case(name + ' wrong staggering', {CALLER: change_definition(old.replace('::' + slot, '::' + wrong))},
+                   name + ': wrong map-factor origin')
+        yield case(name + ' wrong iterator', {CALLER: change_definition(old.replace('(mfi)', '(other_mfi)'))},
+                   'momentum tile must bind all six const metric arrays')
+        yield case(name + ' conditional binding', {CALLER: change_definition('if (l_use_diff) { ' + old + ' }')},
+                   'caller slice ends inside')
+        # On the live isotropic enum these two selectors refer to the same slot.
+        alternate = slot[:2] + ('y' if slot[-1] == 'x' else 'x')
+        equivalent = change_definition(old.replace('::' + slot, '::' + alternate))
+        yield case(name + ' equivalent axis alias', {CALLER: equivalent}, mutated=False)
+        yield case(name + ' wrong axis on independent slots',
+                   {CALLER: equivalent, MAPFAC_H: enum_body('m_x,u_x,v_x,m_y,u_y,v_y,num')},
+                   name + ': wrong map-factor origin')
+
+    # Reordering independent definitions preserves their provenance and scope.
+    ordered = sorted(definitions, key=local.index)
+    changed = local
+    for index, old in enumerate(ordered):
+        changed = replace_once(changed, old, f'BINDING_{index}')
+    for index, old in enumerate(reversed(ordered)):
+        changed = changed.replace(f'BINDING_{index}', old)
+    yield case('reordered metric declarations', {CALLER: caller[:shrink] + changed + caller[call.start():]}, mutated=False)
+
+    spacing = 'const GpuArray<Real, AMREX_SPACEDIM> dxInv = geom.InvCellSizeArray();'
+    for new, name in ((spacing.replace('InvCellSizeArray', 'CellSizeArray'), 'non-inverse spacing'),
+                      (spacing.replace('geom.', 'other.'), 'wrong spacing geometry'),
+                      (spacing.replace('const ', ''), 'mutable spacing copy'),
+                      ('{ ' + spacing + ' }', 'spacing in nested scope')):
+        diagnostic = 'caller slice ends inside' if name == 'spacing in nested scope' else 'dxInv geometry origin:'
+        yield case(name, {CALLER: replace_once(caller, spacing, new)}, diagnostic)
+    for name, old, new in (
+        ('geom', 'const Geometry geom,', 'Geometry& geom,'),
+        ('mapfac', 'Vector<std::unique_ptr<MultiFab>>& mapfac,', 'Vector<std::unique_ptr<MultiFab>> mapfac,'),
+        ('stretched_dz_d', 'Gpu::DeviceVector<Real>& stretched_dz_d,', 'Gpu::DeviceVector<Real> stretched_dz_d,'),
+    ):
+        yield case(name + ' input type', {CALLER: replace_once(caller, old, new)}, name + ': slow RHS geometry input type/binding changed')
+
+    protected = ('geom', 'mapfac', 'stretched_dz_d', 'dxInv', 'dx', *METRICS)
+    anchor = 'int lo_z_face = domain.smallEnd(2);'
+    for statement in ('++mfi;', 'auto& escaped = mfi;', 'unknown(mfi);', 'MFIter mfi(other);',
+                      'unknown(cell_data.array(++mfi));'):
+        changed = caller[:shrink] + replace_once(caller[shrink:], anchor, statement + '\n' + anchor)
+        yield case('iterator ' + statement, {CALLER: changed}, 'unmodeled momentum tile iterator use before call')
+    for name in protected:
+        for statement, label in ((f'auto& escaped = {name};', 'reference escape'),
+                                  (f'unknown({name});', 'unapproved call')):
+            changed = caller[:call.start()]  # Insert after all metric definitions, before bounds.
+            changed = changed[:shrink] + replace_once(changed[shrink:], anchor, statement + '\n' + anchor)
+            yield case(name + ' ' + label, {CALLER: changed + caller[call.start():]}, 'unmodeled protected geometry use: ' + name)
+    for statement, name, diagnostic in (
+        ('dxInv[0] = 0;', 'spacing write', 'unmodeled protected geometry use: dxInv'),
+        ('mapfac[MapFacType::m_x].reset();', 'map slot write', 'unmodeled protected geometry use: mapfac'),
+        ('stretched_dz_d.resize(0);', 'spacing vector write', 'unmodeled protected geometry use: stretched_dz_d'),
+        ('erf_make_tau_terms(unknown(dxInv));', 'nested call argument', 'unmodeled protected geometry use: dxInv'),
+        ('erf_make_tau_terms((dxInv[0] = 0));', 'side effect in approved call', 'unmodeled protected geometry use: dxInv'),
+    ):
+        changed = caller[:shrink] + replace_once(caller[shrink:], anchor, statement + '\n' + anchor)
+        yield case(name, {CALLER: changed}, diagnostic)
+    # A compile-time region must not hide a geometry write from the use audit.
+    changed = replace_once(caller, spacing, spacing + '\n#ifdef ERF_USE_EAMXX_SHOC\ndxInv[0] = 0;\n#endif')
+    yield case('conditional geometry write', {CALLER: changed}, 'conditional SHOC region uses protected geometry')
+
+    geometry_names = ('cellSizeInv', 'stretched_dz_d', *METRICS)
+    router = originals[ROUTER]
+    for name in geometry_names:
+        actual = 'dxInv' if name == 'cellSizeInv' else name
+        args = re.sub(r'\b' + actual + r'\b', 'wrong_' + actual, call[0])
+        yield case('caller argument ' + name, {CALLER: replace_once(caller, call[0], args)},
+                   'slow RHS: ' + name + ' geometry argument binding changed')
+        for kind in GRIDS:
+            routed = re.search(r'AdvectionSrcForMom_' + kind + r'\([^;]+;', router)
+            args = re.sub(r'\b' + name + r'\b', 'wrong_' + name, routed[0])
+            yield case(kind + ' argument ' + name, {ROUTER: replace_once(router, routed[0], args)},
+                       kind + ': ' + name + ' geometry argument binding changed')
+        marker = 'AMREX_ALWAYS_ASSERT(bxz.smallEnd(2) > 0);'
+        changed = replace_once(router, marker, marker + '\nauto& escaped = ' + name + ';')
+        yield case('router alias ' + name, {ROUTER: changed}, 'unsupported source near')
+    for path, function, label in [(ROUTER, 'AdvectionSrcForMom', 'slow RHS')] + [
+            (path, 'AdvectionSrcForMom_' + kind, kind) for kind, path in GRIDS.items()]:
+        for name in ('mf_mx', 'cellSizeInv', 'stretched_dz_d'):
+            changed = signature_swap(originals[path], function, name, 'mf_ux')
+            yield case(label + ' signature swap ' + name, {path: changed}, label + ': ')
+    # Reordering router parameters AND the caller arguments preserves bindings.
+    swapped = signature_swap(router, 'AdvectionSrcForMom', 'mf_mx', 'mf_ux')
+    args = re.sub(r'\b(mf_mx|mf_ux)\b', lambda m: 'mf_ux' if m[0] == 'mf_mx' else 'mf_mx', call[0])
+    yield case('consistent router parameter permutation', {ROUTER: swapped, CALLER: replace_once(caller, call[0], args)}, mutated=False)
+    # Same-grid X/Y roles may use the same storage slot at any handoff. An
+    # independent-axis enum makes those identical edits actual binding faults.
+    for label, path, source, invoked in [('caller', CALLER, caller, call)] + [
+            (kind, ROUTER, router, re.search(r'AdvectionSrcForMom_' + kind + r'\([^;]+;', router))
+            for kind in GRIDS]:
+        for name in METRICS:
+            alternate = name[:-1] + ('y' if name[-1] == 'x' else 'x')
+            args = re.sub(r'\b' + name + r'\b', alternate, invoked[0])
+            edited = replace_once(source, invoked[0], args)
+            yield case(label + ' equivalent argument alias ' + name, {path: edited}, mutated=False)
+            yield case(label + ' wrong argument axis on independent slots ' + name,
+                       {path: edited, MAPFAC_H: enum_body('m_x,u_x,v_x,m_y,u_y,v_y,num')},
+                       ('slow RHS' if label == 'caller' else label) + ': ' + name + ' geometry argument binding changed')
 
 
 def main():
     work = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix='erf-momentum-domain-mutants-'))
-    originals = {path: (ERF / path).read_text() for path in (HEADER, CALLER, ROUTER, *GRIDS.values())}
+    originals = {path: (ERF / path).read_text() for path in (HEADER, CALLER, ROUTER, MAPFAC_H, *GRIDS.values())}
     unexpected = mutants = positives = 0
     for index, (name, edits, mutated, required) in enumerate(cases(originals)):
         root = work / f'{index:03d}'
@@ -181,7 +341,7 @@ def main():
         print(f"[{'CAUGHT' if caught and expected else 'passes' if expected else 'UNEXPECTED'}] {name}", flush=True)
         for message in messages[:2] + ['missing diagnostic: ' + item for item in missing]:
             print('           ' + message)
-    print(f'\n{mutants} mutations; {positives} equivalent rewrites; {unexpected} unexpected outcome(s)')
+    print(f'\n{mutants} mutations; {positives} equivalent/specification-preserving rewrites; {unexpected} unexpected outcome(s)')
     return int(bool(unexpected))
 
 
