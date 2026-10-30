@@ -49,7 +49,7 @@ Installing
 .. code-block:: bash
 
    spack install erf                                  # latest release, MPI on, double precision
-   spack install erf@develop                          # ERF's development branch with AMReX's
+   spack install erf@develop                          # ERF's development branch, its AMReX gitlink
    spack install erf +netcdf +rrtmgp                  # NetCDF I/O and RTE-RRTMGP radiation
    spack install erf +netcdf +noahmp +particles       # Noah-MP land surface, Lagrangian particles
    spack install erf +tests +fcompare                 # the regression and unit tests, AMReX's fcompare
@@ -66,7 +66,7 @@ stand-alone tests (``erf_exec --help`` and two steps of scalar advection) on an 
 Versions
 --------
 
-``develop`` (ERF's ``development`` branch, built against AMReX's ``development`` branch) and
+``develop`` (ERF's ``development`` branch, built against the AMReX commit its submodule pins) and
 every release from 24.10 on. Each release is pinned to the AMReX release it vendors, since
 ERF follows AMReX's API release by release; ``^amrex@<other>`` is refused. Releases before
 24.10 always build their bundled AMReX and are not offered.
@@ -200,7 +200,7 @@ demand:
 What to do when:
 
 * **A submodule moves on development.** ``python3 Build/spack/check_pins.py --fix`` rewrites
-  the develop Noah-MP pin. The RRTMGP/EKAT stack is one pin set shared by all releases;
+  the develop Noah-MP and AMReX pins. The RRTMGP/EKAT stack is one pin set shared by all releases;
   if ``Submodules/RRTMGP`` or ``Submodules/ekat`` moves, update ``_rrtmgp_stack`` with the
   new gitlinks and EKAT's ``extern/*`` gitlinks at the new EKAT commit.
 * **A release is tagged.** Add it to the version table with the tarball's sha256

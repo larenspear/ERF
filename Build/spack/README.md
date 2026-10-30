@@ -22,6 +22,22 @@ spack install erf
 | `../../spack-repo-index.yaml` | tells `spack repo add <git URL>` where this repository is |
 | `../../.github/workflows/spack-package.yml` | runs the pin check and the sweep on relevant PRs, and the build matrix on merges, weekly and on demand (at a release with the `version` input) |
 
-An older revision of this recipe is also in Spack's builtin repository
-(`spack/spack-packages`). This one is the maintained one and is used instead
-of it once registered.
+## Policies
+
+* **This recipe is canonical.** Spack's builtin repository (`spack/spack-packages`)
+  also carries an `erf` package; it is a snapshot that may lag. Registering this
+  repository puts it ahead of builtin, so `spack install erf` uses this one.
+* **Pins move with the tree.** The RRTMGP/EKAT, Noah-MP and E3SM commits the recipe
+  fetches, and the AMReX commit `@develop` builds, must equal ERF's gitlinks: the pin
+  check fails a pull request that bumps a submodule without the recipe
+  (`check_pins.py --fix` rewrites the develop Noah-MP and AMReX pins). Releases build
+  the AMReX release of the same month, the one their submodule vendors.
+* **A release adds one step.** Add the version with the tarball's sha256 and its
+  Noah-MP pin (the docs page says how); the weekly run fails until the newest tag is
+  offered.
+* **Overrides are temporary.** `packages/amrex` exists only for `particles_precision`;
+  delete it once spack-packages carries that variant.
+
+Other projects keep their recipe the same way, for example ParaView
+(`Utilities/spack/repo`), Axom (`scripts/spack`), COSMA (`spack_repo/cosma`), Rayleigh
+(`spack-repo`) and Amanzi (`config/spack`).
