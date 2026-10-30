@@ -14,7 +14,7 @@ on:
       - '.github/actions/**'
 
   pull_request:
-    branches: [development]
+    branches: [development, ci-base-upstream]   # fork validation only
     types: [opened, synchronize, reopened]
     paths:
       - '**'
@@ -125,8 +125,14 @@ jobs:
             -DERF_PARTICLES_PRECISION:STRING=${{matrix.particles_precision}} \
             -DERF_TEST_NRANKS:STRING=2 \
             -DERF_ENABLE_UNIT_TESTS:BOOL=ON .
+          # Pull requests build erf_exec only. The test executables and the AMReX plotfile tools
+          # cannot run on this runner (no GPU), and their device links are most of a warm job:
+          # 37 of 39 minutes on HIP, 13 of 14 on SYCL, and the same shape here. Merges build every target, so test code
+          # still compiles for this backend and the trunk cache holds its objects. The CMake
+          # configuration is the same on both tiers, which keeps the ccache keys shared.
           echo "Building with $(nproc) processes"
           cmake --build build-${{matrix.cuda_pkg}} --parallel "$(nproc)" \
+            ${{ github.event_name == 'pull_request' && '--target erf_exec' || '' }} \
           2>&1 | tee -a ${{runner.workspace}}/build-${{matrix.cuda_pkg}}-output.txt;
 
           echo '```' >> "$GITHUB_STEP_SUMMARY"
