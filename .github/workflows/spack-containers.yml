@@ -55,8 +55,11 @@ jobs:
     timeout-minutes: 5
     outputs:
       images: ${{ steps.matrix.outputs.images }}
+      date: ${{ steps.matrix.outputs.date }}
     steps:
       - uses: actions/checkout@v7
+      # One build date for every image of the run (a job that crosses midnight UTC would
+      # otherwise date its tag differently from the others).
       - name: Images for this run
         id: matrix
         env:
@@ -67,6 +70,7 @@ jobs:
           matrix=$(python3 Build/spack/ci_matrix.py --version "$VERSION" --spec "$ONE_SPEC" --tag "$ONE_TAG")
           echo "$matrix" | jq .images
           echo "images=$(echo "$matrix" | jq -c .images)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
   images:
     name: image ${{ matrix.image.tag }}
@@ -82,6 +86,7 @@ jobs:
     env:
       SPEC: ${{ matrix.image.spec }}
       TAG: ${{ matrix.image.tag }}
+      DATED_TAG: ${{ matrix.image.tag }}-${{ needs.plan.outputs.date }}
       BASE_IMAGE: ${{ inputs.base_image || 'ubuntu:22.04' }}
       IMAGE: ghcr.io/${{ github.repository_owner }}/erf
       GHCR_USER: ${{ github.actor }}
@@ -146,12 +151,11 @@ jobs:
       - name: Push the image
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          dated="$TAG-$(date -u +%Y%m%d)"
           spack buildcache push --unsigned --without-build-dependencies \
             --base-image "$BASE_IMAGE" --tag "$TAG" erf-images "$SPEC"
           spack buildcache push --unsigned --without-build-dependencies \
-            --base-image "$BASE_IMAGE" --tag "$dated" erf-images "$SPEC"
-          echo "pushed $IMAGE:$TAG and $IMAGE:$dated"
+            --base-image "$BASE_IMAGE" --tag "$DATED_TAG" erf-images "$SPEC"
+          echo "pushed $IMAGE:$TAG and $IMAGE:$DATED_TAG"
 
       # What a user gets: the usage text and two steps of the shipped scalar advection
       # case, run by the image's own erf_exec.
