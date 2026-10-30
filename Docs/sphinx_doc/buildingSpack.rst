@@ -136,9 +136,10 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
      - RTE-RRTMGP radiation. Builds EKAT with its bundled Kokkos, yaml-cpp, spdlog and Catch2
        from the commits ERF pins; needs ``+netcdf``. On GPUs, Kokkos takes one architecture
        and needs rocThrust (``rocthrust``) with ``+rocm`` or oneDPL (``intel-oneapi-dpl``)
-       with ``+sycl``. The bundled Kokkos 4.5.1 needs an oneAPI release that still defines
-       ``SYCL_EXT_INTEL_USM_ADDRESS_SPACES`` (the 2026 releases do not), and its
-       floating-point-exception shim is x86-only, so it does not compile on Apple Silicon.
+       with ``+sycl``. Two limits of the EKAT commit ERF pins, which the recipe refuses at
+       concretization: its bundled Kokkos 4.5.1 needs ``SYCL_EXT_INTEL_USM_ADDRESS_SPACES``,
+       which the oneAPI 2026 compilers removed (``+sycl`` needs a 2025 release), and its
+       floating-point-exception shim is x86-only, so it does not build on Apple Silicon.
    * - ``noahmp`` (off, 25.12+)
      - ``ERF_ENABLE_NOAHMP``
      - Noah-MP from the commit ERF pins for that release; needs ``+netcdf``, adds Fortran,

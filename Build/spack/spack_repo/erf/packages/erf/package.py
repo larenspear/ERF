@@ -311,6 +311,26 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("+eamxx_shoc", when="~mpi", msg="SHOC (EKAT) requires MPI")
     # The checked-in eamxx_config.h builds EAMxx in double precision.
     conflicts("+eamxx_shoc", when="precision=single", msg="EAMxx SHOC is double precision only")
+    # EKAT at ERF's pin compiles its feenableexcept shim (src/core/ekat_fpe.cpp)
+    # wherever libc lacks the function, and the shim reads x86 fenv_t fields;
+    # upstream EKAT PR #428 stubs it out on Apple but refuses MPI there instead.
+    for _ekat in ("+rrtmgp", "+eamxx_shoc"):
+        conflicts(
+            _ekat,
+            when="platform=darwin target=aarch64:",
+            msg="EKAT's floating-point-exception shim is x86-only; "
+            "RRTMGP and SHOC do not build on Apple Silicon",
+        )
+    # Its bundled Kokkos 4.5.1 (Kokkos_Setup_SYCL.hpp) requires
+    # SYCL_EXT_INTEL_USM_ADDRESS_SPACES, an extension the oneAPI 2026 compilers
+    # removed (intel/llvm #20916); 2025.x still defines it.
+    for _ekat in ("+rrtmgp", "+eamxx_shoc"):
+        conflicts(
+            "%oneapi@2026:",
+            when=f"{_ekat}+sycl",
+            msg="EKAT's bundled Kokkos 4.5.1 needs SYCL_EXT_INTEL_USM_ADDRESS_SPACES, "
+            "which the oneAPI 2026 compilers removed; use a 2025 release",
+        )
     conflicts("+tools", when="~netcdf", msg="The tools require NetCDF")
     conflicts(
         "+ml_uphys_diagnostics",

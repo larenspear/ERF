@@ -18,6 +18,7 @@ ERF_SWEEP_JOBS sets the number of concurrent solves (default 3).
 
 import concurrent.futures as cf
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -112,6 +113,13 @@ if sys.platform == "darwin":
     POS = [s for s in POS if s not in skipped]
     NEG = [s for s in NEG if s not in skipped]
     print(f"## skipping {len(skipped)} GPU specs on macOS (no CUDA/ROCm packages here)")
+# The recipe refuses the EKAT stack (+rrtmgp, +eamxx_shoc) on Apple Silicon, so there
+# those specs must be refused rather than concretize.
+if sys.platform == "darwin" and platform.machine() == "arm64":
+    ekat = [s for s in POS if "+rrtmgp" in s or "+eamxx_shoc" in s]
+    POS = [s for s in POS if s not in ekat]
+    NEG = NEG + ekat
+    print(f"## expecting {len(ekat)} EKAT specs to be refused on Apple Silicon")
 
 
 def run(spec):
