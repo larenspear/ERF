@@ -41,9 +41,13 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # overloads missing from amrex@25.02 and the ArrayND ncomp() accessor removed
     # by amrex@26.04. Declare each release together with its matching AMReX pin
     # so a new version cannot be added without one. The development branch
-    # tracks AMReX's development branch the same way.
+    # builds the AMReX commit its submodule points at, as ERF's own build does:
+    # amrex@develop with Spack's commit variant set to the gitlink (a git-commit
+    # version in a depends_on is not a candidate for the concretizer, the variant
+    # is); check_pins.py keeps it equal to the gitlink and rewrites it with --fix.
+    _amrex_develop = "5308689e82930103102c6c07dca7c7b5f08e4344"
     version("develop", branch="development")
-    depends_on("amrex@develop", when="@develop", type=("build", "link"))
+    depends_on(f"amrex@develop commit={_amrex_develop}", when="@develop", type=("build", "link"))
 
     for _v, _sha in (
         ("26.09", "d86372f6b9d85996f1b30beb7353c01b33f1bf0e454c0e63c913b255e17dadc0"),
