@@ -5,8 +5,8 @@ The recipe (Build/spack/spack_repo/erf/packages/erf/package.py) fetches the RRTM
 stack, Noah-MP and the EAMxx sources as pinned git resources instead of submodules or
 clone scripts, so release tarballs can be built. This compares those pins with ERF's tree:
 
-  * the @develop pins against the ref given with --ref (default HEAD): the RRTMGP, ekat and
-    Noah-MP gitlinks, and the E3SM commit in Build/GNU_Ekat/eamxx_clone.sh;
+  * the @develop pins against the ref given with --ref (default HEAD): the RRTMGP, ekat,
+    Noah-MP and AMReX gitlinks, and the E3SM commit in Build/GNU_Ekat/eamxx_clone.sh;
   * each tagged release the recipe offers against that tag, for the tags available locally
     (`git fetch --tags` to get them all);
   * EKAT's own extern/* pins against EKAT's tree at the pinned EKAT commit, read from a
@@ -16,7 +16,7 @@ It also lists release tags that the recipe does not offer yet (a warning, or a f
 with --strict).
 
     python3 Build/spack/check_pins.py            # report; exit 1 on a mismatch
-    python3 Build/spack/check_pins.py --fix      # also rewrite the develop Noah-MP pin
+    python3 Build/spack/check_pins.py --fix      # also rewrite the develop Noah-MP and AMReX pins
 
 Needs only git and the standard library. Run it from anywhere inside the ERF checkout.
 """
@@ -75,7 +75,7 @@ def recipe_pins(path):
     for node in cls.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             name = getattr(node.targets[0], "id", None)
-            if name in ("_rrtmgp_stack", "_noahmp_pins", "_e3sm_commit"):
+            if name in ("_rrtmgp_stack", "_noahmp_pins", "_e3sm_commit", "_amrex_develop"):
                 tables[name] = ast.literal_eval(node.value)
         if isinstance(node, ast.For) and isinstance(node.iter, ast.Tuple):
             for entry in ast.literal_eval(node.iter):
@@ -89,13 +89,14 @@ def recipe_pins(path):
             and isinstance(node.args[0], ast.Constant)
         ):
             versions.append(node.args[0].value)
-    missing = {"_rrtmgp_stack", "_noahmp_pins", "_e3sm_commit"} - set(tables)
+    missing = {"_rrtmgp_stack", "_noahmp_pins", "_e3sm_commit", "_amrex_develop"} - set(tables)
     if missing:
         raise RuntimeError(f"{path}: could not read {', '.join(sorted(missing))}")
     return (
         tables["_rrtmgp_stack"],
         tables["_noahmp_pins"],
         tables["_e3sm_commit"],
+        tables["_amrex_develop"],
         sorted(set(versions)),
     )
 
@@ -145,7 +146,9 @@ def main():
     )
     ap.add_argument("--ref", default="HEAD", help="ref whose tree the @develop pins must match")
     ap.add_argument(
-        "--fix", action="store_true", help="rewrite the develop Noah-MP pin to match --ref"
+        "--fix",
+        action="store_true",
+        help="rewrite the develop Noah-MP and AMReX pins to match --ref",
     )
     ap.add_argument(
         "--strict", action="store_true", help="fail when a release tag is missing from the recipe"
@@ -153,7 +156,7 @@ def main():
     args = ap.parse_args()
 
     root = git("rev-parse", "--show-toplevel", cwd=HERE).strip()
-    stack, noahmp, e3sm_commit, versions = recipe_pins(PACKAGE_PY)
+    stack, noahmp, e3sm_commit, amrex_develop, versions = recipe_pins(PACKAGE_PY)
     stack_by_path = {dest: commit for _, _, commit, dest in stack}
     failures = []
     rows = []
@@ -168,6 +171,7 @@ def main():
     links = gitlinks(args.ref, "Submodules", cwd=root)
     develop_noahmp = dict(noahmp).get("develop")
     check("develop Noah-MP", links.get("Submodules/Noah-MP"), develop_noahmp)
+    check("develop AMReX", links.get("Submodules/AMReX"), amrex_develop)
     for path in ("Submodules/RRTMGP", "Submodules/ekat"):
         check(f"develop {path}", links.get(path), stack_by_path.get(path))
     check("develop E3SM (eamxx_clone.sh)", e3sm_commit_at(args.ref, root), e3sm_commit)
@@ -235,6 +239,18 @@ def main():
         open(PACKAGE_PY, "w", encoding="utf-8").write(new)
         print(f"fixed: develop Noah-MP pin -> {links['Submodules/Noah-MP']}")
         failures.remove("develop Noah-MP")
+    if args.fix and links.get("Submodules/AMReX") and links["Submodules/AMReX"] != amrex_develop:
+        src = open(PACKAGE_PY, encoding="utf-8").read()
+        new, n = re.subn(
+            r'_amrex_develop = "[0-9a-f]{40}"',
+            f'_amrex_develop = "{links["Submodules/AMReX"]}"',
+            src,
+        )
+        if n != 1:
+            raise RuntimeError("could not find the develop AMReX pin to rewrite")
+        open(PACKAGE_PY, "w", encoding="utf-8").write(new)
+        print(f"fixed: develop AMReX pin -> {links['Submodules/AMReX']}")
+        failures.remove("develop AMReX")
     if any(f.startswith("develop Submodules/") for f in failures):
         print(
             "The RRTMGP/EKAT pins moved: update _rrtmgp_stack in package.py (ERF's RRTMGP and "
