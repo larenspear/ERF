@@ -35,3 +35,4 @@ runs:
         GATE_JOB: ${{ inputs.gate-job }}
         GATE_TOKEN: ${{ inputs.token }}
       run: python3 "${{ github.action_path }}/gate.py"
+# fork validation: second push, expected to be skipped by the gate
