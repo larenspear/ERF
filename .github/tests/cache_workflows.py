@@ -241,7 +241,9 @@ def check_workflows(workflows, defaults):
                     cache_steps(workflow, job)
                     events = workflow.get("on", {})
                     events = [events] if isinstance(events, str) else events
-                    require(events and set(events) <= {"push", "pull_request", "workflow_dispatch"},
+                    # schedule runs the default branch's own code, like push.
+                    require(events and set(events) <= {"push", "pull_request", "workflow_dispatch",
+                                                       "schedule"},
                             "unsupported cache workflow trigger; review publication trust first")
                     for event in events:
                         matrix = job.get("strategy", {}).get("matrix")

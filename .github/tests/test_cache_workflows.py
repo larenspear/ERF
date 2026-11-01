@@ -37,7 +37,7 @@ class MatrixTests(unittest.TestCase):
     def test_pr_dependent_axis(self):
         axis = "${{ fromJSON(github.event_name == 'pull_request' && '[\"ON\"]' || '[\"OFF\", \"ON\"]') }}"
         self.assertEqual(contracts.expand_matrix({"x": axis}, "pull_request"), [{"x": "ON"}])
-        for event in ("push", "workflow_dispatch"):
+        for event in ("push", "workflow_dispatch", "schedule"):
             self.assertEqual(contracts.expand_matrix({"x": axis}, event), [{"x": "OFF"}, {"x": "ON"}])
 
     def test_unknown_and_empty_matrices_fail(self):
@@ -70,7 +70,8 @@ class WorkflowTests(unittest.TestCase):
     def test_repository_contracts(self):
         counts, tags = self.check()
         # Inventory assertions, not limits imposed by the checker.
-        self.assertEqual(counts, {"push": 21, "pull_request": 9, "workflow_dispatch": 21})
+        self.assertEqual(counts, {"push": 21, "pull_request": 9, "workflow_dispatch": 21,
+                                  "schedule": 13})
         self.assertEqual(len(tags), 23)
         self.assertIn("ubuntu-22.04-x64-gcc-mpich-double-particles-off", tags)
         for arch in ("x64", "arm64"):

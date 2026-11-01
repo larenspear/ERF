@@ -26,6 +26,8 @@ on:
       - '.github/workflows/hip.yml'
       - '.github/actions/**'
   workflow_dispatch:
+  schedule:
+    - cron: '11 */6 * * *'
 
 # Development pushes finish the active run and keep only the newest pending commit.
 # PR cancellation and commit-specific manual groups stay unchanged.
@@ -34,11 +36,31 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 jobs:
+  gate:
+    name: Merge gate
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions/merge-gate
+      - id: gate
+        uses: ./.github/actions/merge-gate
+        with:
+          workflow: hip.yml
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   # MPI_C is broken since HIP 4.1
   # https://gitlab.kitware.com/cmake/cmake/-/issues/21968
   # https://github.com/ROCm-Developer-Tools/HIP/issues/2246
   Build-And-Test-HIP:
     name: HIP ROCm GFortran@9.3 C++17 - Mesh ${{matrix.mesh_precision}} Particles ${{matrix.particles}} ${{matrix.particles_precision}}
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     permissions:
       contents: read
       packages: write
