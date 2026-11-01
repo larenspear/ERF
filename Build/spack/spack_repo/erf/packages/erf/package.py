@@ -265,10 +265,11 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             depends_on("rocthrust", when=f"{_ekat}+rocm")
             depends_on("intel-oneapi-dpl", when=f"{_ekat}+sycl")
 
-    # Spack cuda_arch / amdgpu_target -> Kokkos_ARCH_<name> for the Kokkos 4.5.1
-    # that EKAT bundles (its cmake/kokkos_arch.cmake option names; Spack's own
-    # kokkos package maps newer releases, e.g. VEGA900 and NAVI1100 are not
-    # options in 4.5.1).
+    # Spack cuda_arch / amdgpu_target -> Kokkos_ARCH_<name>, the option names of the
+    # Kokkos that EKAT bundles (its cmake/kokkos_arch.cmake): 4.5.1 for releases
+    # 25.10-26.09, 5.1.0 on development since #4293, which adds Ampere 8.7 and Blackwell
+    # (its new AMD names, gfx950 and gfx1201, are not amdgpu_target values Spack offers).
+    # The ranges are those of _rrtmgp_stacks.
     _kokkos_cuda_arch = {
         "50": "MAXWELL50",
         "52": "MAXWELL52",
@@ -292,6 +293,20 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         "gfx1030": "NAVI1030",
         "gfx1100": "AMD_GFX1100",
         "gfx1103": "AMD_GFX1103",
+    }
+    _kokkos_arch = {
+        "@25.10:26.09": (_kokkos_cuda_arch, _kokkos_amdgpu_arch),
+        "@26.10:": (
+            {
+                **_kokkos_cuda_arch,
+                "87": "AMPERE87",
+                "100": "BLACKWELL100",
+                "103": "BLACKWELL103",
+                "120": "BLACKWELL120",
+                "121": "BLACKWELL121",
+            },
+            _kokkos_amdgpu_arch,
+        ),
     }
 
     # ERF's CMake accepts at most one of OpenMP, CUDA, HIP and SYCL.
@@ -335,31 +350,34 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # GPU architecture as Kokkos_ARCH_<name> (see cmake_args): it ignores
     # CMAKE_CUDA_ARCHITECTURES, autodetects otherwise (and fails on a node
     # without the GPU) and accepts exactly one GPU architecture.
-    for _ekat in ("+rrtmgp", "+eamxx_shoc"):
-        for _sm in CudaPackage.cuda_arch_values:
-            if _sm not in _kokkos_cuda_arch:
+    for _range, (_cuda_map, _amd_map) in _kokkos_arch.items():
+        for _ekat in ("+rrtmgp", "+eamxx_shoc"):
+            for _sm in CudaPackage.cuda_arch_values:
+                if _sm not in _cuda_map:
+                    conflicts(
+                        f"cuda_arch={_sm}",
+                        when=f"{_range}{_ekat}+cuda",
+                        msg="EKAT's bundled Kokkos has no architecture for this cuda_arch",
+                    )
+            for _tgt in ROCmPackage.amdgpu_targets:
+                if _tgt not in _amd_map:
+                    conflicts(
+                        f"amdgpu_target={_tgt}",
+                        when=f"{_range}{_ekat}+rocm",
+                        msg="EKAT's bundled Kokkos has no architecture for this amdgpu_target",
+                    )
+            for _a, _b in itertools.combinations(sorted(_cuda_map), 2):
                 conflicts(
-                    f"cuda_arch={_sm}",
-                    when=f"{_ekat}+cuda",
-                    msg="EKAT's bundled Kokkos has no architecture for this cuda_arch",
+                    f"cuda_arch={_a},{_b}",
+                    when=f"{_range}{_ekat}+cuda",
+                    msg="Kokkos takes one cuda_arch",
                 )
-        for _tgt in ROCmPackage.amdgpu_targets:
-            if _tgt not in _kokkos_amdgpu_arch:
+            for _a, _b in itertools.combinations(sorted(_amd_map), 2):
                 conflicts(
-                    f"amdgpu_target={_tgt}",
-                    when=f"{_ekat}+rocm",
-                    msg="EKAT's bundled Kokkos has no architecture for this amdgpu_target",
+                    f"amdgpu_target={_a},{_b}",
+                    when=f"{_range}{_ekat}+rocm",
+                    msg="Kokkos takes one amdgpu_target",
                 )
-        for _a, _b in itertools.combinations(sorted(_kokkos_cuda_arch), 2):
-            conflicts(
-                f"cuda_arch={_a},{_b}", when=f"{_ekat}+cuda", msg="Kokkos takes one cuda_arch"
-            )
-        for _a, _b in itertools.combinations(sorted(_kokkos_amdgpu_arch), 2):
-            conflicts(
-                f"amdgpu_target={_a},{_b}",
-                when=f"{_ekat}+rocm",
-                msg="Kokkos takes one amdgpu_target",
-            )
 
     # RRTMGP, EKAT and EKAT's bundled Kokkos, yaml-cpp, spdlog and Catch2, at the
     # commits ERF pins as submodules (Submodules/RRTMGP and Submodules/ekat in
@@ -375,48 +393,95 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # staging directory and patch() moves them into place: release tarballs and
     # git checkouts both carry an empty placeholder directory at each submodule
     # path, and Spack leaves a resource alone when its destination already exists.
-    _rrtmgp_stack = (
-        ("rrtmgp", "rte-rrtmgp", "71693e7490db0908a625eadb6ac3f23967de2c7d", "Submodules/RRTMGP"),
-        ("ekat", "EKAT", "10ab9d34ceba4eead542702a29676adf77ad91af", "Submodules/ekat"),
-        (
-            "kokkos",
-            "kokkos",
-            "6a19eb9454da490dbf785443d8f021028baeb161",
-            "Submodules/ekat/extern/kokkos",
+    # One stack per EKAT generation. Releases 25.10-26.09 vendor EKAT 10ab9d3
+    # (Kokkos 4.5.1; yaml-cpp, spdlog and Catch2 as its submodules). Development
+    # since #4293, so 26.10 onwards, vendors EKAT ae5e7f8 (Kokkos 5.1.0), which
+    # fetches the other three with FetchContent at the commits its
+    # cmake/tpls/EkatBuild*.cmake files pin; they are resources here too, handed to
+    # EKAT through FETCHCONTENT_SOURCE_DIR_* (see cmake_args) so the build needs no
+    # network. Catch2 is needed even with EKAT_ENABLE_TESTS off: EKAT always builds
+    # its testing-support library. The ranges also select the Kokkos arch names.
+    _rrtmgp_stacks = {
+        "@25.10:26.09": (
+            (
+                "rrtmgp",
+                "rte-rrtmgp",
+                "71693e7490db0908a625eadb6ac3f23967de2c7d",
+                "Submodules/RRTMGP",
+            ),
+            ("ekat", "EKAT", "10ab9d34ceba4eead542702a29676adf77ad91af", "Submodules/ekat"),
+            (
+                "kokkos",
+                "kokkos",
+                "6a19eb9454da490dbf785443d8f021028baeb161",
+                "Submodules/ekat/extern/kokkos",
+            ),
+            (
+                "yaml-cpp",
+                "yaml-cpp",
+                "95088a0a2b6f2dec0b3e6e59020cdcc0d4f3c658",
+                "Submodules/ekat/extern/yaml-cpp",
+            ),
+            (
+                "spdlog",
+                "spdlog",
+                "bdd1dff3788ebfe520f48f9ad216c60da6dd8f00",
+                "Submodules/ekat/extern/spdlog",
+            ),
+            (
+                "catch2",
+                "Catch2",
+                "958944d27a2d2fb82aa008377bf4f8752f6b848e",
+                "Submodules/ekat/extern/Catch2",
+            ),
         ),
-        (
-            "yaml-cpp",
-            "yaml-cpp",
-            "95088a0a2b6f2dec0b3e6e59020cdcc0d4f3c658",
-            "Submodules/ekat/extern/yaml-cpp",
+        "@26.10:": (
+            (
+                "rrtmgp",
+                "rte-rrtmgp",
+                "71693e7490db0908a625eadb6ac3f23967de2c7d",
+                "Submodules/RRTMGP",
+            ),
+            ("ekat", "EKAT", "ae5e7f8227943a25c66b1a1822973ec665d224e4", "Submodules/ekat"),
+            (
+                "kokkos",
+                "kokkos",
+                "3ec81abe1816109f6f62ac48cef41921f91a4d00",
+                "Submodules/ekat/extern/kokkos",
+            ),
+            (
+                "yaml-cpp",
+                "yaml-cpp",
+                "95088a0a2b6f2dec0b3e6e59020cdcc0d4f3c658",
+                "Submodules/ekat/extern/yaml-cpp",
+            ),
+            (
+                "spdlog",
+                "spdlog",
+                "79524ddd08a4ec981b7fea76afd08ee05f83755d",
+                "Submodules/ekat/extern/spdlog",
+            ),
+            (
+                "catch2",
+                "Catch2",
+                "0d70154ddf178cf99bca140669e0618267e51682",
+                "Submodules/ekat/extern/Catch2",
+            ),
         ),
-        (
-            "spdlog",
-            "spdlog",
-            "bdd1dff3788ebfe520f48f9ad216c60da6dd8f00",
-            "Submodules/ekat/extern/spdlog",
-        ),
-        # EKAT's testing-support library needs Catch2's single header even with
-        # EKAT_ENABLE_TESTS off; nothing in ERF uses it, but EKAT always builds it.
-        (
-            "catch2",
-            "Catch2",
-            "958944d27a2d2fb82aa008377bf4f8752f6b848e",
-            "Submodules/ekat/extern/Catch2",
-        ),
-    )
+    }
     # EAMxx SHOC needs EKAT too (ERF's CMake turns EKAT on for either); the two
     # conditions are disjoint so a +rrtmgp+eamxx_shoc build fetches each once.
-    for _name, _repo, _commit, _ in _rrtmgp_stack:
-        for _when in ("+rrtmgp", "~rrtmgp+eamxx_shoc"):
-            resource(
-                name=_name,
-                git=f"https://github.com/E3SM-Project/{_repo}.git",
-                commit=_commit,
-                destination="spack-resources",
-                placement=_name,
-                when=_when,
-            )
+    for _range, _stack in _rrtmgp_stacks.items():
+        for _name, _repo, _commit, _ in _stack:
+            for _when in ("+rrtmgp", "~rrtmgp+eamxx_shoc"):
+                resource(
+                    name=_name,
+                    git=f"https://github.com/E3SM-Project/{_repo}.git",
+                    commit=_commit,
+                    destination="spack-resources",
+                    placement=_name,
+                    when=f"{_range}{_when}",
+                )
 
     # The EAMxx sources SHOC is compiled from: the two directories ERF's CMake
     # reads under external/E3SM/components/eamxx/src, out of E3SM at the commit
@@ -472,7 +537,8 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
 
     def patch(self):
         if self.spec.satisfies("+rrtmgp") or self.spec.satisfies("+eamxx_shoc"):
-            for name, _, _, target in self._rrtmgp_stack:
+            stack = next(s for r, s in self._rrtmgp_stacks.items() if self.spec.satisfies(r))
+            for name, _, _, target in stack:
                 self._move_into_place(join_path("spack-resources", name), target)
         if self.spec.satisfies("+eamxx_shoc"):
             self._move_into_place(
@@ -556,12 +622,29 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
 
         if spec.satisfies("+rrtmgp") or spec.satisfies("+eamxx_shoc"):
             # The bundled Kokkos's GPU architecture (see the conflicts above).
+            cuda_map, amd_map = next(
+                maps for rng, maps in self._kokkos_arch.items() if spec.satisfies(rng)
+            )
             if spec.satisfies("+cuda"):
                 (sm,) = spec.variants["cuda_arch"].value
-                args.append(self.define("Kokkos_ARCH_" + self._kokkos_cuda_arch[sm], True))
+                args.append(self.define("Kokkos_ARCH_" + cuda_map[sm], True))
             if spec.satisfies("+rocm"):
                 (tgt,) = spec.variants["amdgpu_target"].value
-                args.append(self.define("Kokkos_ARCH_" + self._kokkos_amdgpu_arch[tgt], True))
+                args.append(self.define("Kokkos_ARCH_" + amd_map[tgt], True))
+            if spec.satisfies("@26.10:"):
+                # This EKAT fetches yaml-cpp, spdlog and Catch2 with FetchContent and
+                # only trusts a pre-populated directory with a .git in it, which a
+                # Spack resource has not; the override makes it add_subdirectory()
+                # the resource as it is.
+                extern = join_path(self.stage.source_path, "Submodules", "ekat", "extern")
+                for name, var in (
+                    ("yaml-cpp", "YAML_CPP"),
+                    ("spdlog", "SPDLOG"),
+                    ("Catch2", "CATCH2"),
+                ):
+                    args.append(
+                        self.define(f"FETCHCONTENT_SOURCE_DIR_{var}", join_path(extern, name))
+                    )
             if spec.satisfies("+sycl"):
                 # Kokkos's FindTPLONEDPL falls back to find_package(oneDPL) when the
                 # compiler does not see the headers; the config lives in the component.
