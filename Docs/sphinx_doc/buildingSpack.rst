@@ -136,9 +136,11 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
      - RTE-RRTMGP radiation. Builds EKAT with its bundled Kokkos, yaml-cpp, spdlog and Catch2
        from the commits ERF pins; needs ``+netcdf``. On GPUs, Kokkos takes one architecture
        and needs rocThrust (``rocthrust``) with ``+rocm`` or oneDPL (``intel-oneapi-dpl``)
-       with ``+sycl``. The bundled Kokkos 4.5.1 needs an oneAPI release that still defines
-       ``SYCL_EXT_INTEL_USM_ADDRESS_SPACES`` (the 2026 releases do not), and its
-       floating-point-exception shim is x86-only, so it does not compile on Apple Silicon.
+       with ``+sycl``. At 26.09 and earlier the bundled Kokkos 4.5.1 needs an oneAPI
+       release that still defines ``SYCL_EXT_INTEL_USM_ADDRESS_SPACES`` (the 2026 releases
+       do not); development bundles Kokkos 5.1.0, which has no such requirement. EKAT's
+       floating-point-exception shim is x86-only in both, so the stack does not compile on
+       Apple Silicon.
    * - ``noahmp`` (off, 25.12+)
      - ``ERF_ENABLE_NOAHMP``
      - Noah-MP from the commit ERF pins for that release; needs ``+netcdf``, adds Fortran,
@@ -200,9 +202,11 @@ demand:
 What to do when:
 
 * **A submodule moves on development.** ``python3 Build/spack/check_pins.py --fix`` rewrites
-  the develop Noah-MP and AMReX pins. The RRTMGP/EKAT stack is one pin set shared by all releases;
-  if ``Submodules/RRTMGP`` or ``Submodules/ekat`` moves, update ``_rrtmgp_stack`` with the
-  new gitlinks and EKAT's ``extern/*`` gitlinks at the new EKAT commit.
+  the develop Noah-MP and AMReX pins. The RRTMGP/EKAT stack is one pin set per EKAT
+  generation (``_rrtmgp_stacks``, keyed by version range); if ``Submodules/RRTMGP`` or
+  ``Submodules/ekat`` moves, add or update the entry with the new gitlinks, EKAT's
+  ``extern/kokkos`` gitlink and the ``GIT_TAG`` commits in its ``cmake/tpls/EkatBuild*.cmake``
+  at the new EKAT commit.
 * **A release is tagged.** Add it to the version table with the tarball's sha256
   (``spack checksum erf <version>``), and a Noah-MP pin line for it
   (``git ls-tree <tag> Submodules/Noah-MP``). The weekly run fails until the newest tag is
