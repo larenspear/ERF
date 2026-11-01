@@ -1,0 +1,37 @@
+name: merge gate
+description: Build development only every N merges or H hours; PRs and manual runs always build.
+inputs:
+  workflow:
+    description: This workflow's file name, such as hip.yml
+    required: true
+  merges:
+    description: Build once this many commits landed since the last build
+    default: '5'
+  hours:
+    description: Build once the last build is this many hours old
+    default: '6'
+  gate-job:
+    description: Name of the job running this action (never counted as a build)
+    default: Merge gate
+  token:
+    description: GITHUB_TOKEN with actions read
+    required: true
+outputs:
+  run:
+    description: "'true' when the build jobs should run"
+    value: ${{ steps.gate.outputs.run }}
+  reason:
+    description: Why
+    value: ${{ steps.gate.outputs.reason }}
+runs:
+  using: composite
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        GATE_WORKFLOW: ${{ inputs.workflow }}
+        GATE_MERGES: ${{ inputs.merges }}
+        GATE_HOURS: ${{ inputs.hours }}
+        GATE_JOB: ${{ inputs.gate-job }}
+        GATE_TOKEN: ${{ inputs.token }}
+      run: python3 "${{ github.action_path }}/gate.py"
