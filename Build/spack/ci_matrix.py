@@ -21,44 +21,68 @@ import json
 # particles); NetCDF + Noah-MP + RRTMGP + FFT on a GPU is what Build/Perlmutter and the
 # Kestrel quickstart script configure.
 INSTALL = [
-    "+mpi",  # the default build
-    "~mpi",
-    "+openmp +particles +tests +fcompare",
-    "+netcdf +noahmp +particles",  # Build/cmake_with_noahmp.sh
-    "+netcdf ~hdf5 +tests +fcompare",  # Build/cmake_with_netcdf.sh
-    "+netcdf +rrtmgp",  # gcc-rrtmgp.yml
-    "+netcdf +fft +rrtmgp +tests +fcompare",  # Build/cmake_with_kokkos_many.sh
-    "+netcdf +tools",
-    "+fft +tests +fcompare",  # Build/cmake_with_fft.sh
-    "+multiblock +tests +fcompare",  # Build/cmake_multiblock.sh
-    "+windfarm +wsm6_fort +wdm6_fort",
-    "precision=single particles_precision=single +particles",  # gcc.yml
-    "precision=double particles_precision=single +particles",  # gcc.yml
-    "+particles +ml_uphys_diagnostics",
-    "+eamxx_shoc +tests ~unit_tests",  # Build/cmake_with_shoc.sh
-    "+particles +tests +fcompare ^mpich",  # ci.yml's MPI
-    "+particles +cuda cuda_arch=80 ^cuda@12",  # cuda-ci.yml
-    "+netcdf +noahmp +rrtmgp +fft +cuda cuda_arch=80 ^cuda@12",  # Build/Perlmutter/cmake_with_RRTMGP_NOAHMP.sh
-    "erf@develop +fire",  # ERF_ENABLE_FIRE exists on development only
-    "erf@26.09 +particles +cuda cuda_arch=80 ^cuda@12",  # the last release, CUDA
-    "erf@26.09 +netcdf +noahmp +particles +tests",  # the last release, CPU
+    '+mpi',
+    '~mpi',
+    '+openmp',
+    '+netcdf',
+    '+netcdf ~hdf5',
+    '+hdf5 ~netcdf',
+    '+particles',
+    '+multiblock',
+    '+fft',
+    '+tests',
+    '+tests ~unit_tests',
+    '+fcompare',
+    'precision=single',
+    '+particles particles_precision=single',
+    '+particles precision=single particles_precision=double',
+    '+netcdf +tools',
+    '+netcdf +rrtmgp',
+    '+netcdf +noahmp',
+    '+windfarm',
+    '+particles +ml_uphys_diagnostics',
+    '+wsm6_fort',
+    '+wdm6_fort',
+    '+eamxx_shoc',
+    '+openmp +particles +tests +fcompare',
+    '+netcdf +noahmp +particles',
+    '+netcdf ~hdf5 +tests +fcompare',
+    '+netcdf +fft +rrtmgp +tests +fcompare',
+    '+fft +tests +fcompare',
+    '+multiblock +tests +fcompare',
+    '+windfarm +wsm6_fort +wdm6_fort',
+    'precision=single particles_precision=single +particles',
+    'precision=double particles_precision=single +particles',
+    '+eamxx_shoc +tests ~unit_tests',
+    '+particles +tests +fcompare ^mpich',
+    '~mpi +openmp +particles +tests +fcompare',
+    '+particles +cuda cuda_arch=80 ^cuda@12',
+    '+netcdf +noahmp +rrtmgp +fft +cuda cuda_arch=80 ^cuda@12',
+    '+openmp +netcdf +hdf5 +particles +multiblock +fft +tests +fcompare +tools +rrtmgp +noahmp +windfarm +wsm6_fort +wdm6_fort +eamxx_shoc +ml_uphys_diagnostics',
+    '+openmp +netcdf +hdf5 +particles +multiblock +fft +tests +fcompare +tools +rrtmgp +noahmp +windfarm +wsm6_fort +wdm6_fort +eamxx_shoc +ml_uphys_diagnostics ^mpich',
+    '+netcdf +particles +fft +tests +fcompare +tools +rrtmgp +noahmp +windfarm +wsm6_fort +wdm6_fort +eamxx_shoc +ml_uphys_diagnostics +cuda cuda_arch=80 ^cuda@12',
+    '+netcdf +particles +fft +tests +fcompare +tools +rrtmgp +noahmp +windfarm +wsm6_fort +wdm6_fort +eamxx_shoc +ml_uphys_diagnostics +cuda cuda_arch=70,80,90 ^cuda@12',
 ]
-# macos.yml: Apple Clang, MPI on, particles, double and single precision.
-MACOS = ["+particles +tests +fcompare", "+particles precision=single"]
-# hip.yml: ROCm from AMD's apt repository, gfx908, particles; and the radiation build of
-# Build/cmake_with_kokkos_many_hip.sh.
+MACOS = [
+    '+particles +tests +fcompare',
+    '+particles precision=single',
+    '+netcdf +noahmp +particles',
+    '+openmp',
+    '~mpi',
+    '+netcdf +fft +multiblock +tools +tests +fcompare',
+    '+netcdf +particles +windfarm +wsm6_fort +wdm6_fort +ml_uphys_diagnostics +tests +fcompare',
+]
 ROCM = [
-    "+rocm amdgpu_target=gfx908 +particles",
-    "+netcdf +rrtmgp +fft +rocm amdgpu_target=gfx908",
+    '+rocm amdgpu_target=gfx908 +particles',
+    '+netcdf +rrtmgp +fft +rocm amdgpu_target=gfx908',
+    '+netcdf +noahmp +particles +tests +fcompare +rocm amdgpu_target=gfx90a',
+    '+netcdf +particles +fft +tests +fcompare +tools +rrtmgp +noahmp +windfarm +wsm6_fort +wdm6_fort +eamxx_shoc +ml_uphys_diagnostics +rocm amdgpu_target=gfx90a',
 ]
-# sycl.yml: Intel oneAPI, Intel MPI, particles; and the Aurora configuration of
-# Docs/sphinx_doc/aurora_build_run.rst (+netcdf +noahmp +rrtmgp +sycl) on development only:
-# at 26.09 and earlier EKAT's bundled Kokkos 4.5.1 requires SYCL_EXT_INTEL_USM_ADDRESS_SPACES,
-# which the oneAPI 2026 releases the runner image installs no longer define; the Kokkos 5.1
-# that development's EKAT bundles (#4293) dropped that check.
 SYCL = [
-    "+sycl +particles %oneapi ^[virtuals=mpi] intel-oneapi-mpi",
-    "erf@develop +netcdf +noahmp +rrtmgp +sycl %oneapi ^[virtuals=mpi] intel-oneapi-mpi",
+    '+sycl +particles %oneapi ^[virtuals=mpi] intel-oneapi-mpi',
+    '+netcdf +noahmp +particles +tests +fcompare +sycl %oneapi ^[virtuals=mpi] intel-oneapi-mpi',
+    '+netcdf +rrtmgp +sycl %oneapi ^[virtuals=mpi] intel-oneapi-mpi',
+    '+netcdf +particles +fft +tests +fcompare +tools +noahmp +windfarm +wsm6_fort +wdm6_fort +ml_uphys_diagnostics +sycl %oneapi ^[virtuals=mpi] intel-oneapi-mpi',
 ]
 JOBS = {"install": INSTALL, "macos": MACOS, "rocm": ROCM, "sycl": SYCL}
 
