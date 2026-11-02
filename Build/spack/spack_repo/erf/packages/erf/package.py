@@ -45,7 +45,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # amrex@develop with Spack's commit variant set to the gitlink (a git-commit
     # version in a depends_on is not a candidate for the concretizer, the variant
     # is); check_pins.py keeps it equal to the gitlink and rewrites it with --fix.
-    _amrex_develop = "5308689e82930103102c6c07dca7c7b5f08e4344"
+    _amrex_develop = "3a253dccca68e2b19a8201a376a7c43cce3a2d79"
     version("develop", branch="development")
     depends_on(f"amrex@develop commit={_amrex_develop}", when="@develop", type=("build", "link"))
 
