@@ -29,35 +29,18 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
 
     license("BSD-3-Clause", checked_by="larenspear")
 
-    # Every version builds the AMReX commit its submodule points at, the only AMReX it was
-    # tested with: the monthly AMReX release of the same name is older or newer than that
-    # commit (25.01 vendors 24.12 + 14 commits, and amrex@25.01 already breaks its
-    # MLNodeLaplacian call), as amrex@develop with the commit variant (a git-commit version
-    # in a depends_on is not a concretizer candidate; the variant is). check_pins.py
-    # compares this table with the gitlinks and rewrites the develop entry with --fix.
-    _amrex_commits = {
-        "develop": "3a253dccca68e2b19a8201a376a7c43cce3a2d79",
-        "26.09": "f2cbba4afc9eb3cc0a68b311112def524ada8cd3",
-        "26.06": "c2eb6db7ee7965de0ddfc4c05d40dc2d3d61da93",
-        "26.05": "6f2c4aff90ae3b8a5df8877008de4bc21a71b00b",
-        "26.04": "388b0db16adb5eb90e740343ccbae4c3ba71b519",
-        "26.03": "eb10d70823dff434363ad1ca31c7ded9d4eec271",
-        "26.02": "53dc0a470c5d39562b33b55aab9d92976a48db9f",
-        "26.01": "53dc0a470c5d39562b33b55aab9d92976a48db9f",
-        "25.12": "507c73f5c724394c3d6fd5ef7e88f59d2dc11faf",
-        "25.11": "3c1f1c78f60530e4ee17f766cf195c2c776f7b00",
-        "25.10": "f300f150a9a5b35fb5848140ca11e35d637f0e92",
-        "25.08": "4bc33c77c2b06d0f178e9f2a2e037bd948618f74",
-        "25.07": "52e465901ed5427b4c9799fd9fa225cb4846b3f0",
-        "25.06": "5181c2798f821033351caebcd66e1b50228eb139",
-        "25.05": "d49d22968b403bc978749b5e2feb7c94a7710158",
-        "25.04": "7626a3f0d46d40ddf722c9426855449dffbbb9bd",
-        "25.03": "06b4a5b105f5aebe66b987194fc9b5c207fae5ff",
-        "25.01": "b3f67385e62f387b548389222840486c0fffca57",
-        "24.11": "4a6e7c87e1494d10893b36f0d7ce6bf9df19fe0d",
-        "24.10": "6239d2576489a3178d753471f988908f5499577c",
-    }
+    # @develop builds the AMReX commit its submodule points at, as ERF's own build does: the
+    # commit variant on amrex@develop (a git-commit version in a depends_on is not a
+    # concretizer candidate; the variant is). check_pins.py compares the pin with the gitlink
+    # and rewrites it with --fix. A release builds an AMReX release, so that the amrex
+    # recipe's version-keyed logic (patches, the tracer-header fix for 24.10-26.07) applies:
+    # the AMReX release of the same month, which contains the development commits ERF's
+    # submodule pointed at, unless the build matrix showed ERF needs the next one (24.10
+    # calls amrex::decompose(), added after amrex@24.10).
+    _amrex_develop = "3a253dccca68e2b19a8201a376a7c43cce3a2d79"
+    _amrex_newer = {"24.10": "24.11"}
     version("develop", branch="development")
+    depends_on(f"amrex@develop commit={_amrex_develop}", when="@develop", type=("build", "link"))
     for _v, _sha in (
         ("26.09", "d86372f6b9d85996f1b30beb7353c01b33f1bf0e454c0e63c913b255e17dadc0"),
         ("26.06", "379ffdebb30242cacddde95357511d5de1da29332c6624d5470088927743db78"),
@@ -80,8 +63,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         ("24.10", "7c9ba35374e71103fab8c5ba3ea107b4574e3270038bc3e8cbdcbe30eba26e7a"),
     ):
         version(_v, sha256=_sha)
-    for _v, _commit in _amrex_commits.items():
-        depends_on(f"amrex@develop commit={_commit}", when=f"@{_v}", type=("build", "link"))
+        depends_on(f"amrex@{_amrex_newer.get(_v, _v)}", when=f"@{_v}", type=("build", "link"))
 
     # Releases before 24.10 have no ERF_USE_INTERNAL_AMREX: they build the AMReX submodule
     # they vendor, so they are git checkouts with that submodule and depend on no amrex.
@@ -225,7 +207,10 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             # ERF uses only AMReX's HDF5 and FFT headers; the libraries are AMReX's dependencies.
             depends_on("amrex+hdf5", when="+hdf5")
             depends_on("amrex+fft", when="+fft")
-            # ERF.H includes AMReX_EBFabFactory.H since 25.03.
+            # ERF's own build turns AMReX_EB on from 25.03, when ERF.H starts including
+            # AMReX_EBFabFactory.H; before that its EB-only code does not build, and AMReX's
+            # EB-only MLNodeLaplacian overload makes 25.01's call ambiguous.
+            depends_on("amrex~eb", when="@24.10:25.02")
             depends_on("amrex+eb", when="@25.03:")
 
             # ERF's find_package(AMReX) always asks for the PIC, PARTICLES and LSOLVERS
