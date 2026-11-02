@@ -24,6 +24,11 @@ import sys
 import time
 
 POS = [
+    "erf@23.10 +mpi",
+    "erf@24.01 +openmp",
+    "erf@24.09 +netcdf +particles +tests",
+    "erf@24.06 +cuda cuda_arch=80 +mpi",
+    "erf@24.09 +rocm amdgpu_target=gfx90a +mpi",
     "erf@develop",
     "erf@develop ~mpi",
     "erf@develop +openmp",
@@ -78,6 +83,9 @@ POS = [
 # compiler for a %-requirement, so on gcc-only machines it is refused; it concretizes
 # wherever `spack compiler find` has registered oneAPI.
 NEG = [
+    "erf@23.10 +particles",
+    "erf@24.09 +fft",
+    "erf@24.09 +noahmp +netcdf",
     "erf@develop +sycl",
     "erf@develop +rrtmgp ~netcdf",
     "erf@develop +rrtmgp ~mpi",
