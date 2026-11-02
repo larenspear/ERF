@@ -7,6 +7,7 @@ clone scripts, so release tarballs can be built. This compares those pins with E
 
   * the @develop pins against the ref given with --ref (default HEAD): the RRTMGP, ekat,
     Noah-MP and AMReX gitlinks, and the E3SM commit in Build/GNU_Ekat/eamxx_clone.sh;
+    the AMReX gitlink of every release from 24.10 against its tag likewise;
   * each tagged release the recipe offers against that tag, for the tags available locally
     (`git fetch --tags` to get them all);
   * EKAT's own pins at each pinned EKAT commit: the extern/* gitlinks, and for a TPL that
@@ -83,7 +84,7 @@ def recipe_pins(path):
     for node in cls.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             name = getattr(node.targets[0], "id", None)
-            if name in ("_rrtmgp_stacks", "_noahmp_pins", "_e3sm_commit", "_amrex_develop"):
+            if name in ("_rrtmgp_stacks", "_noahmp_pins", "_e3sm_commit", "_amrex_commits"):
                 tables[name] = ast.literal_eval(node.value)
         if isinstance(node, ast.For) and isinstance(node.iter, ast.Tuple):
             for entry in ast.literal_eval(node.iter):
@@ -97,14 +98,14 @@ def recipe_pins(path):
             and isinstance(node.args[0], ast.Constant)
         ):
             versions.append(node.args[0].value)
-    missing = {"_rrtmgp_stacks", "_noahmp_pins", "_e3sm_commit", "_amrex_develop"} - set(tables)
+    missing = {"_rrtmgp_stacks", "_noahmp_pins", "_e3sm_commit", "_amrex_commits"} - set(tables)
     if missing:
         raise RuntimeError(f"{path}: could not read {', '.join(sorted(missing))}")
     return (
         tables["_rrtmgp_stacks"],
         tables["_noahmp_pins"],
         tables["_e3sm_commit"],
-        tables["_amrex_develop"],
+        tables["_amrex_commits"],
         sorted(set(versions)),
     )
 
@@ -196,7 +197,7 @@ def main():
     args = ap.parse_args()
 
     root = git("rev-parse", "--show-toplevel", cwd=HERE).strip()
-    stacks, noahmp, e3sm_commit, amrex_develop, versions = recipe_pins(PACKAGE_PY)
+    stacks, noahmp, e3sm_commit, amrex_commits, versions = recipe_pins(PACKAGE_PY)
     develop_stack = stack_for("develop", stacks)
     failures = []
     rows = []
@@ -211,7 +212,7 @@ def main():
     links = gitlinks(args.ref, "Submodules", cwd=root)
     develop_noahmp = dict(noahmp).get("develop")
     check("develop Noah-MP", links.get("Submodules/Noah-MP"), develop_noahmp)
-    check("develop AMReX", links.get("Submodules/AMReX"), amrex_develop)
+    check("develop AMReX", links.get("Submodules/AMReX"), amrex_commits.get("develop"))
     for path in ("Submodules/RRTMGP", "Submodules/ekat"):
         check(f"develop {path}", links.get(path), develop_stack.get(path))
     check("develop E3SM (eamxx_clone.sh)", e3sm_commit_at(args.ref, root), e3sm_commit)
@@ -229,6 +230,8 @@ def main():
             skipped_tags.append(v)
             continue
         tag_links = gitlinks(v, "Submodules", cwd=root)
+        if vtuple(v) >= (24, 10):
+            check(f"{v} AMReX", tag_links.get("Submodules/AMReX"), amrex_commits.get(v))
         if vtuple(v) >= (25, 10):
             for path in ("Submodules/RRTMGP", "Submodules/ekat"):
                 check(f"{v} {path}", tag_links.get(path), stack_for(v, stacks).get(path))
@@ -282,11 +285,15 @@ def main():
         open(PACKAGE_PY, "w", encoding="utf-8").write(new)
         print(f"fixed: develop Noah-MP pin -> {links['Submodules/Noah-MP']}")
         failures.remove("develop Noah-MP")
-    if args.fix and links.get("Submodules/AMReX") and links["Submodules/AMReX"] != amrex_develop:
+    if (
+        args.fix
+        and links.get("Submodules/AMReX")
+        and links["Submodules/AMReX"] != amrex_commits.get("develop")
+    ):
         src = open(PACKAGE_PY, encoding="utf-8").read()
         new, n = re.subn(
-            r'_amrex_develop = "[0-9a-f]{40}"',
-            f'_amrex_develop = "{links["Submodules/AMReX"]}"',
+            r'"develop": "[0-9a-f]{40}"',
+            f'"develop": "{links["Submodules/AMReX"]}"',
             src,
         )
         if n != 1:
