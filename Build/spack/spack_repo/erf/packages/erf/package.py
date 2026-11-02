@@ -636,13 +636,29 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         checkout: prefix/share/erf/examples/<case>/inputs_*."""
         examples = join_path(self.prefix.share, "erf", "examples")
         for case in ("ScalarAdvDiff", "IsentropicVortex"):
-            src = join_path(self.stage.source_path, "Exec", "RegTests", case)
-            if os.path.isdir(src):
-                install_tree(src, join_path(examples, case))
+            # The cases sat under DryRegTests from 24.11 to 26.03.
+            for group in ("RegTests", "DryRegTests"):
+                src = join_path(self.stage.source_path, "Exec", group, case)
+                if os.path.isdir(src):
+                    install_tree(src, join_path(examples, case))
+                    break
+
+    def _erf_exe(self):
+        """The executable that runs the examples: one per case through 26.02, one for the
+        dry regression tests at 26.03, erf_exec from 26.04."""
+        if self.spec.satisfies("@26.04:"):
+            name = "erf_exec"
+        elif self.spec.satisfies("@26.03"):
+            name = "erf_dryregtests"
+        else:
+            name = "erf_scalar_advdiff"
+        return Executable(join_path(self.prefix.bin, name))
 
     def test_help(self):
         """erf_exec prints its usage"""
-        erf_exec = Executable(self.prefix.bin.erf_exec)
+        if not self.spec.satisfies("@26.04:"):
+            raise SkipTest("before 26.04 the executables exit with an error without an input file")
+        erf_exec = self._erf_exe()
         out = erf_exec("--help", output=str.split, error=str.split)
         assert "usage" in out.lower()
 
@@ -655,6 +671,6 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             raise SkipTest("no example inputs installed for this version")
         if self.spec.satisfies("+windfarm"):
             raise SkipTest("ERF +windfarm cannot run a case without a wind farm")
-        erf_exec = Executable(self.prefix.bin.erf_exec)
+        erf_exec = self._erf_exe()
         with working_dir(self.test_suite.current_test_cache_dir, create=True):
             erf_exec(inputs, "max_step=2", "erf.plot_int_1=-1", "erf.check_int=-1")
