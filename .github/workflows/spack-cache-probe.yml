@@ -45,7 +45,8 @@ jobs:
           . spack_install_dir/share/spack/setup-env.sh
           spack env create --without-view -d cache-check
           spack -e cache-check config add packages:zlib:buildable:true
-          spack -e cache-check config blame packages
+          spack -e cache-check config add packages:zlib-api:buildable:true
+          spack -e cache-check config get
           spack -e cache-check add zlib@1.3.1
           spack -e cache-check concretize
           spack -e cache-check install --use-buildcache=never --fail-fast
