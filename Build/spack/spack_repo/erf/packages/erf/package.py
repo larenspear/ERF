@@ -523,6 +523,16 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             with open(unit_cmakelists, "w", encoding="utf-8") as f:
                 f.write(contents.replace(marker, "find_package(GTest REQUIRED)"))
 
+    def setup_build_environment(self, env):
+        if self.spec.satisfies("+rocm"):
+            # The compiler wrapper passes every link dependency's include directory with -I,
+            # llvm-amdgpu's among them, and that one holds flang's iso_c_binding.mod, which
+            # gfortran opens before its own module and rejects. hipcc finds its headers on
+            # its own, so the directory is dropped from the wrapper's lists.
+            llvm_include = self.spec["llvm-amdgpu"].prefix.include
+            for var in ("SPACK_INCLUDE_DIRS", "SPACK_STORE_INCLUDE_DIRS"):
+                env.remove_path(var, llvm_include)
+
     def cmake_args(self):
         spec = self.spec
         args = [
