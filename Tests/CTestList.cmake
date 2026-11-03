@@ -2614,6 +2614,19 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Check map-factor projection, storage staggering, enum-slot coverage and
+    # initialization at allocation time. These finite checks do not require Z3.
+    add_test(NAME AdvectionMapFactorStorage
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_mapfactor_storage.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionMapFactorStorage_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_mapfactor_storage_selftest.py)
+    set_tests_properties(AdvectionMapFactorStorage AdvectionMapFactorStorage_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
