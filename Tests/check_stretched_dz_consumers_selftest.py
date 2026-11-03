@@ -90,6 +90,8 @@ def cases(originals):
         wrapped = text[:body_start+1]+'\nauto later = [&] {\n'+text[body_start+1:body_end]+'\n};\n'+text[body_end:]
         yield name+' no-parameter outer closure', {path: wrapped}, True, 'nested in a closure'
         yield edit(name+' launcher shadow', path, alias, alias+' auto ParallelFor = other_launcher;', 'kernel launcher')
+        wrapped = text[:body_start+1]+'\nif (flags[0]) {\n'+text[body_start+1:body_end]+'\n}\n'+text[body_end:]
+        yield name+' indexed host condition', {path: wrapped}, False, SUCCESS
 
     for path in (TAU, FAST):
         text = originals[path]

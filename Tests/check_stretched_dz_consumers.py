@@ -17,6 +17,8 @@ ParallelFor may retain a pointer copy for GPU execution: completion before a
 resize/destruction remains an external obligation. This is not a whole-program
 alias, index-bound, numerical-accuracy or GPU-lifetime proof. Other consumers,
 including slow-RHS and advection/diffusion paths, remain separate obligations.
+check_stretched_dz_rhs guards slow-RHS/router forwarding and PBL functor copies;
+the diffusion and normal-advection consumer bodies still need separate audits.
 
 usage: check_stretched_dz_consumers.py [ERF_ROOT]
 """
@@ -81,10 +83,22 @@ def standalone(text, start):
 
 
 def no_outer_closures(body, stack):
+    """Admit ordinary host statement scopes, rejecting closures/unknown scopes."""
     for kind, pos in stack:
         if kind == '{':
-            require(not re.search(r'\][^;{}]*$', body[:pos].rstrip()),
-                    'protected spacing use is nested in a closure')
+            prefix = no_literals(body[:pos]).rstrip()
+            if not prefix or prefix[-1] in ';{}':
+                continue
+            if prefix.endswith(')'):
+                depth = 1
+                start = len(prefix)-2
+                while start >= 0 and depth:
+                    depth += (prefix[start] == ')') - (prefix[start] == '(')
+                    start -= 1
+                allowed = re.search(r'\b(?:if(?:\s+constexpr)?|for|while|switch)\s*$', prefix[:start+1])
+            else:
+                allowed = re.search(r'\b(?:else|do)$', prefix)
+            require(allowed, 'protected spacing use is nested in a closure or unsupported host scope')
 
 
 def host_scope(body, start):
