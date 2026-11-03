@@ -5,7 +5,7 @@
 # configurations. See Docs/sphinx_doc/buildingSpack.rst.
 #
 # Register it with `spack repo add <ERF>/Build/spack/spack_repo/erf` (any
-# Spack 1.x) or `spack repo add https://github.com/erf-model/ERF.git`
+# Spack 1.x) or `spack repo add https://github.com/larenspear/ERF.git`
 # (Spack 1.1+). Spack's builtin repository (spack/spack-packages) must be
 # registered too: this recipe uses its build systems and its amrex, mpi,
 # netcdf and googletest packages. A +particles build of ERF 26.06 or older
@@ -29,7 +29,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
 
     homepage = "https://erf.readthedocs.io/en/latest/index.html"
     url = "https://github.com/erf-model/ERF/archive/refs/tags/26.09.tar.gz"
-    git = "https://github.com/erf-model/ERF.git"
+    git = "https://github.com/larenspear/ERF.git"
 
     maintainers("larenspear", "jmsexton03")
 
@@ -46,7 +46,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # version in a depends_on is not a candidate for the concretizer, the variant
     # is); check_pins.py keeps it equal to the gitlink and rewrites it with --fix.
     _amrex_develop = "3a253dccca68e2b19a8201a376a7c43cce3a2d79"
-    version("develop", branch="development")
+    version("develop", branch="fix-tools-cuda-language")
     depends_on(f"amrex@develop commit={_amrex_develop}", when="@develop", type=("build", "link"))
 
     for _v, _sha in (
