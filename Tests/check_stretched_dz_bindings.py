@@ -14,6 +14,8 @@ vector of that level, live ERF object, normal C++/AMReX/std::function semantics,
 and no macro rewriting, concurrency or callback invocation from outside this
 path. Other calls must preserve the level/Geometry and spacing storage, even
 through implicit this or aliases. Their numerical bodies are not interpreted.
+check_stretched_dz_consumers separately guards explicit spacing preservation in
+erf_make_tau_terms, erf_substep_NS and ComputeStrain_S under its stated assumptions.
 Declaration headers, including ERF_SrcHeaders.H, must have no runtime effects
 in the enclosing scope; only the enumerated statement fragments are audited.
 Checkpoint/WRF refresh timing and GPU completion before resize/destruction are

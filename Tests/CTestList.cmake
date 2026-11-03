@@ -2669,6 +2669,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard spacing-vector/pointer preservation in tau, fast-substep and strain
+    # consumers. Kernel completion before storage changes remains conditional.
+    add_test(NAME AdvectionStretchedDzConsumers
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_consumers.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzConsumers_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_consumers_selftest.py)
+    set_tests_properties(AdvectionStretchedDzConsumers AdvectionStretchedDzConsumers_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
