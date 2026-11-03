@@ -311,7 +311,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     patch("cuda-tools.patch", when="@26.09+cuda+tools")
     conflicts("+tools", when="@:26.06+cuda", msg="CUDA plotfile tools require ERF 26.09 or newer")
     patch("ml-diagnostics-single.patch", when="@26.09+ml_uphys_diagnostics precision=single")
-    # ERF #4151 fixed optimized-build floating-point traps after the 26.09 tag.
+    # ERF #3965 and #4151 fixed optimized-build FPEs after the 26.09 tag.
     patch("apple-clang-fpe.patch", when="@26.09 platform=darwin")
     conflicts(
         "+ml_uphys_diagnostics",
