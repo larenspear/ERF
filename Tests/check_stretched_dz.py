@@ -15,7 +15,9 @@ sizes, successful vector/GPU operations with their usual semantics, no integer
 overflow or macro rewriting. Geometry dz is positive. Explicit stretching needs
 dz0>0 and ratio>0. Supplied levels must be strictly increasing. The geometric
 solver must return a same-sized strictly increasing nodal vector on its accepted
-path; its Newton solve, positivity and convergence are NOT proved here. Abort
+path; check_geometric_grid.py supplies sufficient exact-real tolerance margins
+for this property. The caller's convergence assertion alone is insufficient.
+Its Newton convergence and floating-point positivity are NOT proved here. Abort
 and ALWAYS_ASSERT failures do not return. ParmParse has its ordinary semantics.
 
 The consumer indexing theorem requires a zero-based vertical domain and the

@@ -2642,6 +2642,20 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Derive geometric-grid positivity margins, guard the complete solver and
+    # builder, and replay the known converged-but-nonmonotone small-scale case.
+    add_test(NAME AdvectionGeometricGrid_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_geometric_grid.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionGeometricGrid_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_geometric_grid_selftest.py)
+    set_tests_properties(AdvectionGeometricGrid_Z3 AdvectionGeometricGrid_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
