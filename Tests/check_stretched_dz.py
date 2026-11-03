@@ -22,8 +22,10 @@ and ALWAYS_ASSERT failures do not return. ParmParse has its ordinary semantics.
 
 The consumer indexing theorem requires a zero-based vertical domain and the
 corresponding freshly copied device vector as input. X/Y cells have 0<=k<n and
-interior Z nodes have 0<k<n. The allocation-to-consumer lifetime/call chain is
-not proved. Neither input validation of monotonicity nor floating-point safety,
+interior Z nodes have 0<k<n. check_stretched_dz_bindings guards the owning vectors
+and synchronous callback path into SlowRhsPre under explicit nonmutation
+assumptions. GPU lifetime and refresh scheduling remain unproved. Neither input
+validation of monotonicity nor floating-point safety,
 external boundary budgets, physical volumes or whole-update conservation is
 established. Real-arithmetic identities need not hold exactly after rounding.
 

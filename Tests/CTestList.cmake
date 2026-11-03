@@ -2656,6 +2656,19 @@ if(ERF_TEST_PYTHON)
         SKIP_RETURN_CODE 77
         LABELS "unit;advection")
 
+    # Guard spacing ownership and same-level forwarding through synchronous
+    # MRI callbacks. This finite source contract needs no solver dependency.
+    add_test(NAME AdvectionStretchedDzBindings
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_bindings.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzBindings_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_bindings_selftest.py)
+    set_tests_properties(AdvectionStretchedDzBindings AdvectionStretchedDzBindings_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
