@@ -18,7 +18,8 @@ resize/destruction remains an external obligation. This is not a whole-program
 alias, index-bound, numerical-accuracy or GPU-lifetime proof. Other consumers,
 including slow-RHS and advection/diffusion paths, remain separate obligations.
 check_stretched_dz_rhs guards slow-RHS/router forwarding and PBL functor copies;
-the diffusion and normal-advection consumer bodies still need separate audits.
+check_stretched_dz_diffusion audits the explicit diffusion pointer paths.
+Normal-advection consumer bodies still need separate audits.
 
 usage: check_stretched_dz_consumers.py [ERF_ROOT]
 """

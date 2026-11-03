@@ -2695,6 +2695,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Follow spacing pointers through momentum and scalar diffusion kernels.
+    # This source contract assumes valid storage and GPU completion before changes.
+    add_test(NAME AdvectionStretchedDzDiffusion
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_diffusion.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzDiffusion_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_diffusion_selftest.py)
+    set_tests_properties(AdvectionStretchedDzDiffusion AdvectionStretchedDzDiffusion_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
