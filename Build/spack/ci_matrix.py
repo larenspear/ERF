@@ -36,9 +36,11 @@ INSTALL = [
     "precision=single particles_precision=single +particles",  # gcc.yml
     "precision=double particles_precision=single +particles",  # gcc.yml
     "+particles +ml_uphys_diagnostics",
+    "+particles +ml_uphys_diagnostics precision=single",
     "+eamxx_shoc +tests ~unit_tests",  # Build/cmake_with_shoc.sh
     "+particles +tests +fcompare ^mpich",  # ci.yml's MPI
     "+particles +cuda cuda_arch=80 ^cuda@12",  # cuda-ci.yml
+    "+netcdf +tools +cuda cuda_arch=80 ^cuda@12",
     "+netcdf +noahmp +rrtmgp +fft +cuda cuda_arch=80 ^cuda@12",  # Build/Perlmutter/cmake_with_RRTMGP_NOAHMP.sh
     "erf@develop +fire",  # ERF_ENABLE_FIRE exists on development only
     "erf@26.09 +particles +cuda cuda_arch=80 ^cuda@12",  # the last release, CUDA
@@ -108,8 +110,10 @@ def validate_request(spec, runner, build_mode, run_tests):
         raise ValueError("run_tests requires a CPU spec with +tests")
     if build_mode == "develop" and not re.match(r"^erf@develop(?:\s|$)", spec):
         raise ValueError("develop mode requires erf@develop to match the checked-out source")
-    if build_mode != "install" and (gpu or "platform=darwin" in spec):
-        raise ValueError("develop/reuse validation currently supports Linux CPU specs")
+    if build_mode != "install" and any(k in spec for k in ("+rocm", "+sycl", "platform=darwin")):
+        raise ValueError("develop/reuse validation currently uses the Linux install job")
+    if build_mode == "reuse" and gpu:
+        raise ValueError("reuse validation requires a CPU spec")
 
 
 def main():

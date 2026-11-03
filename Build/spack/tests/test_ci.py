@@ -34,6 +34,10 @@ class RequestTests(unittest.TestCase):
             ("", "ubuntu-24.04-arm", "install", False),
             ("", "ubuntu-22.04", "develop", False),
             ("erf@26.09", "ubuntu-22.04", "develop", False),
+            ("erf@develop +rocm", "ubuntu-22.04", "develop", False),
+            ("erf@develop +sycl", "ubuntu-22.04", "develop", False),
+            ("erf@develop platform=darwin", "ubuntu-22.04", "develop", False),
+            ("erf@26.09 +cuda", "ubuntu-22.04", "reuse", False),
         ]
         for request in invalid:
             with self.subTest(request=request), self.assertRaises(ValueError):
@@ -41,6 +45,9 @@ class RequestTests(unittest.TestCase):
 
     def test_valid_cpu_development_request(self):
         ci_matrix.validate_request("erf@develop +tests", "ubuntu-22.04", "develop", True)
+
+    def test_valid_cuda_development_build(self):
+        ci_matrix.validate_request("erf@develop +cuda cuda_arch=80", "ubuntu-22.04", "develop", False)
 
 
 class BuildTests(unittest.TestCase):
