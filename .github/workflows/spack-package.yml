@@ -191,7 +191,7 @@ jobs:
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast --test=root "$SPEC"
+          CTEST_OUTPUT_ON_FAILURE=1 spack install --verbose --fail-fast --test=root "$SPEC"
 
       # The stand-alone tests run the executable; GPU builds cannot on these runners.
       - name: Stand-alone tests
@@ -210,6 +210,21 @@ jobs:
       # Build-only dependencies satisfied from the public cache were never installed
       # here, so pushing them fails; link and run dependencies are what the next
       # run needs.
+      - name: ctest diagnostics
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          for b in $(spack location -S)/spack-stage-erf-*/spack-build-*; do
+            [ -d "$b" ] || continue
+            echo "== build dir $b"
+            ls "$b/Testing/Temporary" 2>/dev/null || echo "(no Testing/Temporary: ctest never ran)"
+            grep -nE "Failed|FAILED|error|Error|tolerance|relative|RELATIVE|differ" "$b/Testing/Temporary/LastTest.log" 2>/dev/null | head -n 40 || true
+            cd "$b"
+            echo "== ctest -N"; ctest -N 2>&1 | tail -n 3
+            echo "== rerun of the test that failed on Linux"
+            ctest -R ABL_MOST_IMP_DIFF_TKE --output-on-failure 2>&1 | tail -n 80
+          done
+
       - name: Push dependencies to the build cache
         if: always()
         continue-on-error: true
@@ -264,7 +279,7 @@ jobs:
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast --test=root "$SPEC"
+          CTEST_OUTPUT_ON_FAILURE=1 spack install --verbose --fail-fast --test=root "$SPEC"
 
       - name: Stand-alone tests
         run: |
@@ -276,6 +291,21 @@ jobs:
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack test results -l erf-ci || true
+
+      - name: ctest diagnostics
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          for b in $(spack location -S)/spack-stage-erf-*/spack-build-*; do
+            [ -d "$b" ] || continue
+            echo "== build dir $b"
+            ls "$b/Testing/Temporary" 2>/dev/null || echo "(no Testing/Temporary: ctest never ran)"
+            grep -nE "Failed|FAILED|error|Error|tolerance|relative|RELATIVE|differ" "$b/Testing/Temporary/LastTest.log" 2>/dev/null | head -n 40 || true
+            cd "$b"
+            echo "== ctest -N"; ctest -N 2>&1 | tail -n 3
+            echo "== rerun of the test that failed on Linux"
+            ctest -R ABL_MOST_IMP_DIFF_TKE --output-on-failure 2>&1 | tail -n 80
+          done
 
       - name: Push dependencies to the build cache
         if: always()
