@@ -191,7 +191,7 @@ jobs:
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast "$SPEC"
+          spack install --verbose --fail-fast --test=root "$SPEC"
 
       # The stand-alone tests run the executable; GPU builds cannot on these runners.
       - name: Stand-alone tests
@@ -264,7 +264,7 @@ jobs:
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast "$SPEC"
+          spack install --verbose --fail-fast --test=root "$SPEC"
 
       - name: Stand-alone tests
         run: |
