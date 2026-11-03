@@ -95,6 +95,8 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
      - ``ERF_ENABLE_OPENMP`` / ``_CUDA`` / ``_HIP`` / ``_SYCL``
      - At most one. ``cuda`` needs ``cuda_arch``; ``rocm`` needs ``amdgpu_target``; ``sycl``
        needs the oneAPI compilers. AMReX is built for the same backend and architectures.
+       On macOS ``openmp`` is refused with Apple Clang, which has no OpenMP runtime; it
+       needs gcc for C and C++ in every package (``%%c,cxx=gcc``, the propagating form).
    * - ``netcdf`` (off)
      - ``ERF_ENABLE_NETCDF``
      - Parallel NetCDF-4 (``netcdf-c+mpi``).

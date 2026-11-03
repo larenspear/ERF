@@ -292,6 +292,12 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("+rocm", when="+sycl", msg="ERF supports one of OpenMP, CUDA, HIP and SYCL")
     # CudaPackage allows cuda_arch=none; cmake_args needs a real one.
     conflicts("cuda_arch=none", when="+cuda", msg="ERF needs an explicit cuda_arch")
+    # Apple Clang ships no OpenMP runtime, so AMReX's CMake cannot find OpenMP with it.
+    conflicts(
+        "+openmp",
+        when="platform=darwin %c,cxx=apple-clang",
+        msg="OpenMP on macOS needs gcc for C and C++ everywhere (%%c,cxx=gcc); Apple Clang has none",
+    )
     requires("%c,cxx=oneapi", when="+sycl", msg="the SYCL backend needs the oneAPI compilers")
     conflicts("+netcdf", when="~mpi", msg="ERF's NetCDF I/O is parallel and needs MPI")
     conflicts("+noahmp", when="~netcdf", msg="Noah-MP requires NetCDF")
@@ -510,6 +516,15 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
                 raise InstallError("ERF unit tests no longer match the googletest patch marker")
             with open(unit_cmakelists, "w", encoding="utf-8") as f:
                 f.write(contents.replace(marker, "find_package(GTest REQUIRED)"))
+
+    def setup_build_environment(self, env):
+        if self.spec.satisfies("+rocm"):
+            # Spack-built rocprim (through rocthrust) puts llvm-amdgpu among the link
+            # dependencies, so the compiler wrapper adds its include directory, where gfortran
+            # then opens flang's iso_c_binding.mod instead of its own. hipcc finds it itself.
+            llvm_include = self.spec["llvm-amdgpu"].prefix.include
+            for var in ("SPACK_INCLUDE_DIRS", "SPACK_STORE_INCLUDE_DIRS"):
+                env.remove_path(var, llvm_include)
 
     def cmake_args(self):
         spec = self.spec
