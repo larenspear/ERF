@@ -17,6 +17,26 @@ def command(*args, capture=False):
     return subprocess.run(args, check=True, text=True, capture_output=capture).stdout
 
 
+def configure_cache():
+    # Spack 1.2 reads format 5, while development writes format 6. A mixed
+    # OCI repository makes the older Spack fail when updating its index.
+    version = command(
+        "spack", "python", "-c",
+        "from spack.spec import SPECFILE_FORMAT_VERSION; print(SPECFILE_FORMAT_VERSION)",
+        capture=True,
+    ).strip()
+    if not version.isdecimal():
+        raise ValueError(f"Unexpected Spack spec format: {version!r}")
+    owner = os.environ["GITHUB_REPOSITORY_OWNER"]
+    url = f"oci://ghcr.io/{owner}/spack-buildcache-v{version}"
+    command(
+        "spack", "mirror", "add", "--unsigned",
+        "--oci-username-variable", "GHCR_USER", "--oci-password-variable", "GHCR_TOKEN",
+        "erf-buildcache", url,
+    )
+    print(f"Build cache for Spack spec format {version}: {url}", flush=True)
+
+
 def paths():
     workspace = Path(os.environ["GITHUB_WORKSPACE"])
     return workspace, workspace / "spack-ci-env", workspace / "spack-ci-artifacts"
@@ -167,9 +187,9 @@ def collect():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "install", "collect"))
+    parser.add_argument("phase", choices=("cache", "prepare", "install", "collect"))
     args = parser.parse_args()
-    {"prepare": prepare, "install": install, "collect": collect}[args.phase]()
+    {"cache": configure_cache, "prepare": prepare, "install": install, "collect": collect}[args.phase]()
 
 
 if __name__ == "__main__":

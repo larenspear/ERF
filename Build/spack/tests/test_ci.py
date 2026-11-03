@@ -56,6 +56,19 @@ class RequestTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
+    def test_incompatible_spec_formats_use_separate_caches(self):
+        urls = []
+        for version in ("5", "6"):
+            with (
+                patch.dict(os.environ, {"GITHUB_REPOSITORY_OWNER": "example"}),
+                patch.object(ci_build, "command", side_effect=[version + "\n", None]) as run,
+            ):
+                ci_build.configure_cache()
+                urls.append(run.call_args.args[-1])
+                self.assertIn("GHCR_TOKEN", run.call_args.args)
+        self.assertEqual(urls, ["oci://ghcr.io/example/spack-buildcache-v5",
+                                "oci://ghcr.io/example/spack-buildcache-v6"])
+
     def test_failed_build_or_ctest_is_not_hidden(self):
         with patch.dict(
             os.environ, {"GITHUB_WORKSPACE": "/tmp/ci", "SPEC": "erf +tests", "RUN_TESTS": "true"}

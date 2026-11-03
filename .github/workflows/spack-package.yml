@@ -208,9 +208,7 @@ jobs:
           spack repo add "$GITHUB_WORKSPACE/Build/spack/spack_repo/erf"
           spack compiler find
           spack external find --all --not-buildable
-          spack mirror add --unsigned \
-            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
-            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+          python3 Build/spack/ci_build.py cache
 
       - name: Concretize and record the build environment
         run: |
@@ -308,9 +306,7 @@ jobs:
           spack repo add "$GITHUB_WORKSPACE/Build/spack/spack_repo/erf"
           spack compiler find
           spack external find --all --not-buildable
-          spack mirror add --unsigned \
-            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
-            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+          python3 Build/spack/ci_build.py cache
 
       - name: Concretize and record the build environment
         run: |
@@ -413,9 +409,7 @@ jobs:
             hip hipcc llvm-amdgpu hsa-rocr-dev comgr rocrand hiprand rocsparse rocfft \
             rocminfo rocm-core rocm-cmake rocm-smi-lib hipsparse rocblas rocsolver hipblas
           spack config get packages | grep -E "^  (hip|hipcc|llvm-amdgpu|hsa-rocr-dev|comgr|rocrand|hiprand|rocsparse|rocfft|rocm-core):" || true
-          spack mirror add --unsigned \
-            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
-            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+          python3 Build/spack/ci_build.py cache
 
       - name: Concretize and record the build environment
         run: |
@@ -554,9 +548,7 @@ jobs:
           EOF
           spack config add -f oneapi-externals.yaml
           spack config get packages | grep -A14 -E "^  intel-oneapi-compilers:" || true
-          spack mirror add --unsigned \
-            --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
-            erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
+          python3 Build/spack/ci_build.py cache
 
       - name: Concretize and record the build environment
         run: |
