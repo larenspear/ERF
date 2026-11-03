@@ -1,0 +1,106 @@
+diff --git a/Source/PBL/ERF_ComputeDiffusivityMYNNEDMF.cpp b/Source/PBL/ERF_ComputeDiffusivityMYNNEDMF.cpp
+index 055ecf7b2..558b7679d 100644
+--- a/Source/PBL/ERF_ComputeDiffusivityMYNNEDMF.cpp
++++ b/Source/PBL/ERF_ComputeDiffusivityMYNNEDMF.cpp
+@@ -4402,7 +4402,10 @@ ComputeDiffusivityMYNNEDMF (const MultiFab& xvel,
+             Real Rf  = level2.calc_Rf(GM, GH);
+             Real SM2 = level2.calc_SM(Rf);
+             Real qe2 = mynn.B1*Lm*Lm*SM2*(one-Rf)*shearProd;
+-            Real qe  = (qe2 < zero) ? zero : std::sqrt(qe2);
++            // Clamp before the sqrt rather than selecting after it: the optimiser
++            // evaluates a guarded sqrt of a negative qe2 before the selection, which
++            // trips amrex.fpe_trap_invalid. The value is unchanged for every qe2.
++            Real qe  = std::sqrt(amrex::max(qe2, amrex::Real(zero)));
+ 
+             // Level 2 limiting (Helfand and Labraga 1988)
+             Real alphac  = (qvel(i,j,k) > qe) ? one : qvel(i,j,k) / (qe + eps);
+diff --git a/Source/Particles/ERF_SuperDropletPCDefinitions.H b/Source/Particles/ERF_SuperDropletPCDefinitions.H
+index fad3fef71..ffe7c5d7d 100644
+--- a/Source/Particles/ERF_SuperDropletPCDefinitions.H
++++ b/Source/Particles/ERF_SuperDropletPCDefinitions.H
+@@ -253,8 +253,10 @@ static amrex::ParticleReal SD_effective_radius( const int a_idx, /*!< Particle i
+             rho_p += a_ae_rho[j]*a_ae_mass[j][a_idx];
+         }
+     }
+-    if (m_p > zero) { rho_p /= m_p; }
+-    else           { rho_p = one; }
++    // The optimiser evaluates the division before the selection, so its denominator
++    // must never be zero (0/0 trips amrex.fpe_trap_invalid); equal to m_p for m_p >= min().
++    const auto rho_p_avg = rho_p / amrex::max(m_p, std::numeric_limits<amrex::ParticleReal>::min());
++    rho_p = (m_p > zero) ? rho_p_avg : one;
+     auto m_t = m_w + m_s + (a_rho_w/rho_p)*m_p;
+     auto r_eff = std::cbrt(m_t / (four_thirds_pi*a_rho_w));
+     return r_eff;
+@@ -286,8 +288,9 @@ static amrex::ParticleReal SD_dry_radius( const int a_idx, /*!< Particle index *
+             rho_p += a_ae_rho[j]*a_ae_mass[j][a_idx];
+         }
+     }
+-    if (m_p > zero) { rho_p /= m_p; }
+-    else           { rho_p = one; }
++    // Never-zero denominator, as in SD_effective_radius.
++    const auto rho_p_avg = rho_p / amrex::max(m_p, std::numeric_limits<amrex::ParticleReal>::min());
++    rho_p = (m_p > zero) ? rho_p_avg : one;
+     auto r_dry = std::cbrt(m_p / (four_thirds_pi*rho_p));
+     return r_dry;
+ }
+diff --git a/Source/Particles/ERF_SuperDropletPCMassChange.H b/Source/Particles/ERF_SuperDropletPCMassChange.H
+index 53cf21a66..74b1a0584 100644
+--- a/Source/Particles/ERF_SuperDropletPCMassChange.H
++++ b/Source/Particles/ERF_SuperDropletPCMassChange.H
+@@ -876,13 +876,19 @@ namespace SDMassChangeUtils_SV
+                         const RT a_c  /*!< polar radius */ ) const noexcept
+         {
+             auto phi = a_c / a_a;
++            // The optimiser evaluates both shape branches before selecting one (a sphere,
++            // phi = 1, divides 0 by 0 in each), so keep every argument in its domain. The
++            // abs, min and max leave the selected branch's values unchanged.
++            const RT tiny = std::numeric_limits<RT>::min();
++            auto ecent_prolate = std::sqrt(std::abs(RT(1.0) - RT(1.0)/(phi*phi)));
++            auto ecent_oblate  = std::sqrt(amrex::min(std::abs(RT(1.0) - phi*phi), RT(1.0)));
++            auto capaci_prolate = ecent_prolate*a_c / amrex::max(std::log((RT(1.0)+ecent_prolate)*phi), tiny);
++            auto capaci_oblate  = ecent_oblate*a_a / amrex::max(std::asin(ecent_oblate), tiny);
+             RT capaci = RT(0.0);
+             if(phi >= RT(1.001)) {
+-                auto ecent = std::sqrt(RT(1.0) - RT(1.0)/(phi*phi));
+-                capaci = ecent*a_c / std::log((RT(1.0)+ecent)*phi);
++                capaci = capaci_prolate;
+             } else if (phi <= RT(0.999)) {
+-                auto ecent = std::sqrt(RT(1.0) - phi*phi);
+-                capaci = ecent*a_a / std::asin(ecent);
++                capaci = capaci_oblate;
+             } else {
+                 capaci = (RT(2.0)*a_a + a_c)/three;
+             }
+diff --git a/Source/Particles/ERF_SuperDropletPCUtils.cpp b/Source/Particles/ERF_SuperDropletPCUtils.cpp
+index 593329cee..79132849c 100644
+--- a/Source/Particles/ERF_SuperDropletPCUtils.cpp
++++ b/Source/Particles/ERF_SuperDropletPCUtils.cpp
+@@ -369,7 +369,10 @@ void SuperDropletPC::iceCategoryDensity(MultiFab& a_mf, const MultiFab& a_z_phys
+             auto mass = ptd.m_runtime_rdata[ridx_s(idx,na,ns)][i];
+             auto mrime = ptd.m_runtime_rdata[ridx_ice_mrime(na,ns)][i];
+             auto nmono = ptd.m_runtime_rdata[ridx_ice_nmono(na,ns)][i];
+-            auto frac = (mass > amrex::ParticleReal(0) ? mrime / mass : amrex::ParticleReal(0));
++            // The division is evaluated before the selection; keep its denominator nonzero
++            // (0/0 for an ice-free particle trips amrex.fpe_trap_invalid). Equal to mass for mass >= min().
++            auto frac_any = mrime / amrex::max(mass, std::numeric_limits<amrex::ParticleReal>::min());
++            auto frac = (mass > amrex::ParticleReal(0) ? frac_any : amrex::ParticleReal(0));
+ 
+             bool include = false;
+             switch (category) {
+@@ -476,11 +479,11 @@ void SuperDropletPC::effectiveRadius (  MultiFab& a_mf,
+         const auto nd_arr = number_density.const_array(mfi);
+         ParallelFor( box, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+                           {
+-                              if (nd_arr(i,j,k,0) > 0) {
+-                                  mf_arr(i,j,k,a_comp) /= nd_arr(i,j,k,0);
+-                              } else {
+-                                  mf_arr(i,j,k,a_comp) = zero;
+-                              }
++                              // The division is evaluated before the selection; keep its denominator
++                              // nonzero (0/0 in an empty cell trips amrex.fpe_trap_invalid).
++                              const Real nd = nd_arr(i,j,k,0);
++                              const Real r_avg = mf_arr(i,j,k,a_comp) / amrex::max(nd, std::numeric_limits<Real>::min());
++                              mf_arr(i,j,k,a_comp) = (nd > 0) ? r_avg : zero;
+                           } );
+     }
+ }
