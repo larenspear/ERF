@@ -348,7 +348,34 @@ jobs:
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast "$SPEC"
+          spack -d install --verbose --fail-fast "$SPEC"
+
+      - name: Fortran include diagnostics
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          ls -la spack-cc-*.log 2>/dev/null || echo "no wrapper logs in $PWD"
+          for f in spack-cc-erf-*.out.log; do
+            [ -f "$f" ] || continue
+            echo "== wrapper output line for NoahmpIO_fi.F90 ($f)"
+            grep -m1 "NoahmpIO_fi.F90" "$f" | cat -v | cut -c1-8000 || true
+            echo "== include flags on it"
+            grep -m1 "NoahmpIO_fi.F90" "$f" | tr '\a\037 ' '\n\n\n' | grep -nE "^-I|^-isystem|^-J" || true
+          done
+          root=$(spack location -S)
+          for f in "$root"/spack-stage-erf-*/spack-build-env.txt "$root"/spack-stage-erf-*/spack-build-env-mods.txt; do
+            [ -f "$f" ] || continue
+            echo "== $f"
+            grep -E "SPACK_(STORE_)?INCLUDE_DIRS|CPATH|FFLAGS|FCFLAGS" "$f" | tr ':' '\n' | head -n 300
+          done
+          p=$(spack location -i "$SPEC" 2>/dev/null) || true
+          if [ -n "$p" ]; then
+            for f in "$p"/.spack/spack-build-env.txt "$p"/.spack/spack-build-env-mods.txt; do
+              [ -f "$f" ] || continue
+              echo "== $f"
+              grep -E "SPACK_(STORE_)?INCLUDE_DIRS|CPATH|FFLAGS|FCFLAGS" "$f" | tr ':' '\n' | head -n 300
+            done
+          fi
 
       - name: Push dependencies to the build cache
         if: always()

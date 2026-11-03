@@ -100,7 +100,8 @@ def specs(entries, version):
 
 def matrix(version="", spec=""):
     if spec:
-        job = "rocm" if "+rocm" in spec else "sycl" if "+sycl" in spec else "install"
+        job = ("macos" if "platform=darwin" in spec else "rocm" if "+rocm" in spec
+               else "sycl" if "+sycl" in spec else "install")
         return {name: [spec] if name == job else [] for name in JOBS}
     version = version or "develop"
     return {job: specs(entries, version) for job, entries in JOBS.items()}
