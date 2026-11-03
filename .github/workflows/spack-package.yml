@@ -1,4 +1,5 @@
 name: Spack package
+run-name: Spack ${{ inputs.spec || inputs.version || 'matrix' }} (${{ inputs.build_mode || 'install' }}, ${{ inputs.runner || 'ubuntu-22.04' }})
 
 # ERF's Spack recipe lives in Build/spack (see Docs/sphinx_doc/buildingSpack.rst). This
 # workflow keeps it in step with ERF:
@@ -55,18 +56,39 @@ on:
       packages_ref:
         description: spack/spack-packages git ref (empty = the pinned one)
         default: ""
+      spack_ref:
+        description: Spack git ref (empty = the pinned release)
+        default: ""
+      run_tests:
+        description: Run CTest for CPU builds with +tests (GPU jobs remain compile-only)
+        type: boolean
+        default: false
+      runner:
+        description: Linux CPU runner (ARM64 requires a single CPU spec)
+        type: choice
+        options: [ubuntu-22.04, ubuntu-24.04-arm]
+        default: ubuntu-22.04
+      build_mode:
+        description: Install normally, build the checkout with spack develop, or test a populated store
+        type: choice
+        options: [install, develop, reuse]
+        default: install
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-spack-package-${{ inputs.spec }}-${{ inputs.version }}
+  group: ${{ github.event.pull_request.number || github.ref }}-${{ github.head_ref || github.sha }}-spack-package-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'automatic' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 env:
   # Spack v1.2.2 and the spack/spack-packages develop commit the recipe was last validated with.
-  SPACK_REF: 3e19345b6e12f5ff1b874f4059622fc6a1fd804a
+  SPACK_REF: ${{ inputs.spack_ref || '3e19345b6e12f5ff1b874f4059622fc6a1fd804a' }}
+  RUN_TESTS: ${{ inputs.run_tests || false }}
+  BUILD_MODE: ${{ inputs.build_mode || 'install' }}
+  CTEST_OUTPUT_ON_FAILURE: "1"
+  CTEST_PARALLEL_LEVEL: "2"
   PACKAGES_REF: ${{ inputs.packages_ref || '01edd466b4da9e0e3c50fe18f58d46dca97e4b97' }}
 
 jobs:
@@ -80,12 +102,17 @@ jobs:
           # Tags and trees, no blobs: the release pins are checked against each tag.
           fetch-depth: 0
           filter: blob:none
+      - name: Check CI helpers
+        run: python3 -m unittest discover -s Build/spack/tests
       - name: Compare the recipe's pins with the tree
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 Build/spack/check_pins.py ${{ github.event_name == 'schedule' && '--strict' || '' }}
 
   concretize:
+    # A single-spec run checks its own concrete environment; repeat the broad
+    # sweep only for the full matrix or when testing Spack/package drift.
+    if: inputs.spec == '' || inputs.packages_ref != '' || inputs.spack_ref != ''
     name: concretization sweep
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -124,8 +151,11 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           ONE_SPEC: ${{ inputs.spec }}
+          CPU_RUNNER: ${{ inputs.runner || 'ubuntu-22.04' }}
         run: |
-          matrix=$(python3 Build/spack/ci_matrix.py --version "$VERSION" --spec "$ONE_SPEC")
+          args=(--version "$VERSION" --spec "$ONE_SPEC" --runner "$CPU_RUNNER" --build-mode "$BUILD_MODE")
+          if [ "$RUN_TESTS" = "true" ]; then args+=(--run-tests); fi
+          matrix=$(python3 Build/spack/ci_matrix.py "${args[@]}")
           echo "$matrix" | python3 -m json.tool
           for job in install macos rocm sycl; do
             echo "$job=$(echo "$matrix" | jq -c ".$job")" >> "$GITHUB_OUTPUT"
@@ -135,10 +165,11 @@ jobs:
     name: spack install ${{ matrix.spec }}
     needs: plan
     if: github.event_name != 'pull_request' && needs.plan.outputs.install != '[]'
-    runs-on: ubuntu-22.04
+    runs-on: ${{ inputs.runner || 'ubuntu-22.04' }}
     timeout-minutes: 300
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         # Every variant that changes what is compiled, on development plus pinned releases
         # (Build/spack/ci_matrix.py); a manual run can build one spec or a release instead.
@@ -159,7 +190,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential gfortran git python3 unzip \
-            libopenmpi-dev openmpi-bin libmpich-dev mpich cmake pkg-config
+            libopenmpi-dev openmpi-bin libmpich-dev mpich cmake pkg-config clang libomp-dev
 
       - uses: spack/setup-spack@v3
         with:
@@ -180,25 +211,30 @@ jobs:
             --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
             erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
 
+      - name: Concretize and record the build environment
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py prepare
+
       - name: Recipe checks
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack --version
           spack repo list
           spack audit packages erf
-          spack spec -I -N "$SPEC"
+          spack -e spack-ci-env spec -I -N
 
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast "$SPEC"
+          python3 Build/spack/ci_build.py install
 
       # The stand-alone tests run the executable; GPU builds cannot on these runners.
       - name: Stand-alone tests
         if: ${{ !contains(matrix.spec, '+cuda') && !contains(matrix.spec, '+rocm') && !contains(matrix.spec, '+sycl') }}
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack test run --alias erf-ci "$SPEC"
+          spack -e spack-ci-env test run --keep-stage --alias erf-ci "$SPEC"
 
       - name: Stand-alone test logs
         if: ${{ always() && !contains(matrix.spec, '+cuda') && !contains(matrix.spec, '+rocm') && !contains(matrix.spec, '+sycl') }}
@@ -210,12 +246,27 @@ jobs:
       # Build-only dependencies satisfied from the public cache were never installed
       # here, so pushing them fails; link and run dependencies are what the next
       # run needs.
+      - name: Collect build and test diagnostics
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py collect
+
+      - name: Upload build and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: spack-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: spack-ci-artifacts/
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Push dependencies to the build cache
         if: always()
         continue-on-error: true
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack buildcache push --unsigned --update-index --only dependencies \
+          spack -e spack-ci-env buildcache push --unsigned --update-index --only dependencies \
             --without-build-dependencies erf-buildcache "$SPEC"
 
   macos:
@@ -226,6 +277,7 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         # What macos.yml builds: Apple Clang, MPI on, particles, double and single precision.
         spec: ${{ fromJSON(needs.plan.outputs.macos) }}
@@ -255,21 +307,26 @@ jobs:
             --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
             erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
 
+      - name: Concretize and record the build environment
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py prepare
+
       - name: Recipe checks
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack compiler list
-          spack spec -I -N "$SPEC"
+          spack -e spack-ci-env spec -I -N
 
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast "$SPEC"
+          python3 Build/spack/ci_build.py install
 
       - name: Stand-alone tests
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack test run --alias erf-ci "$SPEC"
+          spack -e spack-ci-env test run --keep-stage --alias erf-ci "$SPEC"
 
       - name: Stand-alone test logs
         if: always()
@@ -277,12 +334,27 @@ jobs:
           . spack_install_dir/share/spack/setup-env.sh
           spack test results -l erf-ci || true
 
+      - name: Collect build and test diagnostics
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py collect
+
+      - name: Upload build and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: spack-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: spack-ci-artifacts/
+          retention-days: 14
+          if-no-files-found: warn
+
       - name: Push dependencies to the build cache
         if: always()
         continue-on-error: true
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack buildcache push --unsigned --update-index --only dependencies \
+          spack -e spack-ci-env buildcache push --unsigned --update-index --only dependencies \
             --without-build-dependencies erf-buildcache "$SPEC"
 
   rocm:
@@ -293,6 +365,7 @@ jobs:
     timeout-minutes: 300
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         # What hip.yml builds (ROCm from AMD's apt repository, gfx908, MPI on, particles)
         # and the radiation build of Build/cmake_with_kokkos_many_hip.sh.
@@ -339,23 +412,43 @@ jobs:
             --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
             erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
 
+      - name: Concretize and record the build environment
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py prepare
+
       - name: Recipe checks
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack compiler list
-          spack spec -I -N "$SPEC"
+          spack -e spack-ci-env spec -I -N
 
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast "$SPEC"
+          python3 Build/spack/ci_build.py install
+
+      - name: Collect build and test diagnostics
+        if: always()
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py collect
+
+      - name: Upload build and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: spack-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: spack-ci-artifacts/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Push dependencies to the build cache
         if: always()
         continue-on-error: true
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack buildcache push --unsigned --update-index --only dependencies \
+          spack -e spack-ci-env buildcache push --unsigned --update-index --only dependencies \
             --without-build-dependencies erf-buildcache "$SPEC"
 
   sycl:
@@ -366,6 +459,7 @@ jobs:
     timeout-minutes: 300
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         # What sycl.yml builds (Intel oneAPI icx/icpx, Intel MPI, particles); ci_matrix.py
         # says why the Aurora radiation configuration is not here.
@@ -459,34 +553,41 @@ jobs:
             --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
             erf-buildcache oci://ghcr.io/${{ github.repository_owner }}/spack-buildcache
 
+      - name: Concretize and record the build environment
+        run: |
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py prepare
+
       - name: Recipe checks
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack compiler list
-          spack spec -I -N "$SPEC"
+          spack -e spack-ci-env spec -I -N
 
       - name: spack install
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack install --verbose --fail-fast --keep-stage "$SPEC"
+          python3 Build/spack/ci_build.py install
 
-      # What a failed AMReX configure saw: the compiler and library paths Spack set up and
-      # the CMake compiler-check transcript (CMakeConfigureLog.yaml since CMake 3.26).
-      - name: Build environment and CMake log of a failed AMReX build
-        if: failure()
+      - name: Collect build and test diagnostics
+        if: always()
         run: |
-          stage=$(find /tmp/runner/spack-stage -maxdepth 1 -name 'spack-stage-amrex-*-*' 2>/dev/null | head -1); echo "stage=$stage"
-          if [ -n "$stage" ]; then
-            grep -E "^(export )?(PATH|LD_LIBRARY_PATH|CC|CXX|FC|SPACK_CC|SPACK_CXX|SPACK_LINK_DIRS|SPACK_RPATH_DIRS|SPACK_INCLUDE_DIRS)=" "$stage/spack-build-env.txt" | cut -c1-500
-            log=$(find "$stage" -name CMakeConfigureLog.yaml 2>/dev/null | head -1); echo "log=$log"
-            if [ -n "$log" ]; then awk '/CMAKE_HAVE_LIBC_PTHREAD/{p=1} p' "$log" | head -80 | cut -c1-400; fi
-            out=$(find "$stage" -maxdepth 1 -name spack-build-out.txt | head -1); [ -n "$out" ] && grep -n -E "error|Error|cannot|undefined|not found" "$out" | head -10 | cut -c1-300
-          fi
+          . spack_install_dir/share/spack/setup-env.sh
+          python3 Build/spack/ci_build.py collect
+
+      - name: Upload build and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: spack-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: spack-ci-artifacts/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Push dependencies to the build cache
         if: always()
         continue-on-error: true
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack buildcache push --unsigned --update-index --only dependencies \
+          spack -e spack-ci-env buildcache push --unsigned --update-index --only dependencies \
             --without-build-dependencies erf-buildcache "$SPEC"

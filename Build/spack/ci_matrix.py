@@ -15,6 +15,7 @@ SYCL job when it asks for that backend, otherwise in the install job.
 
 import argparse
 import json
+import re
 
 # Every variant that changes what is compiled, each with the ERF workflow, build script or
 # documentation page that builds that configuration. CUDA mirrors cuda-ci.yml (CUDA 12,
@@ -80,17 +81,49 @@ def specs(entries, version):
 
 def matrix(version="", spec=""):
     if spec:
-        job = "rocm" if "+rocm" in spec else "sycl" if "+sycl" in spec else "install"
+        job = (
+            "macos"
+            if "platform=darwin" in spec
+            else "rocm"
+            if "+rocm" in spec
+            else "sycl"
+            if "+sycl" in spec
+            else "install"
+        )
         return {name: [spec] if name == job else [] for name in JOBS}
     version = version or "develop"
     return {job: specs(entries, version) for job, entries in JOBS.items()}
+
+
+def validate_request(spec, runner, build_mode, run_tests):
+    """Reject requests that would silently skip the requested validation."""
+    if build_mode != "install" and not spec:
+        raise ValueError("develop/reuse validation requires one explicit spec")
+    if spec and not re.match(r"^erf(?:@|\s|$)", spec):
+        raise ValueError("the spec must name erf explicitly")
+    gpu = any(backend in spec for backend in ("+cuda", "+rocm", "+sycl"))
+    if runner == "ubuntu-24.04-arm" and (gpu or "platform=darwin" in spec or not spec):
+        raise ValueError("the Linux ARM64 runner requires one CPU Linux spec")
+    if run_tests and spec and (gpu or "+tests" not in spec):
+        raise ValueError("run_tests requires a CPU spec with +tests")
+    if build_mode == "develop" and not re.match(r"^erf@develop(?:\s|$)", spec):
+        raise ValueError("develop mode requires erf@develop to match the checked-out source")
+    if build_mode != "install" and (gpu or "platform=darwin" in spec):
+        raise ValueError("develop/reuse validation currently supports Linux CPU specs")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--version", default="", help="ERF version to build (default: develop)")
     ap.add_argument("--spec", default="", help="build this one spec instead of the matrix")
+    ap.add_argument("--runner", default="ubuntu-22.04")
+    ap.add_argument("--build-mode", choices=("install", "develop", "reuse"), default="install")
+    ap.add_argument("--run-tests", action="store_true")
     a = ap.parse_args()
+    try:
+        validate_request(a.spec, a.runner, a.build_mode, a.run_tests)
+    except ValueError as exc:
+        ap.error(str(exc))
     print(json.dumps(matrix(a.version, a.spec)))
 
 

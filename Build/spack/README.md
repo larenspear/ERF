@@ -19,6 +19,7 @@ spack install erf
 | `check_pins.py` | the recipe's RRTMGP/EKAT and Noah-MP pins must equal ERF's submodule gitlinks; `--fix` updates the develop Noah-MP pin |
 | `erf_sweep.py` | concretization sweep: supported variant combinations concretize, unsupported ones are refused |
 | `ci_matrix.py` | the workflow's build lists, as JSON for a version (`--version 26.09`) or one spec (run in the ROCm or SYCL job when it asks for that backend) |
+| `ci_build.py` | concretizes one environment, builds its lockfile and saves build/test diagnostics |
 | `../../spack-repo-index.yaml` | tells `spack repo add <git URL>` where this repository is |
 | `../../.github/workflows/spack-package.yml` | runs the pin check and the sweep on relevant PRs, and the build matrix on merges, weekly and on demand (at a release with the `version` input) |
 
@@ -43,3 +44,35 @@ spack install erf
 Other projects keep their recipe the same way, for example ParaView
 (`Utilities/spack/repo`), Axom (`scripts/spack`), COSMA (`spack_repo/cosma`), Rayleigh
 (`spack-repo`) and Amanzi (`config/spack`).
+
+## Optional validation on hosted runners
+
+The `Spack package` workflow accepts these manual inputs in addition to `spec`
+and `version`. Each job has a timeout and uploads diagnostics for 14 days, even
+when its build or tests fail. Runs continue while your computer is off.
+
+| Input | Use |
+|---|---|
+| `run_tests=true` | Run the full CTest suite during installation for CPU specs with `+tests`. GPU jobs compile only; a single GPU spec with this input is rejected. |
+| `spack_ref` / `packages_ref` | Try another Spack or package repository commit without changing the normal pins. Use commit SHAs for reproducible comparisons. |
+| `runner=ubuntu-24.04-arm` | Build one Linux CPU spec on a native ARM64 hosted runner. |
+| `build_mode=develop` | Build the checked-out ERF source with `spack develop`. Requires one `erf@develop` CPU spec. |
+| `build_mode=reuse` | Install a single-precision, non-MPI ERF first, then solve and build the requested CPU spec in that populated store. |
+
+An explicit `platform=darwin` routes a single spec to the macOS runner. To compare
+the regression results with ERF's generic Linux CI, use
+`erf@26.09 +particles +tests +fcompare target=x86_64`. FMA-capable targets can
+change results relative to that baseline; diagnostics preserve the numerical
+failure rather than relaxing a tolerance or silently retrying it.
+
+Each build uses one `spack.yaml` and `spack.lock` for installation, stand-alone
+tests and cache publication. Its artifact contains those files, the requested
+spec and tool revisions, installed specs, CMake/CTest logs and any AMReX
+`Backtrace.*` files. Build environment dumps and mirror configuration are
+excluded. Full builds retain their stages until the runner is discarded.
+
+Run the workflow helper checks locally with:
+
+```sh
+python3 -m unittest discover -s Build/spack/tests
+```
