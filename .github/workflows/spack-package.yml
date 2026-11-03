@@ -221,8 +221,9 @@ jobs:
             grep -nE "Failed|FAILED|error|Error|tolerance|relative|RELATIVE|differ" "$b/Testing/Temporary/LastTest.log" 2>/dev/null | head -n 40 || true
             cd "$b"
             echo "== ctest -N"; ctest -N 2>&1 | tail -n 3
-            echo "== rerun of the test that failed on Linux"
-            ctest -R ABL_MOST_IMP_DIFF_TKE --output-on-failure 2>&1 | tail -n 80
+            echo "== tests that failed in make test"; cat Testing/Temporary/LastTestsFailed.log 2>/dev/null || echo "(none recorded)"
+            echo "== rerun of those with output"
+            ctest --rerun-failed --output-on-failure -j 2 2>&1 | tail -n 160
           done
 
       - name: Push dependencies to the build cache
@@ -303,8 +304,9 @@ jobs:
             grep -nE "Failed|FAILED|error|Error|tolerance|relative|RELATIVE|differ" "$b/Testing/Temporary/LastTest.log" 2>/dev/null | head -n 40 || true
             cd "$b"
             echo "== ctest -N"; ctest -N 2>&1 | tail -n 3
-            echo "== rerun of the test that failed on Linux"
-            ctest -R ABL_MOST_IMP_DIFF_TKE --output-on-failure 2>&1 | tail -n 80
+            echo "== tests that failed in make test"; cat Testing/Temporary/LastTestsFailed.log 2>/dev/null || echo "(none recorded)"
+            echo "== rerun of those with output"
+            ctest --rerun-failed --output-on-failure -j 2 2>&1 | tail -n 160
           done
 
       - name: Push dependencies to the build cache
