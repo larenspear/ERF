@@ -56,7 +56,7 @@ when its build or tests fail. Runs continue while your computer is off.
 | `run_tests=true` | Run the full CTest suite during installation for CPU specs with `+tests`. GPU jobs compile only; a single GPU spec with this input is rejected. |
 | `spack_ref` / `packages_ref` | Try another Spack or package repository commit without changing the normal pins. Use commit SHAs for reproducible comparisons. |
 | `runner=ubuntu-24.04-arm` | Build one Linux CPU spec on a native ARM64 hosted runner. |
-| `build_mode=develop` | Build the checked-out ERF source with `spack develop`. Requires one `erf@develop` CPU spec. |
+| `build_mode=develop` | Build a local clone of the checked-out commit with `spack develop`, outside the dependency store. Requires one `erf@develop` CPU spec. |
 | `build_mode=reuse` | Install a single-precision, non-MPI ERF first, then solve and build the requested CPU spec in that populated store. |
 
 An explicit `platform=darwin` routes a single spec to the macOS runner. To compare
@@ -70,6 +70,9 @@ tests and cache publication. Its artifact contains those files, the requested
 spec and tool revisions, installed specs, CMake/CTest logs and any AMReX
 `Backtrace.*` files. Build environment dumps and mirror configuration are
 excluded. Full builds retain their stages until the runner is discarded.
+CTest runs serially: the hosted Linux CTest 3.31.6 process crashed during three
+parallel suite runs. The full recipe audit runs in the x86 concretization job;
+each platform build checks its own concrete environment.
 
 Run the workflow helper checks locally with:
 

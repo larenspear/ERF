@@ -88,7 +88,9 @@ env:
   RUN_TESTS: ${{ inputs.run_tests || false }}
   BUILD_MODE: ${{ inputs.build_mode || 'install' }}
   CTEST_OUTPUT_ON_FAILURE: "1"
-  CTEST_PARALLEL_LEVEL: "2"
+  # CTest 3.31.6 itself segfaulted with parallel tests on three hosted Linux
+  # builds. Keep the full-suite baseline serial; do not hide failures or retry.
+  CTEST_PARALLEL_LEVEL: "1"
   PACKAGES_REF: ${{ inputs.packages_ref || '01edd466b4da9e0e3c50fe18f58d46dca97e4b97' }}
 
 jobs:
@@ -221,7 +223,9 @@ jobs:
           . spack_install_dir/share/spack/setup-env.sh
           spack --version
           spack repo list
-          spack audit packages erf
+          # The full recipe audit belongs to the x86 concretization sweep.
+          # On ARM64, inherited CudaPackage constraints mention old CUDA
+          # versions unavailable for ARM and fail even for a CPU-only spec.
           spack -e spack-ci-env spec -I -N
 
       - name: spack install

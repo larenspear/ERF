@@ -22,6 +22,13 @@ def paths():
     return workspace, workspace / "spack-ci-env", workspace / "spack-ci-artifacts"
 
 
+def develop_source():
+    # CMake rejects exported dependency include paths under the source tree.
+    # setup-spack installs dependencies below GITHUB_WORKSPACE, so the checkout
+    # used by spack develop must live outside it.
+    return Path(os.environ["RUNNER_TEMP"]) / "erf-develop-source"
+
+
 def prepare():
     workspace, env, artifacts = paths()
     artifacts.mkdir(exist_ok=True)
@@ -58,9 +65,9 @@ def prepare():
     command("spack", "env", "create", "--without-view", "-d", str(env))
     command("spack", "-e", str(env), "add", spec)
     if mode == "develop":
-        command(
-            "spack", "-e", str(env), "develop", "--no-clone", "-p", str(workspace), "erf@develop"
-        )
+        source = develop_source()
+        command("git", "clone", "--shared", str(workspace), str(source))
+        command("spack", "-e", str(env), "develop", "--no-clone", "-p", str(source), "erf@develop")
     command("spack", "-e", str(env), "concretize")
     command("spack", "-e", str(env), "spec", "-I", "-N")
 
@@ -96,6 +103,7 @@ def wanted(path):
             "CMakeError.log",
             "CMakeOutput.log",
             "LastTest.log",
+            "LastTest.log.tmp",
             "LastTestsFailed.log",
             "CTestCostData.txt",
             "Test.xml",
@@ -104,6 +112,8 @@ def wanted(path):
         }
         or path.name.startswith("Backtrace.")
         or path.name.endswith("-test-out.txt")
+        # Spack's spack-build-out.txt is a symlink to this real aggregate log.
+        or (path.name.startswith("spack-stage-") and path.suffix == ".log")
     )
 
 
@@ -135,7 +145,7 @@ def collect():
     for name in ("spack-ci-stage", "spack-ci-tests"):
         copy_diagnostics(workspace / name, artifacts / name)
     if os.environ.get("BUILD_MODE") == "develop":
-        for root in workspace.glob("spack-build-*"):
+        for root in develop_source().glob("spack-build-*"):
             copy_diagnostics(root, artifacts / root.name)
     try:
         installed = command("spack", "-e", str(env), "find", "--json", capture=True)

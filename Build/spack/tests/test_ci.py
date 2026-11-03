@@ -79,6 +79,8 @@ class BuildTests(unittest.TestCase):
             root.mkdir()
             for relative in (
                 "build/Testing/Temporary/LastTestsFailed.log",
+                "build/Testing/Temporary/LastTest.log.tmp",
+                "spack-stage-erf-build.log",
                 "build/Tests/Backtrace.0",
                 "spack-build-out.txt",
                 "spack-build-env.txt",
@@ -93,6 +95,8 @@ class BuildTests(unittest.TestCase):
                 {str(p.relative_to(output)) for p in output.rglob("*") if p.is_file()},
                 {
                     "build/Testing/Temporary/LastTestsFailed.log",
+                    "build/Testing/Temporary/LastTest.log.tmp",
+                    "spack-stage-erf-build.log",
                     "build/Tests/Backtrace.0",
                     "spack-build-out.txt",
                 },
