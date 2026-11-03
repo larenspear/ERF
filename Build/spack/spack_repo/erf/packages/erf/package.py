@@ -37,7 +37,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     # the AMReX release of the same month, which contains the development commits ERF's
     # submodule pointed at, unless the build matrix showed ERF needs the next one (24.10
     # calls amrex::decompose(), added after amrex@24.10).
-    _amrex_develop = "3a253dccca68e2b19a8201a376a7c43cce3a2d79"
+    _amrex_develop = "1d9bd90c35837dd54b20e5e8f94651ebfdcf5f96"
     _amrex_newer = {"24.10": "24.11"}
     version("develop", branch="development")
     depends_on(f"amrex@develop commit={_amrex_develop}", when="@develop", type=("build", "link"))
