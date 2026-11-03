@@ -1,0 +1,29 @@
+name: ARM GoogleTest compiler probe
+
+on:
+  push:
+    branches: [spack-arm-compiler-probe]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download the same GoogleTest headers as the failed build
+        run: |
+          curl -fLsS --retry 3 https://github.com/google/googletest/archive/refs/tags/v1.18.0.tar.gz -o googletest.tar.gz
+          echo '6e3191c1455468b3fc35a417fb565c1c5071aee1b7e7f85e30cf48a98d37d8b5  googletest.tar.gz' | sha256sum -c -
+          tar -xzf googletest.tar.gz
+      - name: Compare GCC versions, language standards and targets
+        run: python3 .github/scripts/spack_arm_probe.py
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: arm-compiler-probe
+          path: probe-results/
+          retention-days: 14
