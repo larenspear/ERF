@@ -106,6 +106,8 @@ def validate_request(spec, runner, build_mode, run_tests):
     gpu = any(backend in spec for backend in ("+cuda", "+rocm", "+sycl"))
     if runner == "ubuntu-24.04-arm" and (gpu or "platform=darwin" in spec or not spec):
         raise ValueError("the Linux ARM64 runner requires one CPU Linux spec")
+    if runner == "macos-15" and (gpu or "platform=darwin" not in spec):
+        raise ValueError("the macOS runner requires one CPU spec with platform=darwin")
     if run_tests and spec and (gpu or "+tests" not in spec):
         raise ValueError("run_tests requires a CPU spec with +tests")
     if build_mode == "develop" and not re.match(r"^erf@develop(?:\s|$)", spec):

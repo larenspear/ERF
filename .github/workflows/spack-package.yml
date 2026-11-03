@@ -64,9 +64,9 @@ on:
         type: boolean
         default: false
       runner:
-        description: Linux CPU runner (ARM64 requires a single CPU spec)
+        description: Runner (ARM64 requires one CPU spec; macos-15 requires platform=darwin)
         type: choice
-        options: [ubuntu-22.04, ubuntu-24.04-arm]
+        options: [ubuntu-22.04, ubuntu-24.04-arm, macos-15]
         default: ubuntu-22.04
       build_mode:
         description: Install normally, build the checkout with spack develop, or test a populated store
@@ -276,7 +276,7 @@ jobs:
     name: macOS ${{ matrix.spec }}
     needs: plan
     if: github.event_name != 'pull_request' && needs.plan.outputs.macos != '[]'
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner == 'macos-15' && 'macos-15' || 'macos-latest' }}
     timeout-minutes: 240
     strategy:
       fail-fast: false
@@ -292,7 +292,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Toolchain from Homebrew
-        run: brew install open-mpi cmake pkgconf
+        run: |
+          test "$(uname -m)" = arm64
+          brew install open-mpi cmake pkgconf
 
       - uses: spack/setup-spack@v3
         with:

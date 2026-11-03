@@ -38,6 +38,8 @@ class RequestTests(unittest.TestCase):
             ("erf@develop +sycl", "ubuntu-22.04", "develop", False),
             ("erf@develop platform=darwin", "ubuntu-22.04", "develop", False),
             ("erf@26.09 +cuda", "ubuntu-22.04", "reuse", False),
+            ("erf@26.09 +tests", "macos-15", "install", True),
+            ("erf@26.09 +cuda platform=darwin", "macos-15", "install", False),
         ]
         for request in invalid:
             with self.subTest(request=request), self.assertRaises(ValueError):
@@ -48,6 +50,9 @@ class RequestTests(unittest.TestCase):
 
     def test_valid_cuda_development_build(self):
         ci_matrix.validate_request("erf@develop +cuda cuda_arch=80", "ubuntu-22.04", "develop", False)
+
+    def test_explicit_macos_runner(self):
+        ci_matrix.validate_request("erf@26.09 +tests platform=darwin", "macos-15", "install", True)
 
 
 class BuildTests(unittest.TestCase):
