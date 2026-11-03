@@ -14,7 +14,8 @@ rewriting, and preservation through preexisting aliases are assumptions.
 Named callees must preserve spacing: only their signatures are checked here.
 check_stretched_dz_consumers separately checks tau's explicit spacing uses;
 check_stretched_dz_diffusion audits the explicit diffusion pointer paths.
-Normal-advection bodies remain external obligations. The
+check_stretched_dz_advection audits the explicit normal-advection pointer paths.
+Preservation through other aliases remains conditional in each checker. The
 functor copy retains a device pointer, so GPU completion before storage changes
 is still required. Domain correctness, positivity, scalar formulas, scheduling
 and the rest of the RHS computations are not proved.

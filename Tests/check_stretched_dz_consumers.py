@@ -19,7 +19,8 @@ alias, index-bound, numerical-accuracy or GPU-lifetime proof. Other consumers,
 including slow-RHS and advection/diffusion paths, remain separate obligations.
 check_stretched_dz_rhs guards slow-RHS/router forwarding and PBL functor copies;
 check_stretched_dz_diffusion audits the explicit diffusion pointer paths.
-Normal-advection consumer bodies still need separate audits.
+check_stretched_dz_advection audits the explicit normal-advection pointer paths.
+Implicit consumers and refresh ordering still need separate audits.
 
 usage: check_stretched_dz_consumers.py [ERF_ROOT]
 """

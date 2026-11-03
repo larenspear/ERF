@@ -2708,6 +2708,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard spacing references and pointer reads through normal-grid advection.
+    # Valid storage and GPU completion before storage changes remain assumptions.
+    add_test(NAME AdvectionStretchedDzAdvection
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_advection.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzAdvection_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_advection_selftest.py)
+    set_tests_properties(AdvectionStretchedDzAdvection AdvectionStretchedDzAdvection_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
