@@ -42,6 +42,10 @@ INSTALL = [
     "erf@develop +fire",  # ERF_ENABLE_FIRE exists on development only
     "erf@26.09 +particles +cuda cuda_arch=80 ^cuda@12",  # the last release, CUDA
     "erf@26.09 +netcdf +noahmp +particles +tests",  # the last release, CPU
+    "erf@23.10 +mpi",  # the oldest release, bundled AMReX
+    "erf@24.09 +netcdf +particles +tests",  # the last bundled-AMReX release
+    "erf@24.10 +mpi",  # the one release paired with the next AMReX (24.11)
+    "erf@25.01 +netcdf",  # the last release with AMReX embedded boundaries off
 ]
 # macos.yml: Apple Clang, MPI on, particles, double and single precision.
 MACOS = ["+particles +tests +fcompare", "+particles precision=single"]

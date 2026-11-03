@@ -1,16 +1,5 @@
-# ERF's Spack package. It lives in the ERF repository so that it changes
-# together with ERF's CMake options and submodule pins; CI
-# (.github/workflows/spack-package.yml) checks the pins against HEAD, sweeps
-# the variant space through the concretizer and builds representative
-# configurations. See Docs/sphinx_doc/buildingSpack.rst.
-#
-# Register it with `spack repo add <ERF>/Build/spack/spack_repo/erf` (any
-# Spack 1.x) or `spack repo add https://github.com/erf-model/ERF.git`
-# (Spack 1.1+). Spack's builtin repository (spack/spack-packages) must be
-# registered too: this recipe uses its build systems and its amrex, mpi,
-# netcdf and googletest packages. A +particles build of ERF 26.06 or older
-# needs a spack-packages checkout from 2026-10-19 or later, whose amrex
-# recipe installs the AMReX_TracerParticle_mod_K.H header ERF includes.
+# ERF's Spack package; Docs/sphinx_doc/buildingSpack.rst says how to use it. It uses Spack's
+# builtin repository (spack/spack-packages), which must be registered too.
 
 import itertools
 import os
@@ -20,6 +9,11 @@ from spack_repo.builtin.build_systems.cuda import CudaPackage
 from spack_repo.builtin.build_systems.rocm import ROCmPackage
 
 from spack.package import *
+
+
+def _amrex_submodule(package):
+    """Only the AMReX submodule (a plain list would mean every submodule)."""
+    return ["Submodules/AMReX"]
 
 
 class Erf(CMakePackage, CudaPackage, ROCmPackage):
@@ -35,20 +29,18 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
 
     license("BSD-3-Clause", checked_by="larenspear")
 
-    # Each ERF release vendors a same-numbered AMReX submodule (ERF YY.MM tracks
-    # AMReX YY.MM) and follows AMReX's fast-moving API, which offers no
-    # cross-release compatibility guarantee: e.g. ERF 25.12 uses amrex::*::Build
-    # overloads missing from amrex@25.02 and the ArrayND ncomp() accessor removed
-    # by amrex@26.04. Declare each release together with its matching AMReX pin
-    # so a new version cannot be added without one. The development branch
-    # builds the AMReX commit its submodule points at, as ERF's own build does:
-    # amrex@develop with Spack's commit variant set to the gitlink (a git-commit
-    # version in a depends_on is not a candidate for the concretizer, the variant
-    # is); check_pins.py keeps it equal to the gitlink and rewrites it with --fix.
+    # @develop builds the AMReX commit its submodule points at, as ERF's own build does: the
+    # commit variant on amrex@develop (a git-commit version in a depends_on is not a
+    # concretizer candidate; the variant is). check_pins.py compares the pin with the gitlink
+    # and rewrites it with --fix. A release builds an AMReX release, so that the amrex
+    # recipe's version-keyed logic (patches, the tracer-header fix for 24.10-26.07) applies:
+    # the AMReX release of the same month, which contains the development commits ERF's
+    # submodule pointed at, unless the build matrix showed ERF needs the next one (24.10
+    # calls amrex::decompose(), added after amrex@24.10).
     _amrex_develop = "3a253dccca68e2b19a8201a376a7c43cce3a2d79"
+    _amrex_newer = {"24.10": "24.11"}
     version("develop", branch="development")
     depends_on(f"amrex@develop commit={_amrex_develop}", when="@develop", type=("build", "link"))
-
     for _v, _sha in (
         ("26.09", "d86372f6b9d85996f1b30beb7353c01b33f1bf0e454c0e63c913b255e17dadc0"),
         ("26.06", "379ffdebb30242cacddde95357511d5de1da29332c6624d5470088927743db78"),
@@ -68,36 +60,41 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         ("25.03", "3068c0c5f66538bcc1a12ee8c3eb142e5d02b73b71ab1cfbb244a053e8d5cf4a"),
         ("25.01", "11e48aadfc420c3f9adb05a0c5778776d6cb0915476532fd7a095d9f167ef584"),
         ("24.11", "19e7ce4829a46c98baf55b1dc4b2cefc508f2db41182e47c0ca788fe9280783f"),
+        ("24.10", "7c9ba35374e71103fab8c5ba3ea107b4574e3270038bc3e8cbdcbe30eba26e7a"),
     ):
         version(_v, sha256=_sha)
-        depends_on(f"amrex@{_v}", when=f"@{_v}", type=("build", "link"))
+        depends_on(f"amrex@{_amrex_newer.get(_v, _v)}", when=f"@{_v}", type=("build", "link"))
 
-    # ERF 24.10's AMReX submodule is five commits past amrex@24.10, and
-    # Source/Utils/ERF_ChopGrids.cpp calls amrex::decompose(), which one of
-    # those commits added: amrex@24.11 is the first release that declares it.
-    version("24.10", sha256="7c9ba35374e71103fab8c5ba3ea107b4574e3270038bc3e8cbdcbe30eba26e7a")
-    depends_on("amrex@24.11", when="@24.10", type=("build", "link"))
-
-    # Releases before 24.10 always build their AMReX submodule (there is no
-    # ERF_USE_INTERNAL_AMREX switch) and predate ERF's find_package(AMReX
-    # COMPONENTS) integration, so they are not offered here.
+    # Releases before 24.10 have no ERF_USE_INTERNAL_AMREX: they build the AMReX submodule
+    # they vendor, so they are git checkouts with that submodule and depend on no amrex.
+    for _v, _commit in (
+        ("24.09", "16e75b3e4de96ba9c4ca38b945d2a452d028244a"),
+        ("24.08", "e3ff1bf8b76da36adac9bbfe83fc06eafa4cbb16"),
+        ("24.06", "6f794f2fa7ac618a2dff77a573f973946809bab9"),
+        ("24.05", "22931d4f402ade07b60440bcc7f678f585e8adec"),
+        ("24.04", "5eb01f4a611d5eb80ab323468657db8ec53be9e5"),
+        ("24.03", "5621a11955c27f57b9955a11d611b41c70cb42d3"),
+        ("24.02", "a7762e8530d86b1cc654c0c1d5e45f07196fc350"),
+        ("24.01", "850aa4079b6b71eeb376be0558e1927d3b999775"),
+        ("23.12", "c0a1c9f212511c200a337c1b55f65e157a92df48"),
+        ("23.11", "885a8c432fd8c81dc32863bfc51c6ee1542531bc"),
+        ("23.10", "de410c8d03f61a008cafb2326c44a9a739785359"),
+    ):
+        version(_v, tag=_v, commit=_commit, submodules=_amrex_submodule)
 
     variant("mpi", default=True, description="Enable MPI support")
     variant("openmp", default=False, description="Enable OpenMP support")
     variant("sycl", default=False, description="Enable the SYCL GPU backend (needs %oneapi)")
     variant("netcdf", default=False, description="Enable NetCDF I/O (parallel, needs MPI)")
-    # ERF's CMake defaults ERF_ENABLE_HDF5 to the NetCDF setting; keep that default
-    # while leaving both combinations available.
+    # ERF's CMake defaults ERF_ENABLE_HDF5 to the NetCDF setting.
     variant("hdf5", default=True, description="Enable AMReX HDF5 plotfile I/O", when="+netcdf")
     variant("hdf5", default=False, description="Enable AMReX HDF5 plotfile I/O", when="~netcdf")
-    variant("particles", default=False, description="Enable Lagrangian particles")
+    variant("particles", default=False, description="Enable Lagrangian particles", when="@24.02:")
     variant("multiblock", default=False, description="Enable multiblock support")
-    # ERF_ENABLE_FFT appeared in 25.01 (AMReX's FFT module in amrex@24.11).
     variant("fft", default=False, description="Enable the AMReX FFT-based solvers", when="@25.01:")
     variant("tests", default=False, description="Build the regression and unit tests")
     variant("fcompare", default=False, description="Build AMReX's fcompare alongside ERF")
-    # Single precision is selectable from 26.06, where the AMReX components ERF
-    # requests follow ERF_PRECISION; earlier releases hard-code double.
+    # Single precision exists from 26.06; earlier releases hard-code double.
     variant(
         "precision",
         default="double",
@@ -114,7 +111,6 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         description="Floating point precision of the mesh and particle data",
         when="@26.06:",
     )
-    # Each of these appeared in ERF's CMake with the release named here.
     variant("tools", default=False, description="Build the additional tools", when="@25.07:")
     variant(
         "rrtmgp",
@@ -159,23 +155,19 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         "a sparse checkout of E3SM's EAMxx sources at the commit ERF pins)",
         when="@26.09:",
     )
-    # ERF_ENABLE_FIRE is on the development branch only at the time of writing;
-    # the first release to carry it will be 26.10 or later.
+    # ERF_ENABLE_FIRE is on development only; 26.10 is the first release that can carry it.
     variant(
         "fire",
         default=False,
         description="Enable the fire coupling (atmosphere side; fire engines are external)",
         when="@26.10:",
     )
-    # ERF 26.06 split the gtest unit tests from the regression tests
-    # (ERF_ENABLE_UNIT_TESTS, on by default whenever the tests are on).
     variant(
         "unit_tests",
         default=True,
         description="Build the GoogleTest unit tests alongside the regression tests",
         when="@26.06:+tests",
     )
-    # ERF 26.06 added ERF_PARTICLES_PRECISION, defaulting to ERF_PRECISION.
     variant(
         "particles_precision",
         default="same",
@@ -189,8 +181,6 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("cmake@3.20:")
         depends_on("c")
         depends_on("cxx")
-        # ERF's project() enables Fortran only for the Fortran-based parameterizations;
-        # EKAT's own project() enables it for RRTMGP builds.
         depends_on("fortran", when="+noahmp")
         depends_on("fortran", when="+wsm6_fort")
         depends_on("fortran", when="+wdm6_fort")
@@ -200,76 +190,61 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("python@3:", when="+noahmp")
         # ERF's FindNetCDF tries pkg-config before nc-config.
         depends_on("pkgconfig", when="+netcdf")
-        # ERF 26.06 added gtest-based unit tests, enabled by default alongside the
-        # regression tests. Supply GoogleTest from Spack rather than the bundled
-        # Submodules/googletest checkout (see patch()).
+        # Replaces the bundled googletest submodule, which is not fetched (see patch()).
         depends_on("googletest", when="@26.06:+tests+unit_tests")
 
     with default_args(type=("build", "link")):
-        # AMReX must be built for the same programming model as ERF.
-        for _v in ("mpi", "openmp", "cuda", "rocm", "sycl"):
-            depends_on(f"amrex+{_v}", when=f"+{_v}")
-            depends_on(f"amrex~{_v}", when=f"~{_v}")
-        for _sm in CudaPackage.cuda_arch_values:
-            depends_on(f"amrex+cuda cuda_arch={_sm}", when=f"+cuda cuda_arch={_sm}")
-        for _tgt in ROCmPackage.amdgpu_targets:
-            depends_on(f"amrex+rocm amdgpu_target={_tgt}", when=f"+rocm amdgpu_target={_tgt}")
+        # From 24.10 ERF links an installed AMReX (ERF_USE_INTERNAL_AMREX=OFF).
+        with when("@24.10:"):
+            for _v in ("mpi", "openmp", "cuda", "rocm", "sycl"):
+                depends_on(f"amrex+{_v}", when=f"+{_v}")
+                depends_on(f"amrex~{_v}", when=f"~{_v}")
+            for _sm in CudaPackage.cuda_arch_values:
+                depends_on(f"amrex+cuda cuda_arch={_sm}", when=f"+cuda cuda_arch={_sm}")
+            for _tgt in ROCmPackage.amdgpu_targets:
+                depends_on(f"amrex+rocm amdgpu_target={_tgt}", when=f"+rocm amdgpu_target={_tgt}")
 
-        # ERF only includes AMReX's HDF5 and FFT headers; the libraries behind them
-        # are AMReX's dependencies.
-        depends_on("amrex+hdf5", when="+hdf5")
-        depends_on("amrex+fft", when="+fft")
-        # ERF.H includes AMReX_EBFabFactory.H unconditionally since 25.03 (the
-        # EB-aware Poisson solvers); AMReX's default has EB on, so state it.
-        depends_on("amrex+eb", when="@25.03:")
+            # ERF uses only AMReX's HDF5 and FFT headers; the libraries are AMReX's dependencies.
+            depends_on("amrex+hdf5", when="+hdf5")
+            depends_on("amrex+fft", when="+fft")
+            # ERF's own build turns AMReX_EB on from 25.03, when ERF.H starts including
+            # AMReX_EBFabFactory.H; before that its EB-only code does not build, and AMReX's
+            # EB-only MLNodeLaplacian overload makes 25.01's call ambiguous.
+            depends_on("amrex~eb", when="@24.10:25.02")
+            depends_on("amrex+eb", when="@25.03:")
 
-        # ERF's CMake unconditionally requests the AMReX PIC, PARTICLES and
-        # LSOLVERS components via find_package(AMReX ... COMPONENTS), regardless of
-        # ERF's own +particles variant, so AMReX must always provide them.
-        # ERF is three-dimensional and asks for the 3D component only. AMReX's
-        # default (dimensions=1,2,3) satisfies this; a 3D-only AMReX
-        # (^amrex dimensions:=3) saves libamrex_1d and libamrex_2d, 460 MB on
-        # a CUDA build, and is accepted too.
-        depends_on("amrex dimensions=3 +pic+particles+linear_solvers")
+            # ERF's find_package(AMReX) always asks for the PIC, PARTICLES and LSOLVERS
+            # components, even ~particles, and for 3D only.
+            depends_on("amrex dimensions=3 +pic+particles+linear_solvers")
 
-        # The same find_package() call pins the AMReX precision components:
-        # "PDOUBLE" "DOUBLE" is hard-coded through 26.05, and 26.06 derives it
-        # from ERF_PRECISION, which defaults to DOUBLE.
-        depends_on("amrex precision=double", when="@:26.05")
-        for _p in ("double", "single"):
-            depends_on(f"amrex precision={_p}", when=f"@26.06:precision={_p}")
-        # The same call asks for the PSINGLE/PDOUBLE particle component chosen by
-        # ERF_PARTICLES_PRECISION, so AMReX's particle precision must match it.
-        # Spack's builtin amrex has no such variant yet; this repository's amrex
-        # (packages/amrex) adds it until spack-packages does.
-        for _p in ("double", "single"):
-            depends_on(f"amrex particles_precision={_p}", when=f"@26.06:particles_precision={_p}")
-        # Every ERF regression test pipes its plotfile through AMReX's fcompare,
-        # and ERF looks for it at <amrex prefix>/bin/amrex_fcompare, which an
-        # installed AMReX only ships with +plotfile_tools.
-        depends_on("amrex+plotfile_tools", when="+tests")
-        depends_on("amrex+plotfile_tools", when="+fcompare")
+            depends_on("amrex precision=double", when="@:26.05")
+            for _p in ("double", "single"):
+                depends_on(f"amrex precision={_p}", when=f"@26.06:precision={_p}")
+            # Spack's builtin amrex has no particles_precision variant yet; packages/amrex in
+            # this repository adds it until spack-packages does.
+            for _p in ("double", "single"):
+                depends_on(
+                    f"amrex particles_precision={_p}", when=f"@26.06:particles_precision={_p}"
+                )
+            # The tests and +fcompare need <amrex prefix>/bin/amrex_fcompare, which only
+            # +plotfile_tools installs.
+            depends_on("amrex+plotfile_tools", when="+tests")
+            depends_on("amrex+plotfile_tools", when="+fcompare")
+        # The releases that build their vendored AMReX need its HDF5 themselves.
+        depends_on("hdf5@1.10.4:+mpi", when="@:24.09+hdf5+mpi")
+        depends_on("hdf5@1.10.4:~mpi", when="@:24.09+hdf5~mpi")
 
         depends_on("mpi", when="+mpi")
-        # ERF opens NetCDF files with nc_create_par (NC_NETCDF4 | NC_MPIIO): the
-        # HDF5-backed parallel mode, not PnetCDF.
+        # ERF opens NetCDF files with nc_create_par in NC_NETCDF4 mode: HDF5-backed parallel I/O.
         depends_on("netcdf-c+mpi", when="+netcdf")
-        # The Noah-MP ERF driver (built in-tree, see the resources below) is Fortran
-        # and reads NetCDF through the Fortran interface.
         depends_on("netcdf-fortran", when="+noahmp")
-        # EKAT's bundled Kokkos (see _rrtmgp_stack) imports rocThrust for its HIP backend
-        # and oneDPL for its SYCL backend (Kokkos_ENABLE_ROCTHRUST and Kokkos_ENABLE_ONEDPL
-        # default on). A ROCm or oneAPI installation carries them; Spack's kokkos package
-        # depends on the same two.
+        # EKAT's bundled Kokkos imports rocThrust (HIP) and oneDPL (SYCL), as Spack's kokkos does.
         for _ekat in ("+rrtmgp", "+eamxx_shoc"):
             depends_on("rocthrust", when=f"{_ekat}+rocm")
             depends_on("intel-oneapi-dpl", when=f"{_ekat}+sycl")
 
-    # Spack cuda_arch / amdgpu_target -> Kokkos_ARCH_<name>, the option names of the
-    # Kokkos that EKAT bundles (its cmake/kokkos_arch.cmake): 4.5.1 for releases
-    # 25.10-26.09, 5.1.0 on development since #4293, which adds Ampere 8.7 and Blackwell
-    # (its new AMD names, gfx950 and gfx1201, are not amdgpu_target values Spack offers).
-    # The ranges are those of _rrtmgp_stacks.
+    # Spack cuda_arch/amdgpu_target -> Kokkos_ARCH_<name> for the Kokkos EKAT bundles, one
+    # map per EKAT generation (the ranges of _rrtmgp_stacks).
     _kokkos_cuda_arch = {
         "50": "MAXWELL50",
         "52": "MAXWELL52",
@@ -309,28 +284,25 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         ),
     }
 
-    # ERF's CMake accepts at most one of OpenMP, CUDA, HIP and SYCL.
     conflicts("+openmp", when="+cuda", msg="ERF supports one of OpenMP, CUDA, HIP and SYCL")
     conflicts("+openmp", when="+rocm", msg="ERF supports one of OpenMP, CUDA, HIP and SYCL")
     conflicts("+openmp", when="+sycl", msg="ERF supports one of OpenMP, CUDA, HIP and SYCL")
     conflicts("+cuda", when="+rocm", msg="ERF supports one of OpenMP, CUDA, HIP and SYCL")
     conflicts("+cuda", when="+sycl", msg="ERF supports one of OpenMP, CUDA, HIP and SYCL")
     conflicts("+rocm", when="+sycl", msg="ERF supports one of OpenMP, CUDA, HIP and SYCL")
-    # CudaPackage defaults cuda_arch to "none" without a conflict (ROCmPackage
-    # has one for amdgpu_target=none); cmake_args needs a real compute capability,
-    # and the amrex recipe would otherwise build for the build node's GPU.
+    # CudaPackage allows cuda_arch=none; cmake_args needs a real one.
     conflicts("cuda_arch=none", when="+cuda", msg="ERF needs an explicit cuda_arch")
-    # SYCL means Intel's compilers, for AMReX and for ERF's own kernels.
     requires("%c,cxx=oneapi", when="+sycl", msg="the SYCL backend needs the oneAPI compilers")
-    # What ERF's sources and CMake require.
     conflicts("+netcdf", when="~mpi", msg="ERF's NetCDF I/O is parallel and needs MPI")
     conflicts("+noahmp", when="~netcdf", msg="Noah-MP requires NetCDF")
     conflicts("+rrtmgp", when="~netcdf", msg="RRTMGP requires NetCDF")
     conflicts("+rrtmgp", when="~mpi", msg="RRTMGP (EKAT) requires MPI")
     conflicts("+eamxx_shoc", when="~mpi", msg="SHOC (EKAT) requires MPI")
-    # The checked-in eamxx_config.h builds EAMxx in double precision.
     conflicts("+eamxx_shoc", when="precision=single", msg="EAMxx SHOC is double precision only")
     conflicts("+tools", when="~netcdf", msg="The tools require NetCDF")
+    # Exec/Tools builds erf_plt_to_nc as plain C++, which a CUDA AMReX's headers reject
+    # (AMReX.H: '__host__' does not name a type).
+    conflicts("+tools", when="+cuda", msg="the plotfile tools do not build with CUDA")
     conflicts(
         "+ml_uphys_diagnostics",
         when="~particles",
@@ -346,10 +318,9 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         when="precision=single",
         msg="the WDM6 Fortran bridge is double precision only",
     )
-    # +rrtmgp and +eamxx_shoc build the Kokkos bundled with EKAT, which needs its
-    # GPU architecture as Kokkos_ARCH_<name> (see cmake_args): it ignores
-    # CMAKE_CUDA_ARCHITECTURES, autodetects otherwise (and fails on a node
-    # without the GPU) and accepts exactly one GPU architecture.
+    # EKAT's Kokkos takes exactly one GPU architecture, as Kokkos_ARCH_<name> (see cmake_args);
+    # it ignores CMAKE_CUDA_ARCHITECTURES and otherwise autodetects, which fails on a node
+    # without the GPU.
     for _range, (_cuda_map, _amd_map) in _kokkos_arch.items():
         for _ekat in ("+rrtmgp", "+eamxx_shoc"):
             for _sm in CudaPackage.cuda_arch_values:
@@ -379,28 +350,13 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
                     msg="Kokkos takes one amdgpu_target",
                 )
 
-    # RRTMGP, EKAT and EKAT's bundled Kokkos, yaml-cpp, spdlog and Catch2, at the
-    # commits ERF pins as submodules (Submodules/RRTMGP and Submodules/ekat in
-    # ERF, extern/* in EKAT; unchanged from 25.10 through development).
-    # Build/spack/check_pins.py compares these with the gitlinks in ERF's tree
-    # and CI runs it, so a submodule bump fails until this list follows.
-    # ERF's CMake add_subdirectory()s all of them, forces EKAT's own spdlog
-    # (CMAKE_DISABLE_FIND_PACKAGE_spdlog) and passes Kokkos options meant for an
-    # in-tree Kokkos, and E3SM's Kokkos fork carries E3SM patches, so Spack's
-    # kokkos, spdlog and yaml-cpp packages are not drop-in replacements. They are
-    # resources rather than submodules because EKAT lists its submodules over
-    # SSH, which an unattended recursive fetch cannot follow. They land in a
-    # staging directory and patch() moves them into place: release tarballs and
-    # git checkouts both carry an empty placeholder directory at each submodule
-    # path, and Spack leaves a resource alone when its destination already exists.
-    # One stack per EKAT generation. Releases 25.10-26.09 vendor EKAT 10ab9d3
-    # (Kokkos 4.5.1; yaml-cpp, spdlog and Catch2 as its submodules). Development
-    # since #4293, so 26.10 onwards, vendors EKAT ae5e7f8 (Kokkos 5.1.0), which
-    # fetches the other three with FetchContent at the commits its
-    # cmake/tpls/EkatBuild*.cmake files pin; they are resources here too, handed to
-    # EKAT through FETCHCONTENT_SOURCE_DIR_* (see cmake_args) so the build needs no
-    # network. Catch2 is needed even with EKAT_ENABLE_TESTS off: EKAT always builds
-    # its testing-support library. The ranges also select the Kokkos arch names.
+    # RRTMGP, EKAT and EKAT's third-party sources at the commits ERF and EKAT pin, one set
+    # per EKAT generation; check_pins.py compares them with the gitlinks and FetchContent
+    # tags. Spack's kokkos, spdlog and yaml-cpp packages are not substitutes: ERF
+    # add_subdirectory()s all of these, forces EKAT's spdlog, passes in-tree Kokkos options,
+    # and E3SM's Kokkos carries E3SM patches. They are resources rather than submodules
+    # because EKAT lists its submodules over SSH, which an unattended fetch cannot follow;
+    # patch() moves them onto the submodule paths.
     _rrtmgp_stacks = {
         "@25.10:26.09": (
             (
@@ -469,8 +425,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             ),
         ),
     }
-    # EAMxx SHOC needs EKAT too (ERF's CMake turns EKAT on for either); the two
-    # conditions are disjoint so a +rrtmgp+eamxx_shoc build fetches each once.
+    # SHOC needs EKAT too; the disjoint conditions fetch each once for +rrtmgp+eamxx_shoc.
     for _range, _stack in _rrtmgp_stacks.items():
         for _name, _repo, _commit, _ in _stack:
             for _when in ("+rrtmgp", "~rrtmgp+eamxx_shoc"):
@@ -483,10 +438,8 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
                     when=f"{_range}{_when}",
                 )
 
-    # The EAMxx sources SHOC is compiled from: the two directories ERF's CMake
-    # reads under external/E3SM/components/eamxx/src, out of E3SM at the commit
-    # Build/GNU_Ekat/eamxx_clone.sh checks out (check_pins.py compares the two).
-    # Spack 1.1+ makes a sparse, blob-filtered clone; older Spack clones all of E3SM.
+    # The EAMxx sources SHOC compiles, at the E3SM commit Build/GNU_Ekat/eamxx_clone.sh
+    # checks out (check_pins.py compares them); Spack 1.1+ clones them sparsely.
     _e3sm_commit = "2eb52d9b3d452e593f3825f9408507cae3519bf6"
     resource(
         name="e3sm-eamxx",
@@ -498,15 +451,10 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         when="+eamxx_shoc",
     )
 
-    # Noah-MP's ERF coupling layer (drivers/erf) is versioned with ERF, not with
-    # Noah-MP's own releases: ERF's pin is well past the last Noah-MP tag and
-    # moves with most ERF releases, and ERF compiles the driver in-tree with
-    # its own precision macro (DOUBLE_PREC selects the Fortran real kind). So ERF
-    # builds Noah-MP from its pinned commit, like the RRTMGP stack above, rather
-    # than from Spack's standalone noahmp package, whose tagged releases predate
-    # the interface ERF calls. Pins are the Submodules/Noah-MP gitlink of each
-    # release (`git ls-tree <tag> Submodules/Noah-MP`); check_pins.py keeps the
-    # develop entry equal to the gitlink on the development branch.
+    # Noah-MP's ERF driver (drivers/erf) is versioned with ERF, past the last Noah-MP tag,
+    # and compiled in-tree with ERF's precision macro, so ERF builds its pinned commit rather
+    # than Spack's noahmp package. Each pin is that release's Submodules/Noah-MP gitlink;
+    # check_pins.py --fix keeps the develop one.
     _noahmp_pins = (
         ("25.12:26.04", "6dc16027de56f2abc9fe430016acd086625e9ae2"),
         ("26.05", "c08dd406761330ac823a3e268bd2e98eb6889b40"),
@@ -547,11 +495,8 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         if self.spec.satisfies("+noahmp"):
             self._move_into_place(join_path("spack-resources", "noahmp"), "Submodules/Noah-MP")
 
-        # ERF 26.06+ unit tests add_subdirectory() the bundled googletest
-        # checkout, which is not fetched. Redirect them to the Spack-provided
-        # GoogleTest: both test executables already link GTest::gtest, the target
-        # name that find_package(GTest) defines, and Tests/Unit already
-        # include(GoogleTest) for gtest_discover_tests.
+        # The bundled googletest submodule is not fetched; point the unit tests at Spack's.
+        # They already use the GTest::gtest target and include(GoogleTest).
         if self.spec.satisfies("@26.06:+tests+unit_tests"):
             unit_cmakelists = join_path("Tests", "Unit", "CMakeLists.txt")
             marker = (
@@ -569,7 +514,7 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
     def cmake_args(self):
         spec = self.spec
         args = [
-            self.define("ERF_USE_INTERNAL_AMREX", False),
+            self.define("ERF_USE_INTERNAL_AMREX", spec.satisfies("@:24.09")),
             self.define_from_variant("ERF_ENABLE_MPI", "mpi"),
             self.define_from_variant("ERF_ENABLE_OPENMP", "openmp"),
             self.define_from_variant("ERF_ENABLE_CUDA", "cuda"),
@@ -581,7 +526,12 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("ERF_ENABLE_MULTIBLOCK", "multiblock"),
             self.define_from_variant("ERF_ENABLE_FFT", "fft"),
             self.define_from_variant("ERF_ENABLE_TESTS", "tests"),
-            self.define_from_variant("ERF_ENABLE_FCOMPARE", "fcompare"),
+            # Before 24.10 the tests' amrex_fcompare comes from the vendored AMReX, built
+            # only when ERF_ENABLE_FCOMPARE is on.
+            self.define(
+                "ERF_ENABLE_FCOMPARE",
+                spec.satisfies("+fcompare") or spec.satisfies("@:24.09+tests"),
+            ),
             # Conditional variants absent from this version define nothing.
             self.define_from_variant("ERF_ENABLE_TOOLS", "tools"),
             self.define_from_variant("ERF_ENABLE_RRTMGP", "rrtmgp"),
@@ -595,9 +545,6 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             self.define("ERF_PRECISION", spec.variants["precision"].value.upper()),
         ]
 
-        # ERF 26.06 keys its gtest unit tests off a separate option that
-        # defaults to ON whenever the regression tests are on; state it
-        # explicitly so ~tests never drags in a GoogleTest build.
         if spec.satisfies("@26.06:"):
             args.append(self.define("ERF_ENABLE_UNIT_TESTS", spec.satisfies("+tests+unit_tests")))
             particles_precision = spec.variants["particles_precision"].value
@@ -605,23 +552,18 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
                 particles_precision = spec.variants["precision"].value
             args.append(self.define("ERF_PARTICLES_PRECISION", particles_precision.upper()))
 
-        # ERF_ENABLE_NVHPC (25.11+) makes ERF's CMake look for the NVHPC SDK's
-        # CUDA and math libraries; only meaningful with the NVHPC compilers.
         if spec.satisfies("@25.11:+cuda%nvhpc"):
             args.append(self.define("ERF_ENABLE_NVHPC", True))
 
-        # Only ERF's test harness reads MPIEXEC_PREFLAGS, and --oversubscribe is
-        # an Open MPI spelling that other MPI launchers reject.
+        # --oversubscribe is Open MPI's spelling; only ERF's test harness reads MPIEXEC_PREFLAGS.
         if spec.satisfies("+tests+mpi ^[virtuals=mpi] openmpi"):
             args.append(self.define("MPIEXEC_PREFLAGS", "--oversubscribe"))
 
-        # ERF_ENABLE_EKAT was an explicit option in the first RRTMGP releases;
-        # 25.12 and later derive it from ERF_ENABLE_RRTMGP.
+        # 25.12 and later derive ERF_ENABLE_EKAT from ERF_ENABLE_RRTMGP.
         if spec.satisfies("@25.10:25.11+rrtmgp"):
             args.append(self.define("ERF_ENABLE_EKAT", True))
 
         if spec.satisfies("+rrtmgp") or spec.satisfies("+eamxx_shoc"):
-            # The bundled Kokkos's GPU architecture (see the conflicts above).
             cuda_map, amd_map = next(
                 maps for rng, maps in self._kokkos_arch.items() if spec.satisfies(rng)
             )
@@ -632,10 +574,9 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
                 (tgt,) = spec.variants["amdgpu_target"].value
                 args.append(self.define("Kokkos_ARCH_" + amd_map[tgt], True))
             if spec.satisfies("@26.10:"):
-                # This EKAT fetches yaml-cpp, spdlog and Catch2 with FetchContent and
-                # only trusts a pre-populated directory with a .git in it, which a
-                # Spack resource has not; the override makes it add_subdirectory()
-                # the resource as it is.
+                # This EKAT fetches yaml-cpp, spdlog and Catch2 with FetchContent and trusts a
+                # pre-populated directory only with a .git in it; the override makes it
+                # add_subdirectory() the resource as it is.
                 extern = join_path(self.stage.source_path, "Submodules", "ekat", "extern")
                 for name, var in (
                     ("yaml-cpp", "YAML_CPP"),
@@ -646,19 +587,17 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
                         self.define(f"FETCHCONTENT_SOURCE_DIR_{var}", join_path(extern, name))
                     )
             if spec.satisfies("+sycl"):
-                # Kokkos's FindTPLONEDPL falls back to find_package(oneDPL) when the
-                # compiler does not see the headers; the config lives in the component.
+                # Kokkos's FindTPLONEDPL falls back to find_package(oneDPL) when the compiler
+                # does not see the headers; the config lives in the component.
                 dpl = spec["intel-oneapi-dpl"].package.component_prefix
                 args.append(self.define("oneDPL_DIR", dpl.lib.cmake.oneDPL))
 
-        # ERF's CMake prepends NETCDF_DIR to CMAKE_PREFIX_PATH before its FindNetCDF.
         if spec.satisfies("+netcdf"):
             args.append(self.define("NETCDF_DIR", spec["netcdf-c"].prefix))
 
-        # The Noah-MP driver's FindNetCDF looks for the Fortran interface under the
-        # C library's prefix only; Spack keeps netcdf-fortran apart, so hand it the
-        # answers it would search for.
         if spec.satisfies("+noahmp"):
+            # The Noah-MP driver's FindNetCDF looks for the Fortran interface under
+            # netcdf-c's prefix only.
             netcdf_fortran = spec["netcdf-fortran"]
             args.extend(
                 [
@@ -668,11 +607,9 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
             )
 
         if spec.satisfies("+cuda"):
-            # SASS for every requested architecture, PTX only for the newest:
-            # AMReX's own "all" policy. SASS+PTX for each of three architectures
-            # pushed erf_exec past the 2 GB small code model at link time
-            # ("relocation truncated to fit: R_X86_64_PC32"). Compressed fatbins
-            # are transparent at load time.
+            # SASS for each architecture, PTX for the newest only (AMReX's "all" policy):
+            # SASS+PTX for three architectures pushed erf_exec past the 2 GB small code model
+            # at link time. Compressed fatbins cost nothing at load time.
             archs = sorted(spec.variants["cuda_arch"].value, key=self._cuda_arch_number)
             spelled = [a if a == archs[-1] else f"{a}-real" for a in archs]
             args.extend(
@@ -685,6 +622,9 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
 
         if spec.satisfies("+rocm"):
             args.append(self.define("CMAKE_CXX_COMPILER", spec["hip"].hipcc))
+            if spec.satisfies("@:24.09"):
+                targets = spec.variants["amdgpu_target"].value
+                args.append(self.define("AMReX_AMD_ARCH", ";".join(targets)))
 
         return args
 
@@ -699,13 +639,29 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         checkout: prefix/share/erf/examples/<case>/inputs_*."""
         examples = join_path(self.prefix.share, "erf", "examples")
         for case in ("ScalarAdvDiff", "IsentropicVortex"):
-            src = join_path(self.stage.source_path, "Exec", "RegTests", case)
-            if os.path.isdir(src):
-                install_tree(src, join_path(examples, case))
+            # The cases sat under DryRegTests from 24.11 to 26.03.
+            for group in ("RegTests", "DryRegTests"):
+                src = join_path(self.stage.source_path, "Exec", group, case)
+                if os.path.isdir(src):
+                    install_tree(src, join_path(examples, case))
+                    break
+
+    def _erf_exe(self):
+        """The executable that runs the examples: one per case through 26.02, one for the
+        dry regression tests at 26.03, erf_exec from 26.04."""
+        if self.spec.satisfies("@26.04:"):
+            name = "erf_exec"
+        elif self.spec.satisfies("@26.03"):
+            name = "erf_dryregtests"
+        else:
+            name = "erf_scalar_advdiff"
+        return Executable(join_path(self.prefix.bin, name))
 
     def test_help(self):
         """erf_exec prints its usage"""
-        erf_exec = Executable(self.prefix.bin.erf_exec)
+        if not self.spec.satisfies("@26.04:"):
+            raise SkipTest("before 26.04 the executables exit with an error without an input file")
+        erf_exec = self._erf_exe()
         out = erf_exec("--help", output=str.split, error=str.split)
         assert "usage" in out.lower()
 
@@ -716,10 +672,8 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         )
         if not os.path.isfile(inputs):
             raise SkipTest("no example inputs installed for this version")
-        # A wind-farm-enabled erf_exec aborts on any input that names no
-        # windfarm_type (WindFarm's constructor rejects the None default).
         if self.spec.satisfies("+windfarm"):
             raise SkipTest("ERF +windfarm cannot run a case without a wind farm")
-        erf_exec = Executable(self.prefix.bin.erf_exec)
+        erf_exec = self._erf_exe()
         with working_dir(self.test_suite.current_test_cache_dir, create=True):
             erf_exec(inputs, "max_step=2", "erf.plot_int_1=-1", "erf.check_int=-1")

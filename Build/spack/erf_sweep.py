@@ -24,6 +24,13 @@ import sys
 import time
 
 POS = [
+    "erf@23.10 +mpi",  # bundled AMReX
+    "erf@24.01 +openmp",
+    "erf@24.09 +netcdf +particles +tests",
+    "erf@24.06 +cuda cuda_arch=80 +mpi",
+    "erf@24.09 +rocm amdgpu_target=gfx90a +mpi",
+    "erf@24.10 +mpi",  # pairs with amrex@24.11
+    "erf@25.01 +netcdf",  # amrex~eb
     "erf@develop",
     "erf@develop ~mpi",
     "erf@develop +openmp",
@@ -78,6 +85,11 @@ POS = [
 # compiler for a %-requirement, so on gcc-only machines it is refused; it concretizes
 # wherever `spack compiler find` has registered oneAPI.
 NEG = [
+    "erf@23.10 +particles",
+    "erf@24.09 +fft",
+    "erf@24.09 +noahmp +netcdf",
+    "erf@26.09 +netcdf +tools +cuda cuda_arch=80",
+    "erf@develop +netcdf +tools +cuda cuda_arch=80",
     "erf@develop +sycl",
     "erf@develop +rrtmgp ~netcdf",
     "erf@develop +rrtmgp ~mpi",

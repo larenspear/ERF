@@ -30,8 +30,10 @@ spack install erf
 * **Pins move with the tree.** The RRTMGP/EKAT, Noah-MP and E3SM commits the recipe
   fetches, and the AMReX commit `@develop` builds, must equal ERF's gitlinks: the pin
   check fails a pull request that bumps a submodule without the recipe
-  (`check_pins.py --fix` rewrites the develop Noah-MP and AMReX pins). Releases build
-  the AMReX release of the same month, the one their submodule vendors.
+  (`check_pins.py --fix` rewrites the develop Noah-MP and AMReX pins). Releases from
+  24.10 build the AMReX release of the same month (24.10 builds 24.11: its submodule
+  is five commits past the 24.10 tag), with embedded boundaries off before 25.03 as
+  ERF's CMake sets them; 23.10 to 24.09 build the AMReX they bundle.
 * **A release adds one step.** Add the version with the tarball's sha256 and its
   Noah-MP pin (the docs page says how); the weekly run fails until the newest tag is
   offered.

@@ -67,9 +67,13 @@ Versions
 --------
 
 ``develop`` (ERF's ``development`` branch, built against the AMReX commit its submodule pins) and
-every release from 24.10 on. Each release is pinned to the AMReX release it vendors, since
-ERF follows AMReX's API release by release; ``^amrex@<other>`` is refused. Releases before
-24.10 always build their bundled AMReX and are not offered.
+every release from 23.10 on. Releases from 24.10 build the AMReX release of the same month,
+since ERF follows AMReX's API release by release (24.10 builds 24.11: its submodule is five
+commits past the 24.10 tag), with AMReX's embedded boundaries off before 25.03 as ERF's own
+CMake sets them; ``^amrex@<other>`` is refused. Releases 23.10 to 24.09 have no
+``find_package(AMReX)`` and build the AMReX they bundle, fetched as a submodule. Every
+release from 24.10 has been built in CI with ``+netcdf +particles +tests``, 23.10 and 24.09
+with their smoke tests.
 
 Variants
 --------
@@ -130,7 +134,8 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
        has it).
    * - ``tools`` (off, 25.07+)
      - ``ERF_ENABLE_TOOLS``
-     - Needs ``+netcdf``.
+     - Needs ``+netcdf``. Refused with ``+cuda``: ``Exec/Tools`` builds the plotfile tools as
+       plain C++, which a CUDA AMReX's headers reject (ERF fix pending).
    * - ``rrtmgp`` (off, 25.10+)
      - ``ERF_ENABLE_RRTMGP``
      - RTE-RRTMGP radiation. Builds EKAT with its bundled Kokkos, yaml-cpp, spdlog and Catch2
@@ -164,8 +169,8 @@ option, so for example ``erf@26.01 +windfarm`` is refused.
 ``%nvhpc +cuda`` builds also set ``ERF_ENABLE_NVHPC`` (25.11+); no CI covers them yet.
 
 Not covered, on purpose: the documentation build (``ERF_ENABLE_DOCUMENTATION``), code
-coverage, the warning flags, fire engine directories, the bundled-AMReX build
-(``ERF_USE_INTERNAL_AMREX``; Spack always builds against its own ``amrex``), the GNU Make
+coverage, the warning flags, fire engine directories, the bundled-AMReX build of releases
+from 24.10 (``ERF_USE_INTERNAL_AMREX``; Spack builds against its own ``amrex``), the GNU Make
 build, WW3 coupling, and Windows.
 
 Build cache
