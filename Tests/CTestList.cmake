@@ -2627,6 +2627,21 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard complete z-level construction and device-copy bodies, and prove
+    # thickness consistency, refinement, positivity under explicit assumptions,
+    # and the normal momentum wrapper's zero-based spacing indices.
+    add_test(NAME AdvectionStretchedDz_Z3
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDz_Z3_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_selftest.py)
+    set_tests_properties(AdvectionStretchedDz_Z3 AdvectionStretchedDz_Z3_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        SKIP_RETURN_CODE 77
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
