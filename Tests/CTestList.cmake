@@ -2889,6 +2889,18 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard FFT rebuild invocation after subdomain setup and checkpoint return.
+    add_test(NAME AdvectionStretchedDzFFTRebuild
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_fft_rebuild.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzFFTRebuild_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_fft_rebuild_selftest.py)
+    set_tests_properties(AdvectionStretchedDzFFTRebuild AdvectionStretchedDzFFTRebuild_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
