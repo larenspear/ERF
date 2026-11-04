@@ -20,7 +20,8 @@ including slow-RHS and advection/diffusion paths, remain separate obligations.
 check_stretched_dz_rhs guards slow-RHS/router forwarding and PBL functor copies;
 check_stretched_dz_diffusion audits the explicit diffusion pointer paths.
 check_stretched_dz_advection audits the explicit normal-advection pointer paths.
-Implicit consumers and refresh ordering still need separate audits.
+check_stretched_dz_implicit audits the stretched implicit-diffusion pointer paths.
+Refresh ordering still needs a separate audit.
 
 usage: check_stretched_dz_consumers.py [ERF_ROOT]
 """

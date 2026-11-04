@@ -14,8 +14,9 @@ behavior/concurrent mutation/external macro rewriting, and preservation through
 other inputs/globals remain assumptions. It is not a C++ parser or whole-program
 alias proof. GPU kernels retain pointer copies: completion before storage changes
 remains unproved. Numerical accuracy, positivity, bounds, refresh scheduling and
-implicit consumers are separate obligations. check_stretched_dz_advection
-separately audits the explicit normal-advection pointer paths.
+implicit solver arithmetic are separate obligations. check_stretched_dz_advection
+and check_stretched_dz_implicit audit the normal-advection and stretched implicit
+pointer paths, respectively.
 
 usage: check_stretched_dz_diffusion.py [ERF_ROOT]
 """

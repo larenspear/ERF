@@ -14,8 +14,9 @@ overload rewriting, concurrent mutation or undefined behavior; disjoint output
 arrays; and preservation through other inputs/globals. These source readers
 are not a C++ parser or whole-program alias analysis. GPU kernels retain pointer
 copies, so completion before storage changes remains an external obligation.
-Implicit consumers, refresh scheduling and generated-spacing positivity are
-separate obligations. Only the Python standard library is needed.
+check_stretched_dz_implicit audits the stretched implicit-diffusion pointer paths.
+Refresh scheduling and generated-spacing positivity are separate obligations.
+Only the Python standard library is needed.
 
 usage: check_stretched_dz_advection.py [ERF_ROOT]
 """
