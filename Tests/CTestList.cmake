@@ -2747,6 +2747,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard WRF nominal-grid branches, refresh order and terrain availability.
+    # Caller synchronization and numerical grid validity remain separate obligations.
+    add_test(NAME AdvectionStretchedDzWRF
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_wrf.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzWRF_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_wrf_selftest.py)
+    set_tests_properties(AdvectionStretchedDzWRF AdvectionStretchedDzWRF_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
