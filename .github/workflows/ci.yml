@@ -155,6 +155,17 @@ jobs:
         return=$(tail -n 1 ${{runner.workspace}}/build-output-warnings.txt | awk '{print $2}')
         exit ${return}
 
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: build-logs-ci-${{matrix.os}}-particles-${{matrix.particles}}
+        path: |
+          ${{ github.workspace }}/../build-output.txt
+          ${{ github.workspace }}/../build-output-warnings.txt
+        if-no-files-found: ignore
+        retention-days: 14
+
     - name: Check Unit Test Registration
       run: |
         Tests/Unit/erf_unit_tests --gtest_list_tests | tee ${{runner.workspace}}/unit-test-list.txt

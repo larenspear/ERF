@@ -166,3 +166,14 @@ jobs:
           if [ "${warning_count:-0}" -ne 0 ] || [ "${error_count:-0}" -ne 0 ]; then
             exit 1
           fi
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-logs-cuda-${{matrix.cuda_pkg}}-mesh-${{matrix.mesh_precision}}-particles-${{matrix.particles}}-${{matrix.particles_precision}}
+          path: |
+            ${{ github.workspace }}/../build-${{matrix.cuda_pkg}}-output.txt
+            ${{ github.workspace }}/../build-${{matrix.cuda_pkg}}-diagnostics.txt
+          if-no-files-found: ignore
+          retention-days: 14

@@ -195,6 +195,17 @@ jobs:
         return=$(tail -n 1 ${{runner.workspace}}/build-${{matrix.os}}-output-warnings.txt | awk '{print $2}')
         exit ${return}
 
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: build-logs-hip-rocm-${{matrix.rocm_version}}-mesh-${{matrix.mesh_precision}}-particles-${{matrix.particles}}-${{matrix.particles_precision}}
+        path: |
+          ${{ github.workspace }}/../build-*-output.txt
+          ${{ github.workspace }}/../build-*-output-warnings.txt
+        if-no-files-found: ignore
+        retention-days: 14
+
     # - name: Regression Tests
     #   run: |
     #     ctest -L regression -VV
