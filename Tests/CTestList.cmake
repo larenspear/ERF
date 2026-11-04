@@ -2760,6 +2760,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Connect the WRF mode default, ordinary call and surface-only completion.
+    # GPU completion and unparsed caller physics remain separate obligations.
+    add_test(NAME AdvectionStretchedDzWRFCallers
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_wrf_callers.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzWRFCallers_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_wrf_callers_selftest.py)
+    set_tests_properties(AdvectionStretchedDzWRFCallers AdvectionStretchedDzWRFCallers_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
