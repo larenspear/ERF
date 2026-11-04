@@ -2786,6 +2786,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Extend conditional completion premises to slow-RHS and implicit readers.
+    # Callback entry state and whole-program storage lifetime remain external.
+    add_test(NAME AdvectionStretchedDzSolverMFIter
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_solver_mfiter.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzSolverMFIter_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_solver_mfiter_selftest.py)
+    set_tests_properties(AdvectionStretchedDzSolverMFIter AdvectionStretchedDzSolverMFIter_SelfTest
+        PROPERTIES
+        TIMEOUT 120
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
