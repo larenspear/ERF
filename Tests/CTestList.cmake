@@ -2851,6 +2851,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard the projection divergence spacing reader and its direct projection calls.
+    # Completion relies on the inspected pinned AMReX iterator semantics.
+    add_test(NAME AdvectionStretchedDzProjectionDivergence
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_projection_divergence.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzProjectionDivergence_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_projection_divergence_selftest.py)
+    set_tests_properties(AdvectionStretchedDzProjectionDivergence AdvectionStretchedDzProjectionDivergence_SelfTest
+        PROPERTIES
+        TIMEOUT 120
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
