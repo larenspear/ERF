@@ -2838,6 +2838,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard temporary descriptor setup and kernel uses in the no-substep callback.
+    # Deferred freeing relies on the inspected pinned AMReX implementation.
+    add_test(NAME AdvectionStretchedDzAsyncVectors
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_async_vectors.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzAsyncVectors_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_async_vectors_selftest.py)
+    set_tests_properties(AdvectionStretchedDzAsyncVectors AdvectionStretchedDzAsyncVectors_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
