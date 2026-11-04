@@ -1,28 +1,8 @@
 name: Linux GCC NetCDF RRTMGP
 
+run-name: NetCDF/RRTMGP serial versus parallel regression comparison
+
 on:
-  push:
-    branches: [development]
-    paths:
-      - '**'
-      - '!Docs/**'
-      - '!**.md'
-      - '!**.rst'
-      - '!license.txt'
-      - '!.github/workflows/**'
-      - '.github/workflows/gcc-rrtmgp.yml'
-      - '.github/actions/**'
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - '**'
-      - '!Docs/**'
-      - '!**.md'
-      - '!**.rst'
-      - '!license.txt'
-      - '!.github/workflows/**'
-      - '.github/workflows/gcc-rrtmgp.yml'
-      - '.github/actions/**'
   workflow_dispatch:
 
 # Development pushes finish the active run and keep only the newest pending commit.
@@ -35,22 +15,17 @@ jobs:
   library:
     name: GNU@9.3 C++17 - NetCDF ${{matrix.netcdf}} - Particles ${{matrix.particles}} - RRTMGP ${{matrix.rrtmgp}}
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
+    timeout-minutes: 120
     permissions:
       contents: read
-      packages: write
+      packages: read
     # env: {CXXFLAGS: "-fno-operator-names -Werror -Wall -Wextra -Wpedantic -Wnull-dereference -Wfloat-conversion -Wshadow -Woverloaded-virtual"}
     strategy:
       fail-fast: false
       matrix:
         particles: [ON]
-        # PR tier: NetCDF+RRTMGP only. The NetCDF-OFF (= gcc.yml + Kokkos) and NetCDF-only
-        # variants build on merge to development.
-        netcdf: ${{ fromJSON(github.event_name == 'pull_request' && '["ON"]' || '["OFF", "ON"]') }}
-        rrtmgp: ${{ fromJSON(github.event_name == 'pull_request' && '["ON"]' || '["OFF", "ON"]') }}
-        exclude:
-        - rrtmgp: ON
-          netcdf: OFF
+        netcdf: [ON]
+        rrtmgp: [ON]
     env:
       CCACHE_TRUNK_KEY: ubuntu-22.04-x64-gcc-spack-openmpi-double-particles-on-kokkos-netcdf-${{ matrix.netcdf }}-rrtmgp-${{ matrix.rrtmgp }}
       ERF_DIR: ${{ github.workspace }}/erf_clone
@@ -107,7 +82,7 @@ jobs:
     - name: set up NetCDF
       run: |
         echo ${{ github.workspace }}
-        echo ${{ runner.workspace }}
+        echo "$RUNNER_TEMP"
         . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
         export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
         export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
@@ -174,62 +149,40 @@ jobs:
         echo '```' >> "$GITHUB_STEP_SUMMARY"
         du -hs ~/.cache/ccache
 
-    - name: Save Cache
-      if: always() && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
-      uses: ./erf_clone/.github/actions/ccache-trunk
-      with:
-        mode: save
-        key: ${{ env.CCACHE_TRUNK_KEY }}
-        path: ~/.cache/ccache
-        token: ${{ secrets.GITHUB_TOKEN }}
-
-
-    - name: Report
+    - name: Record comparison environment
+      shell: bash
       run: |
-        grep -Ei "warning:|error:" ${ERF_DIR}/build-output.txt \
-          | grep -Ev "Submodules/(amrex|AMReX|googletest)" | grep -Ev "lto-wrapper: warning:" | sort | uniq \
-          | awk 'BEGIN{i=0}{print $0}{i++}END{print "Warnings: "i}' > ${ERF_DIR}/build-output-warnings.txt
-        cat ${ERF_DIR}/build-output-warnings.txt
-        return=$(tail -n 1 ${ERF_DIR}/build-output-warnings.txt | awk '{print $2}')
-        exit ${return}
+        mkdir -p "${ERF_DIR}/benchmark-metadata"
+        git -C "$ERF_DIR" rev-parse HEAD > "${ERF_DIR}/benchmark-metadata/commit.txt"
+        git -C "$ERF_DIR" submodule status --recursive > "${ERF_DIR}/benchmark-metadata/submodules.txt"
+        lscpu > "${ERF_DIR}/benchmark-metadata/cpu.txt"
+        free -m > "${ERF_DIR}/benchmark-metadata/memory.txt"
+        cmake --version > "${ERF_DIR}/benchmark-metadata/cmake.txt"
+        ctest --version > "${ERF_DIR}/benchmark-metadata/ctest.txt"
+        env | grep -E '^(OMP_|CTEST_|OMPI_|PMIX_|ImageOS=|ImageVersion=)' > "${ERF_DIR}/benchmark-metadata/runtime-env.txt" || true
+        cp "${ERF_DIR}/build/CMakeCache.txt" "${ERF_DIR}/benchmark-metadata/"
+        . "${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh"
+        spack env activate erf_netcdf
+        spack find -lv > "${ERF_DIR}/benchmark-metadata/spack-specs.txt"
+        cp "$SPACK_ENV/spack.lock" "${ERF_DIR}/benchmark-metadata/"
 
-    - name: Check Unit Test Registration
+    - name: Compare regression scheduling
+      shell: bash
       run: |
-        Tests/Unit/erf_unit_tests --gtest_list_tests | tee ${{ github.workspace }}/unit-test-list.txt
-        grep -Eq '^[A-Za-z0-9_].*\.$' ${{ github.workspace }}/unit-test-list.txt
-      working-directory: ${{ github.workspace }}/erf_clone/build
+        python3 "${ERF_DIR}/.github/scripts/rrtmgp-regression-benchmark.py" \
+          "${ERF_DIR}/build" "${ERF_DIR}/regression-benchmark" "$(nproc)"
 
-    - name: Run Serial Unit Tests
-      run: |
-        ctest -L unit -j 4 --output-on-failure --no-tests=error
-      working-directory: ${{ github.workspace }}/erf_clone/build
-
-    - name: Run Parallel Tests
-      run: |
-        ctest -L parallel --output-on-failure --no-tests=error
-      working-directory: ${{ github.workspace }}/erf_clone/build
-
-    - name: CMake Regression Tests # see file ERF/Tests/CTestList.cmake
-      run: |
-        ctest -L regression --parallel "$(nproc)" -VV
-      working-directory: ${{ github.workspace }}/erf_clone/build
-
-    - name: Upload backtraces from failed tests
-      if: failure()
+    - name: Upload comparison evidence
+      if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: backtraces-gcc-rrtmgp-netcdf-${{matrix.netcdf}}-rrtmgp-${{matrix.rrtmgp}}
-        path: ${{ github.workspace }}/erf_clone/build/Tests/**/Backtrace.*
-        if-no-files-found: ignore
-        retention-days: 14
-
-    - name: Push Spack binaries to GHCR
-      if: always() && github.event_name != 'pull_request'
-      continue-on-error: true
-      env:
-        GHCR_USER: ${{ github.actor }}
-        GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        . ${{ github.workspace }}/spack_install_dir/share/spack/setup-env.sh
-        spack env activate erf_netcdf
-        spack buildcache push --unsigned --update-index --without-build-dependencies erf-buildcache
+        name: rrtmgp-regression-comparison
+        path: |
+          ${{ github.workspace }}/erf_clone/regression-benchmark
+          !${{ github.workspace }}/erf_clone/regression-benchmark/pristine-inputs/**
+          ${{ github.workspace }}/erf_clone/benchmark-metadata
+          ${{ github.workspace }}/erf_clone/build-output.txt
+          ${{ github.workspace }}/erf_clone/build/Testing
+          ${{ github.workspace }}/erf_clone/build/Tests/**/*.log
+          ${{ github.workspace }}/erf_clone/build/Tests/**/Backtrace.*
+        retention-days: 7
