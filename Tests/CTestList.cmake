@@ -2734,6 +2734,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard native checkpoint spacing refresh before level construction.
+    # WRF refresh, checkpoint validity and GPU lifetime are separate obligations.
+    add_test(NAME AdvectionStretchedDzRestart
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_restart.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzRestart_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_restart_selftest.py)
+    set_tests_properties(AdvectionStretchedDzRestart AdvectionStretchedDzRestart_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
