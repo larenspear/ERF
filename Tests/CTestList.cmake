@@ -2773,6 +2773,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Guard automatic MFIter enclosure of selected spacing readers.
+    # Completion assumes the audited AMReX behavior and unchanged caller state.
+    add_test(NAME AdvectionStretchedDzMFIter
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_mfiter.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzMFIter_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_mfiter_selftest.py)
+    set_tests_properties(AdvectionStretchedDzMFIter AdvectionStretchedDzMFIter_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
