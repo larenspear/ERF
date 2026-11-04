@@ -2799,6 +2799,19 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Connect selected reader completion to slow-RHS callback return.
+    # Initial GPU state and preservation by other callees remain assumptions.
+    add_test(NAME AdvectionStretchedDzCallbackCompletion
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_callback_completion.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzCallbackCompletion_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_callback_completion_selftest.py)
+    set_tests_properties(AdvectionStretchedDzCallbackCompletion AdvectionStretchedDzCallbackCompletion_SelfTest
+        PROPERTIES
+        TIMEOUT 60
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
