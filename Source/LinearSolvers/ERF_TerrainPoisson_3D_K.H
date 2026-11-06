@@ -6,6 +6,31 @@
 
 #include <AMReX_FArrayBox.H>
 #include "ERF_NumericalConstants.H"
+#include <limits>
+
+// Reciprocal physical spacing at a z-face from eight finite nonnegative adjacent
+// layer edges with a positive total. Keep the factor eight in the reciprocal:
+// rounding a subnormal average first can lose a representable reciprocal.
+// Scale only large edges so their sum cannot overflow; ordinary and subnormal
+// edges remain unscaled.
+template <typename T>
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+T terrpoisson_inv_vertical_spacing (int i, int j, int k,
+                                    amrex::Array4<T const> const& zp) noexcept
+{
+    const T a=zp(i,j,k)-zp(i,j,k-1), b=zp(i+1,j,k)-zp(i+1,j,k-1);
+    const T c=zp(i,j+1,k)-zp(i,j+1,k-1), d=zp(i+1,j+1,k)-zp(i+1,j+1,k-1);
+    const T e=zp(i,j,k+1)-zp(i,j,k), f=zp(i+1,j,k+1)-zp(i+1,j,k);
+    const T g=zp(i,j+1,k+1)-zp(i,j+1,k), h=zp(i+1,j+1,k+1)-zp(i+1,j+1,k);
+    const T largest=amrex::max(amrex::max(amrex::max(a,b),amrex::max(c,d)),
+                              amrex::max(amrex::max(e,f),amrex::max(g,h)));
+    const bool large=largest > std::numeric_limits<T>::max()/T(8);
+    const T scale=large ? T(.125) : T(1);
+    const T numerator=large ? T(1) : T(8);
+    return numerator / (((scale*a+scale*b)+(scale*c+scale*d))+
+                        ((scale*e+scale*f)+(scale*g+scale*h)));
+}
+
 
 /**
  * Compute the x-face terrain Poisson flux.
@@ -133,8 +158,7 @@ T terrpoisson_flux_z (int i, int j, int k,
 
     // On z-face
     Real pz_lo = (sol(i,j,k  ) - sol(i,j,k-1));
-    Real hzeta_inv_on_zlo = amrex::Real(8.0) / ( (zp(i,j,k+1) + zp(i+1,j,k+1) + zp(i,j+1,k+1) + zp(i+1,j+1,k+1))
-                                   -(zp(i,j,k-1) + zp(i+1,j,k-1) + zp(i,j+1,k-1) + zp(i+1,j+1,k-1)) );
+    Real hzeta_inv_on_zlo = terrpoisson_inv_vertical_spacing(i,j,k,zp);
     pz_lo *= hzeta_inv_on_zlo;
 
     // On corners
@@ -443,8 +467,7 @@ void terrpoisson_adotx (int i, int j, int k, amrex::Array4<T> const& y,
     // *********************************************************
     // On z-face
     Real pz_hi    = x(i,j,k+1) - x(i,j,k  );
-    Real hzeta_inv_on_zhi = amrex::Real(8.0) / ( (zp(i,j,k+2) + zp(i+1,j,k+2) + zp(i,j+1,k+2) + zp(i+1,j+1,k+2))
-                                   -(zp(i,j,k  ) + zp(i+1,j,k  ) + zp(i,j+1,k  ) + zp(i+1,j+1,k  )) );
+    Real hzeta_inv_on_zhi = terrpoisson_inv_vertical_spacing(i,j,k+1,zp);
     pz_hi *= hzeta_inv_on_zhi;
 
     // On corners
@@ -471,8 +494,7 @@ void terrpoisson_adotx (int i, int j, int k, amrex::Array4<T> const& y,
     // *********************************************************
     // On z-face
     Real pz_lo = x(i,j,k  ) - x(i,j,k-1);
-    Real hzeta_inv_on_zlo = amrex::Real(8.0) / ( (zp(i,j,k+1) + zp(i+1,j,k+1) + zp(i,j+1,k+1) + zp(i+1,j+1,k+1))
-                                   -(zp(i,j,k-1) + zp(i+1,j,k-1) + zp(i,j+1,k-1) + zp(i+1,j+1,k-1)) );
+    Real hzeta_inv_on_zlo = terrpoisson_inv_vertical_spacing(i,j,k,zp);
     pz_lo *= hzeta_inv_on_zlo;
 
     // On corners

@@ -287,6 +287,12 @@ target_sources(${erf_exe_name}
     ${CMAKE_CURRENT_SOURCE_DIR}/LandSurfaceModel/SLM/ERF_GTestSLMInterface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/LandSurfaceModel/ERF_GTestPrecipitationRemap.cpp
 )
+if(NOT ERF_ENABLE_CUDA AND NOT ERF_ENABLE_HIP AND NOT ERF_ENABLE_SYCL)
+  # These stored-coordinate and subnormal controls require host access and
+  # gradual underflow. Device arithmetic needs separate validation.
+  target_sources(${erf_exe_name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/LinearSolvers/ERF_GTestTerrainPoissonVerticalMetrics.cpp)
+endif()
 if(ERF_DIM STREQUAL "3")
   # Motivation: the auxiliary mapped state must reproduce ERF's computational
   # divergence, exact host stage recipes, canonical metric transfers, and ledger.
