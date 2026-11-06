@@ -116,8 +116,8 @@ void ERF::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba_in,
     subdomains.resize(lev+1);
     //
     // Create subdomains at each level within the domain such that
-    // 1) all boxes in a given subdomain are "connected"
-    // 2) no boxes in a subdomain touch any boxes in any other subdomain
+    // 1) each subdomain is connected under the selected pressure-operator stencil
+    // 2) no pressure-operator connection joins boxes in different subdomains
     //
     make_subdomains(ba.simplified_list(), subdomains[lev]);
 
@@ -467,8 +467,8 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
     subdomains.resize(lev+1);
     //
     // Create subdomains at each level within the domain such that
-    // 1) all boxes in a given subdomain are "connected"
-    // 2) no boxes in a subdomain touch any boxes in any other subdomain
+    // 1) each subdomain is connected under the selected pressure-operator stencil
+    // 2) no pressure-operator connection joins boxes in different subdomains
     //
     make_subdomains(ba.simplified_list(), subdomains[lev]);
 
@@ -927,8 +927,8 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
 
     //
     // Re-define subdomain at this level within the domain such that
-    // 1) all boxes in a given subdomain are "connected"
-    // 2) no boxes in a subdomain touch any boxes in any other subdomain
+    // 1) each subdomain is connected under the selected pressure-operator stencil
+    // 2) no pressure-operator connection joins boxes in different subdomains
     //
     subdomains[lev].clear();
     make_subdomains(ba.simplified_list(), subdomains[lev]);

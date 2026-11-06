@@ -14,7 +14,7 @@ using namespace amrex;
  * Solve the Poisson equation using MLMG
  * Note that the level may or may not be level zero
  *
- * Important: we solve on the whole level even if there are disjoint regions
+ * The caller supplies one connected projection subdomain of this level.
  *
  * @param lev Level index for the solve
  * @param rhs Right-hand side MultiFab vector

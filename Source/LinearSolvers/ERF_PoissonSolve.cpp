@@ -322,7 +322,7 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
     Array<MultiFab,AMREX_SPACEDIM> rho0_u_sub;
     Array<MultiFab const*, AMREX_SPACEDIM> rho0_u_const;
 
-    // If we are going to solve with MLMG then we do not need to break this into subdomains
+    // Select the projection backend; each connected subdomain is solved below.
     bool will_solve_with_mlmg = false;
     if (solverChoice.mesh_type == MeshType::ConstantDz) {
         will_solve_with_mlmg = true;

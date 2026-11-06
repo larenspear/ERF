@@ -4014,6 +4014,14 @@ if(UNIX AND ERF_ENABLE_FFT AND ERF_PRECISION STREQUAL "DOUBLE"
     set_tests_properties(ProjectionVerticalBoundary_Runtime PROPERTIES
         TIMEOUT 300 PROCESSORS 1 LABELS "regression;projection"
         ATTACHED_FILES_ON_FAIL "${CMAKE_CURRENT_BINARY_DIR}/projection_vertical_boundary/results.json")
+    add_test(NAME ProjectionComponentConnectivity_Runtime
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_projection_component_connectivity_runtime.py
+            --erf "${_projection_vertical_exe}"
+            --output "${CMAKE_CURRENT_BINARY_DIR}/projection_component_connectivity")
+    set_tests_properties(ProjectionComponentConnectivity_Runtime PROPERTIES
+        TIMEOUT 300 PROCESSORS 1 LABELS "regression;projection"
+        ATTACHED_FILES_ON_FAIL "${CMAKE_CURRENT_BINARY_DIR}/projection_component_connectivity/results.json")
     add_test(NAME TerrainPhysicalGrid_Runtime
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/Tests/check_terrain_grid_runtime.py
