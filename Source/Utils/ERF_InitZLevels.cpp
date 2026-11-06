@@ -89,7 +89,7 @@ init_zlevels (Vector<Vector<Real>>& zlevels_stag,
             const erf_grid_utils::GeometricStretch gs =
                 erf_grid_utils::build_geometric_zlevels(zlevels_stag[lev], dz0, depth, tol);
             AMREX_ALWAYS_ASSERT_WITH_MESSAGE(gs.converged,
-                "Newton iterations to determine the grid stretching factor failed!\n");
+                "Could not construct a valid geometric vertical grid!\n");
             if (gs.uniform) {
                 Print() << "Note: erf.initial_dz = " << dz0 << " is no thinner than the uniform "
                         << "spacing, so the vertical grid is uniform with dz = " << gs.dz0 << std::endl;

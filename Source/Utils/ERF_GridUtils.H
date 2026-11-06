@@ -164,48 +164,50 @@ validate_matching_grid (const UniformGridMetadata& reference,
 
 /**
  * \brief A geometrically stretched vertical grid: dz_k = dz0 * ratio^k.
- *
- * The three numbers that define the grid, plus whether the solve that produced them
- * actually converged, so a caller can fail loudly instead of using a bad factor.
  */
 struct GeometricStretch
 {
     amrex::Real dz0{amrex::Real(0.0)};      //!< thickness of the first layer, as actually used
     amrex::Real ratio{amrex::Real(1.0)};    //!< layer-to-layer stretch factor
-    amrex::Real residual{amrex::Real(0.0)}; //!< sum of the layers minus z_top, at exit
-    bool uniform{false};                    //!< true when the requested dz0 could not be honored
-    bool converged{false};                  //!< true when |residual| <= tol
+    amrex::Real residual{amrex::Real(0.0)}; //!< evaluated sum of the layers minus z_top
+    bool uniform{false};                 //!< true when the requested dz0 could not be honored
+    bool converged{false};               //!< tolerance met or storage-limited ratio selected
 };
 
+// Horner's rule avoids cancellation in (r^nz-1)/(r-1) near r=1. Overflow is
+// permitted while bracketing: an infinite positive depth is an upper bound.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real
+geometric_depth (amrex::Real dz0, amrex::Real ratio, int nz) noexcept
+{
+    amrex::Real depth = dz0;
+    for (int k = 1; k < nz; ++k) {
+        depth = depth * ratio + dz0;
+    }
+    return depth;
+}
+
 /**
- * \brief Solve for the geometric stretch factor that fills a domain of depth z_top with
- *        nz layers whose first is dz0 thick.
+ * \brief Find the geometric ratio that fills a column with nz growing layers.
  *
- * The layer thicknesses are dz0 * ratio^k, so the column depth is the geometric sum
+ * The polynomial depth is monotone for ratio >= 1. Bracket its root, then bisect
+ * until the depth tolerance is met or the bracket has adjacent representable
+ * endpoints. In the latter case choose the endpoint with smaller evaluated
+ * residual. The lower bound r=1 is selected if rounding already puts its depth
+ * at or above z_top. The requested absolute tolerance can be smaller than one ratio ULP
+ * permits, especially in single precision. residual always reports that error.
+ * The tolerance is capped at half the first thickness: a tolerance larger than
+ * the column must not accept a grid whose forced last node inverts a layer.
+ * build_geometric_zlevels also checks the stored nodes after rounding.
  *
- *     S(ratio) = dz0 * (ratio^nz - 1) / (ratio - 1),
- *
- * and the factor wanted is the root of S(ratio) = z_top, found by Newton iteration from
- * ratio = 1.03.  The derivative is analytic, so the iteration converges in a handful of
- * passes for any physically sensible (dz0, z_top, nz).
- *
- * This is the natural construction for an **idealized** case, where dz0 and z_top are what
- * the user knows a priori and the vertical distribution between them is free.  It is not
- * the right construction when a file already carries a vertical distribution worth keeping
- * -- see wrf_mean_layer_thickness in ERF_InitFromWRFInput.cpp -- because one constant factor
- * cannot represent a stretch ratio that varies with height.
- *
- * A dz0 at or above the uniform spacing z_top/nz cannot be stretched to fit, since the
- * thicknesses only grow: that case returns the uniform grid with uniform = true, rather
- * than a factor below one that would thin the layers aloft.  A single layer is the same
- * situation for a different reason -- the sum of one layer is dz0 whatever the factor is,
- * so S has no root and its derivative is identically zero -- and is answered the same way.
+ * If dz0 is at least the uniform spacing, or nz == 1, return a uniform grid.
+ * Invalid/nonfinite inputs, an unrepresentable root, or exhausted iteration
+ * bounds return converged == false. No convergence rate is assumed.
  *
  * @param[in] dz0   requested thickness of the first layer
- * @param[in] z_top depth of the column to be filled
+ * @param[in] z_top positive finite column depth
  * @param[in] nz    number of layers
- * @param[in] tol   convergence tolerance on the column depth, in the same units as z_top
- * @return the stretch factor, the first-layer thickness used, and whether it converged
+ * @param[in] tol   positive finite absolute depth tolerance
  */
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 GeometricStretch
@@ -215,60 +217,87 @@ geometric_stretch (amrex::Real dz0,
                    amrex::Real tol) noexcept
 {
     GeometricStretch gs;
-
+    const amrex::Real largest = std::numeric_limits<amrex::Real>::max();
     const amrex::Real Nz = static_cast<amrex::Real>(nz);
-    if (nz < 1 || !(z_top > amrex::Real(0.0)) || !(dz0 > amrex::Real(0.0))) {
+    if (nz < 1 || !(z_top > amrex::Real(0.0)) || !(dz0 > amrex::Real(0.0)) ||
+        !(tol > amrex::Real(0.0)) || !(z_top <= largest) || !(dz0 <= largest) ||
+        !(tol <= largest)) {
         return gs;
     }
-
-    // Default to the uniform grid, which is also the answer whenever the requested first
-    // layer is already at least as thick as the uniform spacing, and the only grid there
-    // is when the column holds a single layer.
     if (nz == 1 || dz0 >= z_top/Nz) {
         gs.dz0       = z_top/Nz;
         gs.ratio     = amrex::Real(1.0);
         gs.residual  = amrex::Real(0.0);
         gs.uniform   = true;
-        gs.converged = true;
+        gs.converged = (gs.dz0 > amrex::Real(0.0));
         return gs;
     }
 
-    amrex::Real SFact = amrex::Real(1.03);
-    amrex::Real F     = dz0 * ( (std::pow(SFact,Nz) - amrex::Real(1.0)) / (SFact - amrex::Real(1.0)) ) - z_top;
-
-    const int max_iter = 50;
-    int iter = 0;
-    while (amrex::Math::abs(F) > tol && iter < max_iter) {
-        const amrex::Real dFdSF = dz0 * ( Nz * std::pow(SFact,Nz-amrex::Real(1.0)) * (SFact - amrex::Real(1.0))
-                                        - std::pow(SFact,Nz) + amrex::Real(1.0) ) /
-                                        std::pow(SFact-amrex::Real(1.0),amrex::Real(2.0));
-        SFact -= F/dFdSF;
-        const amrex::Real SFact_min = amrex::Real(1.0) + tol;
-        SFact  = (SFact > SFact_min) ? SFact : SFact_min;
-        F      = dz0 * ( (std::pow(SFact,Nz) - amrex::Real(1.0)) / (SFact - amrex::Real(1.0)) ) - z_top;
-        ++iter;
+    const amrex::Real target = amrex::min(tol, dz0/amrex::Real(2.0));
+    amrex::Real lower = amrex::Real(1.0);
+    amrex::Real upper = amrex::Real(2.0);
+    amrex::Real lower_residual = geometric_depth(dz0, lower, nz) - z_top;
+    // A nearly uniform request can round above the top even at the smallest
+    // allowed ratio. No representable ratio >= 1 improves that evaluated sum.
+    if (lower_residual >= amrex::Real(0.0)) {
+        gs.dz0       = dz0;
+        gs.ratio     = lower;
+        gs.residual  = lower_residual;
+        gs.uniform   = false;
+        gs.converged = (amrex::Math::abs(lower_residual) <= largest);
+        return gs;
+    }
+    amrex::Real upper_residual = geometric_depth(dz0, upper, nz) - z_top;
+    // Doubling reaches the largest finite ratio in at most max_exponent steps.
+    const int bracket_limit = std::numeric_limits<amrex::Real>::max_exponent;
+    for (int iter = 0; upper_residual < amrex::Real(0.0) && iter < bracket_limit; ++iter) {
+        lower = upper;
+        lower_residual = upper_residual;
+        upper = (upper <= largest/amrex::Real(2.0)) ? upper*amrex::Real(2.0) : largest;
+        upper_residual = geometric_depth(dz0, upper, nz) - z_top;
+    }
+    if (!(lower_residual <= amrex::Real(0.0)) || !(upper_residual >= amrex::Real(0.0))) {
+        return gs;
     }
 
-    gs.dz0       = dz0;
-    gs.ratio     = SFact;
-    gs.residual  = F;
-    gs.uniform   = false;
-    gs.converged = (amrex::Math::abs(F) <= tol);
+    // This bound covers the exponent range and the significand bits, including
+    // a bracket spanning the whole positive finite range. Rounding can finish
+    // the solve earlier when no representable midpoint remains.
+    const int solve_limit = std::numeric_limits<amrex::Real>::max_exponent +
+                            std::numeric_limits<amrex::Real>::digits;
+    for (int iter = 0; iter < solve_limit; ++iter) {
+        amrex::Real ratio = lower + (upper-lower)/amrex::Real(2.0);
+        const bool adjacent = (ratio == lower || ratio == upper);
+        if (adjacent) {
+            ratio = (amrex::Math::abs(lower_residual) <= amrex::Math::abs(upper_residual)) ? lower : upper;
+        }
+        const amrex::Real residual = geometric_depth(dz0, ratio, nz) - z_top;
+        if (amrex::Math::abs(residual) <= target || adjacent) {
+            gs.dz0       = dz0;
+            gs.ratio     = ratio;
+            gs.residual  = residual;
+            gs.uniform   = false;
+            gs.converged = (amrex::Math::abs(residual) <= largest);
+            return gs;
+        }
+        if (residual < amrex::Real(0.0)) {
+            lower = ratio;
+            lower_residual = residual;
+        } else {
+            upper = ratio;
+            upper_residual = residual;
+        }
+    }
     return gs;
 }
 
 /**
- * \brief Fill a staggered z-level array with a geometrically stretched grid.
+ * \brief Build geometric nodes and check their stored, rounded monotonicity.
  *
- * zlevels must already be sized to nz+1; its length is what sets nz.  The top level is
- * assigned z_top exactly rather than by accumulation, so the array closes on the domain
- * top to the last bit even though the sum that got there is only accurate to tol.
- *
- * @param[in,out] zlevels staggered z-levels, sized nz+1 on entry and filled on exit
- * @param[in]     dz0     requested thickness of the first layer
- * @param[in]     z_top   depth of the column to be filled
- * @param[in]     tol     convergence tolerance passed to geometric_stretch
- * @return the stretch that was used, so the caller can report or check it
+ * zlevels is sized nz+1 on entry. The final node is assigned z_top exactly.
+ * A failed solve leaves the array unchanged. If construction or the forced top
+ * produces a nonfinite or nonincreasing node, return converged == false; callers
+ * must check this flag before consuming the array.
  */
 inline GeometricStretch
 build_geometric_zlevels (amrex::Vector<amrex::Real>& zlevels,
@@ -280,8 +309,8 @@ build_geometric_zlevels (amrex::Vector<amrex::Real>& zlevels,
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(nz >= 1,
         "build_geometric_zlevels needs a zlevels array of at least two entries");
 
-    const GeometricStretch gs = geometric_stretch(dz0, z_top, nz, tol);
-
+    GeometricStretch gs = geometric_stretch(dz0, z_top, nz, tol);
+    if (!gs.converged) { return gs; }
     amrex::Real dz = gs.dz0;
     zlevels[0] = amrex::Real(0.0);
     for (int k(1); k<=nz; ++k) {
@@ -289,7 +318,12 @@ build_geometric_zlevels (amrex::Vector<amrex::Real>& zlevels,
         dz *= gs.ratio;
     }
     zlevels[nz] = z_top;
-
+    for (int k = 1; k <= nz; ++k) {
+        if (!(zlevels[k] > zlevels[k-1]) ||
+            !(zlevels[k] <= std::numeric_limits<amrex::Real>::max())) {
+            gs.converged = false;
+        }
+    }
     return gs;
 }
 

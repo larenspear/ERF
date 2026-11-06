@@ -297,7 +297,12 @@ TEST(GeometricStretch, ClosesOnTheDomainTop)
     EXPECT_FALSE(gs.uniform);
     EXPECT_EQ(gs.dz0, dz0);
     EXPECT_GT(gs.ratio, amrex::Real(1.0));
-    EXPECT_LE(std::abs(gs.residual), stretch_tol);
+    // One representable ratio step changes the depth by roughly nz*epsilon
+    // times its scale. An absolute 1e-4 m target is unattainable in FLOAT here.
+    // Also allow the nz multiply-adds in the polynomial evaluation.
+    const amrex::Real quantization = amrex::Real(4*nz) *
+        std::numeric_limits<amrex::Real>::epsilon() * z_top;
+    EXPECT_LE(std::abs(gs.residual), stretch_tol + quantization);
 }
 
 // Motivation: make_terrain_fitted_coords drapes this array over the terrain, so
@@ -407,4 +412,104 @@ TEST(GeometricStretch, HandlesASingleLayer)
     erf_grid_utils::build_geometric_zlevels(zlevels, amrex::Real(10.0), z_top, stretch_tol);
     EXPECT_EQ(zlevels[0], amrex::Real(0.0));
     EXPECT_EQ(zlevels[1], z_top);
+}
+
+
+// Independent long-double sums check the returned ratio at several scales,
+// including nearly uniform grids and ratios far from the former 1.03 seed.
+TEST(GeometricStretch, SolvesAcrossScalesAndRepresentableRatios)
+{
+    using amrex::Real;
+    const Real eps = std::numeric_limits<Real>::epsilon();
+    for (const int layers : {2, 10, 32, 176, 1024}) {
+        for (const Real ratio : {std::nextafter(Real(1), Real(2)), Real(1.00001), Real(1.03), Real(1.2), Real(3)}) {
+            long double sum = 1;
+            for (int k = 1; k < layers; ++k) { sum = sum*ratio + 1; }
+            for (const Real top : {Real(1.e-15), Real(1), Real(1.e15)}) {
+                const Real first = static_cast<Real>(static_cast<long double>(top)/sum);
+                // A first layer outside the storage type's normal range does
+                // not supply a usable reference ratio at the requested scale.
+                if (!(first >= std::numeric_limits<Real>::min())) { continue; }
+                SCOPED_TRACE(::testing::Message() << layers << " " << ratio << " " << top);
+                amrex::Vector<Real> nodes(layers+1);
+                const auto gs = erf_grid_utils::build_geometric_zlevels(nodes, first, top, eps*top);
+                ASSERT_TRUE(gs.converged);
+                EXPECT_EQ(nodes.front(), Real(0));
+                EXPECT_EQ(nodes.back(), top);
+                for (int k = 1; k <= layers; ++k) { ASSERT_GT(nodes[k], nodes[k-1]); }
+                EXPECT_NEAR(gs.ratio, ratio, Real(8)*eps*ratio);
+                long double depth = gs.dz0;
+                for (int k = 1; k < layers; ++k) { depth = depth*gs.ratio + gs.dz0; }
+                // Ratio quantization and nz polynomial operations each incur
+                // O(nz*epsilon*depth); this bound is deliberately scale based.
+                EXPECT_LE(std::abs(depth-top), static_cast<long double>(4*layers)*eps*top);
+                EXPECT_NEAR(static_cast<long double>(gs.residual), depth-top,
+                            static_cast<long double>(2*layers)*eps*top);
+            }
+        }
+    }
+}
+
+TEST(GeometricStretch, RejectsNonfiniteInputsAndInvalidTolerance)
+{
+    using amrex::Real;
+    const Real inf = std::numeric_limits<Real>::infinity();
+    const Real nan = std::numeric_limits<Real>::quiet_NaN();
+    for (const Real bad : {Real(0), Real(-1), inf, -inf, nan}) {
+        EXPECT_FALSE(erf_grid_utils::geometric_stretch(bad, Real(100), 10, stretch_tol).converged);
+        EXPECT_FALSE(erf_grid_utils::geometric_stretch(Real(1), bad, 10, stretch_tol).converged);
+        EXPECT_FALSE(erf_grid_utils::geometric_stretch(Real(1), Real(100), 10, bad).converged);
+    }
+}
+
+TEST(GeometricStretch, HandlesOverflowWhileBracketingAndRejectsUnrepresentableRoot)
+{
+    using amrex::Real;
+    const Real largest = std::numeric_limits<Real>::max();
+    const auto possible = erf_grid_utils::geometric_stretch(largest/Real(16), largest/Real(2), 2, stretch_tol);
+    ASSERT_TRUE(possible.converged);
+    EXPECT_NEAR(possible.ratio, Real(7), Real(8)*std::numeric_limits<Real>::epsilon());
+    EXPECT_TRUE(std::isfinite(possible.residual));
+    const auto impossible = erf_grid_utils::geometric_stretch(
+        std::numeric_limits<Real>::min(), largest/Real(2), 2, stretch_tol);
+    EXPECT_FALSE(impossible.converged);
+}
+
+TEST(GeometricStretch, FailedSolveLeavesNodesUntouched)
+{
+    amrex::Vector<amrex::Real> nodes(11, amrex::Real(17));
+    const auto original = nodes;
+    const auto gs = erf_grid_utils::build_geometric_zlevels(nodes, amrex::Real(0), amrex::Real(100), stretch_tol);
+    EXPECT_FALSE(gs.converged);
+    EXPECT_EQ(nodes, original);
+}
+
+TEST(GeometricStretch, BuilderRejectsRoundedDuplicateNodes)
+{
+    using amrex::Real;
+    // The positive uniform thickness rounds to one subnormal, so the forced
+    // top duplicates the penultimate node. A positive real spacing is not enough.
+    const Real unit = std::numeric_limits<Real>::denorm_min();
+    amrex::Vector<Real> nodes(4);
+    const auto gs = erf_grid_utils::build_geometric_zlevels(nodes, unit, Real(2)*unit, stretch_tol);
+    EXPECT_FALSE(gs.converged);
+}
+
+
+TEST(GeometricStretch, AcceptsNearlyUniformRequestsAtTheStorageLimit)
+{
+    using amrex::Real;
+    for (const int layers : {14, 15, 18, 20, 176, 1024, 2048}) {
+        for (const Real top : {Real(1.e-15), Real(1), Real(1.e15), Real(16500)}) {
+            const Real first = std::nextafter(top/Real(layers), Real(0));
+            amrex::Vector<Real> nodes(layers+1);
+            const auto gs = erf_grid_utils::build_geometric_zlevels(
+                nodes, first, top, std::numeric_limits<Real>::epsilon()*top);
+            ASSERT_TRUE(gs.converged) << layers << " " << top;
+            EXPECT_GE(gs.ratio, Real(1));
+            EXPECT_EQ(gs.dz0, first);
+            EXPECT_EQ(nodes.back(), top);
+            for (int k = 1; k <= layers; ++k) { ASSERT_GT(nodes[k], nodes[k-1]); }
+        }
+    }
 }

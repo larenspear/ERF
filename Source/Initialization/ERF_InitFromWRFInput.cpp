@@ -1662,7 +1662,7 @@ ERF::init_from_wrfinput (int lev, MultiFab& mf_PSFC_lev, bool read_atmos_state)
                 const erf_grid_utils::GeometricStretch gs =
                     erf_grid_utils::build_geometric_zlevels(zlevels_stag[lev], dz0_max, z_top, tol);
                 AMREX_ALWAYS_ASSERT_WITH_MESSAGE(gs.converged,
-                    "Newton iterations to determine the grid stretching factor failed!\n");
+                    "Could not construct a valid geometric vertical grid!\n");
                 Print() << "Building an ERF grid with dz0: " << gs.dz0 <<
                     " and stretching factor: " << gs.ratio << "\n";
             }

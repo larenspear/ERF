@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -135,7 +136,12 @@ TEST(InitZLevels, SolvesTheRatioThatClosesOnProbHi)
     }
     // The top layer is assigned z_top exactly rather than by accumulation
     for (int k(1); k<nz-1; ++k) {
-        EXPECT_NEAR(z.dz[k]/z.dz[k-1], Real(1.03), Real(1.e-6)) << "at k = " << k;
+        // Subtracting stored nodes and translating by zsurface each introduce
+        // coordinate-scale rounding. Propagate those errors through the ratio.
+        const Real ratio_error = Real(8) * std::numeric_limits<Real>::epsilon() *
+            std::max(std::abs(z.zlevels[k+1]), std::abs(z.zlevels[k-1])) / z.dz[k-1];
+        EXPECT_NEAR(z.dz[k]/z.dz[k-1], Real(1.03),
+                    std::max(Real(1.e-6), ratio_error)) << "at k = " << k;
     }
 }
 
@@ -150,7 +156,12 @@ TEST(InitZLevels, SolvedRatioStartsAtZsurface)
     EXPECT_EQ(z.zlevels[0], zsurf);
     EXPECT_NEAR(z.zlevels[nz], ztop, allowance(ztop));
     for (int k(1); k<nz-1; ++k) {
-        EXPECT_NEAR(z.dz[k]/z.dz[k-1], Real(1.03), Real(1.e-6)) << "at k = " << k;
+        // Subtracting stored nodes and translating by zsurface each introduce
+        // coordinate-scale rounding. Propagate those errors through the ratio.
+        const Real ratio_error = Real(8) * std::numeric_limits<Real>::epsilon() *
+            std::max(std::abs(z.zlevels[k+1]), std::abs(z.zlevels[k-1])) / z.dz[k-1];
+        EXPECT_NEAR(z.dz[k]/z.dz[k-1], Real(1.03),
+                    std::max(Real(1.e-6), ratio_error)) << "at k = " << k;
     }
 }
 
@@ -178,9 +189,9 @@ TEST(InitZLevels, NeitherGivenIsUniform)
     }
 }
 
-// A small residual can coexist with an inverted last layer when the last node
-// is forced to the domain top. Reject it before overwriting device storage.
-TEST(InitZLevels, RejectsConvergedGridWithInvertedLastLayer)
+// The old absolute tolerance accepted ratio 1.03 for this tiny column and
+// inverted its final layer. The bounded solve must now produce positive spacing.
+TEST(InitZLevels, BuildsPositiveTinyGeometricGrid)
 {
     ThrowOnError errors;
 #ifdef AMREX_USE_FLOAT
@@ -189,9 +200,11 @@ TEST(InitZLevels, RejectsConvergedGridWithInvertedLastLayer)
     const Real first = Real(1.e-9);
 #endif
     GridStorage grid;
-    EXPECT_THROW(grid.init(10, Real(10.1)*first, Real(0), Real(0), first),
-                 std::runtime_error);
-    EXPECT_EQ(grid.copied(), Vector<Real>{Real(17)});
+    grid.init(10, Real(10.1)*first, Real(0), Real(0), first);
+    ASSERT_EQ(grid.nodes[0].size(), 11);
+    EXPECT_EQ(grid.nodes[0].back(), Real(10.1)*first);
+    EXPECT_EQ(grid.copied(), grid.host[0]);
+    for (const Real height : grid.host[0]) { EXPECT_GT(height, Real(0)); }
 }
 
 TEST(InitZLevels, RejectsInvalidSuppliedNodesBeforeDeviceCopy)
