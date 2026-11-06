@@ -2397,8 +2397,11 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME ParticlePrecipitation_Restart
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/Tests/check_particle_precipitation_restart.py)
+    add_test(NAME ParticlePrecipitation_Frozen
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_particle_frozen_precipitation.py)
     set_tests_properties(ParticlePrecipitation_Lifecycle ParticlePrecipitation_Restriction
-        ParticlePrecipitation_Restart
+        ParticlePrecipitation_Restart ParticlePrecipitation_Frozen
         PROPERTIES TIMEOUT 30 PROCESSORS 1 LABELS "microphysics;unit")
 endif()
 

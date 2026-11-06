@@ -30,7 +30,7 @@ namespace MicVar_SD {
         rh_i,        /*!< relative humidity (ice) */
         rain_accum,  /*!< rain accumulation (mm) */
         graup_accum,  /*!< graupel accumulation (mm) */
-        snow_accum,  /*!< snow accumulation (mm) */
+        snow_accum,  /*!< whole ice-species accumulation (ice-depth mm) */
         NumVars
     };
 }
@@ -268,7 +268,7 @@ class SuperDropletsMoist : public NullMoistLagrangian {
             }
         }
 
-        /*! \brief returns the surface rain accumulation (mm, i.e. kg/m^2 of liquid water) */
+        /*! \brief returns native surface precipitation with water-equivalent conversion factors */
         SurfacePrecipAccumulationSources
         Get_Surface_Precip_Accumulation_Ptrs (const int& a_lev) const override
         {
@@ -276,6 +276,14 @@ class SuperDropletsMoist : public NullMoistLagrangian {
             if (a_lev >= 0 && a_lev < static_cast<int>(m_mic_fab_vars.size())) {
                 sources.rain = { m_mic_fab_vars[a_lev][MicVar_SD::rain_accum].get(),
                                  amrex::Real(1.0) };
+                if (m_with_ice) {
+                    // snow_accum holds the whole ice species as ice-depth mm.
+                    // Convert to kg/m^2 using the same density as snowAccumulation.
+                    const auto& ice_material =
+                        m_super_droplets->getSpeciesMaterial(Species::Name::ice);
+                    sources.snow = { m_mic_fab_vars[a_lev][MicVar_SD::snow_accum].get(),
+                                     ice_material.m_density / amrex::Real(1000.0) };
+                }
             }
             return sources;
         }
