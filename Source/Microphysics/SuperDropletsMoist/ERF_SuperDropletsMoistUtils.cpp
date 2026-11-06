@@ -152,11 +152,13 @@ void SuperDropletsMoist::Copy_State_to_Micro (const MultiFab& a_cons_vars)
         for (int is = m_istart_sp; is < m_num_species; is++) {
             auto q_v_arr = m_mic_fab_vars[lev][s_qv_idx(is,m_istart_sp)]->array(mfi);
             auto q_t_arr = m_mic_fab_vars[lev][s_qt_idx(is,m_istart_sp)]->array(mfi);
-            auto q_c_arr = m_mic_fab_vars[lev][s_qc_idx(is,m_istart_sp)]->const_array(mfi);
+            auto q_c_arr = m_mic_fab_vars[lev][s_qc_idx(is,m_istart_sp)]->array(mfi);
             auto qv_comp = q_qv_idx(is,m_istart_sp);
+            auto qc_comp = q_qc_idx(is,m_istart_sp);
             ParallelFor( bx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
             {
                 q_v_arr(i,j,k) = states_arr(i,j,k,qv_comp) / states_arr(i,j,k,Rho_comp);
+                q_c_arr(i,j,k) = states_arr(i,j,k,qc_comp) / states_arr(i,j,k,Rho_comp);
                 q_t_arr(i,j,k) = q_v_arr(i,j,k) + q_c_arr(i,j,k);
             });
         }

@@ -1999,7 +1999,13 @@ ERF::InitData_post ()
         for (int lev = 0; lev <= finest_level; ++lev) {
             const amrex::MultiFab* base = solverChoice.anelastic[lev] ? &base_state[lev] : nullptr;
             micro->Update_Micro_Vars_Lev(lev, vars_new[lev][Vars::cons], base);
-            micro->FinishInit(lev, vars_new[lev][Vars::cons], z_phys_nd);
+            // Particle payloads and conserved moisture are authoritative on restart.
+            // FinishInit initializes particle multiplicities/attributes and deposits
+            // condensate; repeating it would transform the restored state.
+            if (restart_chkfile.empty() ||
+                Microphysics::modelType(solverChoice.moisture_type) != MoistureModelType::Lagrangian) {
+                micro->FinishInit(lev, vars_new[lev][Vars::cons], z_phys_nd);
+            }
         }
 
         // Lagrangian microphysics with AMR (TwoWay): the per-level init above

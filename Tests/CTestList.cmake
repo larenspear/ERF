@@ -2400,8 +2400,11 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME ParticlePrecipitation_Frozen
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/Tests/check_particle_frozen_precipitation.py)
+    add_test(NAME ParticleRestart_Initialization
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_particle_restart_initialization.py)
     set_tests_properties(ParticlePrecipitation_Lifecycle ParticlePrecipitation_Restriction
-        ParticlePrecipitation_Restart ParticlePrecipitation_Frozen
+        ParticlePrecipitation_Restart ParticlePrecipitation_Frozen ParticleRestart_Initialization
         PROPERTIES TIMEOUT 30 PROCESSORS 1 LABELS "microphysics;unit")
 endif()
 
@@ -3612,6 +3615,19 @@ endforeach()
 
 if(TARGET erf_precipitation_checkpoint_tool)
     resolve_test_exe("" "erf_exec" _precip_history_exe)
+    # The semantic particle reader targets the native little-endian double
+    # format; the helper target already restricts these tests to serial CPU.
+    if(ERF_ENABLE_PARTICLES AND ERF_PARTICLES_PRECISION STREQUAL "DOUBLE"
+       AND CMAKE_CXX_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")
+        add_test(NAME ParticleRestart_Runtime
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/Tests/check_particle_restart_runtime.py
+                --erf "${_precip_history_exe}"
+                --tool $<TARGET_FILE:erf_precipitation_checkpoint_tool>
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/particle_restart")
+        set_tests_properties(ParticleRestart_Runtime PROPERTIES
+            TIMEOUT 300 PROCESSORS 1 LABELS "regression;microphysics;checkpoint")
+    endif()
     add_test(NAME SLM_PrecipitationRestart_Runtime
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/Tests/check_slm_precipitation_restart_runtime.py
