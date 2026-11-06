@@ -254,6 +254,20 @@ class SuperDropletsMoist : public NullMoistLagrangian {
             return m_qmoist_size;
         }
 
+        /*! \brief cumulative precipitation that cannot be recovered from particles */
+        void Qmoist_Restart_Vars (const SolverChoice& /*a_sc*/,
+                                 std::vector<int>& a_idx,
+                                 std::vector<std::string>& a_names) const override
+        {
+            // Indices into qmoist, not m_mic_fab_vars (see Init's map).
+            a_idx = {8};
+            a_names = {"RainAccum"};
+            if (m_with_ice) {
+                a_idx.push_back(10);
+                a_names.push_back("SnowAccum");
+            }
+        }
+
         /*! \brief returns the surface rain accumulation (mm, i.e. kg/m^2 of liquid water) */
         SurfacePrecipAccumulationSources
         Get_Surface_Precip_Accumulation_Ptrs (const int& a_lev) const override

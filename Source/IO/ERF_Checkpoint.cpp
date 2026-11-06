@@ -1645,8 +1645,15 @@ ERF::ReadCheckpointFile ()
         for (int var = 0; var < qmoist_nvar; var++) {
             const int ncomp  = 1;
             IntVect ng_moist = qmoist[lev][qmoist_indices[var]]->nGrowVect();
-            read_checkpoint_mf(*(qmoist[lev][qmoist_indices[var]]),
-                               amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", qmoist_names[var]),
+            const std::string moist_file =
+                amrex::MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", qmoist_names[var]);
+            if (solverChoice.moisture_type == MoistureType::SuperDroplets &&
+                !amrex::FileExists(moist_file + "_H")) {
+                amrex::Abort("SuperDroplets checkpoint is missing cumulative precipitation field '" +
+                             moist_file + "'. Older checkpoints did not save this history; "
+                             "the particle state cannot recover it for exact continuation.");
+            }
+            read_checkpoint_mf(*(qmoist[lev][qmoist_indices[var]]), moist_file,
                                lev, 0, 0, ncomp, ng_moist, /*src_ghosts=*/true);
         }
 
