@@ -1118,7 +1118,7 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
             }
         }
 
-        // ---- Part 3: repopulate empty fine cells by cloning a neighbor ----
+        // ---- Part 3: repopulate empty fine cells by splitting a neighbor ----
         {
             const auto& geom_f = m_gdb->Geom(flev);
             const auto plo_f = geom_f.ProbLoArray();
@@ -1231,6 +1231,34 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                     }
                 });
 
+                // Several empty cells can select the same donor. Reserve all
+                // of its daughters together so concurrent recipients cannot
+                // duplicate its physical population. Keep at least one
+                // physical particle in every daughter and in the donor.
+                Gpu::DeviceVector<int> donor_uses_d(np, 0);
+                auto* donor_uses = donor_uses_d.data();
+                auto* donor_mult = soa.GetRealData(mult_idx).data();
+                amrex::ParallelFor(num_bins, [=] AMREX_GPU_DEVICE (int b) {
+                    const int donor = donor_pidx[b];
+                    if (donor >= 0) {
+                        Gpu::Atomic::AddNoRet(&donor_uses[donor], 1);
+                    }
+                });
+                Gpu::DeviceVector<ParticleReal> donor_share_d(np, ParticleReal(0));
+                auto* donor_share = donor_share_d.data();
+                amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE (int i) {
+                    if (donor_uses[i] > 0) {
+                        donor_share[i] = std::floor(donor_mult[i] /
+                            static_cast<ParticleReal>(donor_uses[i] + 1));
+                    }
+                });
+                amrex::ParallelFor(num_bins, [=] AMREX_GPU_DEVICE (int b) {
+                    const int donor = donor_pidx[b];
+                    if (donor >= 0 && donor_share[donor] < ParticleReal(1)) {
+                        donor_pidx[b] = -1;
+                    }
+                });
+
                 int n_inject = amrex::Reduce::Sum<int>(num_bins,
                     [=] AMREX_GPU_DEVICE (int b) -> int {
                         return (donor_pidx[b] >= 0) ? 1 : 0;
@@ -1284,6 +1312,20 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                         dst[i] = src[compact_donor[i]];
                     });
                 }
+
+                // Masses are per physical particle and stay unchanged. Split
+                // multiplicity, then debit each donor once after all attribute
+                // copies have read its original state. A fractional remainder
+                // stays on the donor instead of being rounded into new mass.
+                auto* inject_mult = inject_soa.GetRealData(mult_idx).data();
+                amrex::ParallelFor(n_inject, [=] AMREX_GPU_DEVICE (int i) {
+                    inject_mult[i] = donor_share[compact_donor[i]];
+                });
+                amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE (int i) {
+                    if (donor_uses[i] > 0 && donor_share[i] >= ParticleReal(1)) {
+                        donor_mult[i] -= static_cast<ParticleReal>(donor_uses[i]) * donor_share[i];
+                    }
+                });
 
                 Long pid = ParticleType::NextID();
                 ParticleType::NextID(pid + static_cast<Long>(n_inject));
