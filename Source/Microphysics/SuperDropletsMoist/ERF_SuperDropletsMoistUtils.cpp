@@ -367,7 +367,19 @@ void SuperDropletsMoist::AverageDownMicroVars (const int finest_level)
             const bool surface_depth = v == MicVar_SD::rain_accum ||
                                        v == MicVar_SD::snow_accum ||
                                        v == MicVar_SD::graup_accum;
-            if (surface_depth) {
+            bool surface_mass = false;
+            for (int is = m_istart_sp; is < m_num_species; ++is) {
+                surface_mass = surface_mass || v == s_accum_idx(is, m_istart_sp);
+            }
+            for (int ia = 0; ia < m_num_aerosols; ++ia) {
+                surface_mass = surface_mass || v == a_accum_idx(m_num_nonmoist_sp, ia);
+            }
+            if (surface_mass) {
+                AMREX_ALWAYS_ASSERT(m_super_droplets != nullptr);
+                erf_precipitation::sum_down_surface_mass(
+                    *m_mic_fab_vars[lev][v], *m_mic_fab_vars[lev-1][v],
+                    m_super_droplets->Geom(lev), m_super_droplets->Geom(lev-1), rr);
+            } else if (surface_depth) {
                 AMREX_ALWAYS_ASSERT(m_super_droplets != nullptr);
                 erf_precipitation::average_down_surface_accumulation(
                     *m_mic_fab_vars[lev][v], *m_mic_fab_vars[lev-1][v],

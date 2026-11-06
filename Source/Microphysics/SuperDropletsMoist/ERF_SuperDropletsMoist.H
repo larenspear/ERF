@@ -41,14 +41,14 @@ namespace MicVar_SD_Species {
         q_v,        /*!< Vapour density ratio */
         q_c,        /*!< Condensate density ratio */
         sr,         /*!< Saturation ratio */
-        accum,      /*!< Ground accumulation */
+        accum,      /*!< Ground accumulation (kg per horizontal cell) */
         NumVars
     };
 }
 
 namespace MicVar_SD_Aerosols {
     enum {
-        accum = 0,  /*!< Ground accumulation */
+        accum = 0,  /*!< Ground accumulation (kg per horizontal cell) */
         NumVars
     };
 }

@@ -109,6 +109,58 @@ average_down_surface_accumulation (
     }
 }
 
+// Species and aerosol ground accumulators store mass per horizontal cell.
+// Sum their children rather than averaging depths or atmospheric volumes.
+inline void
+sum_down_surface_mass (
+    const amrex::MultiFab& fine, amrex::MultiFab& coarse,
+    const amrex::Geometry& fine_geometry, const amrex::Geometry& coarse_geometry,
+    const amrex::IntVect& refinement)
+{
+    using namespace amrex;
+#ifdef AMREX_USE_GPU
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!Gpu::inNoSyncRegion(),
+        "Surface mass restriction requires GPU synchronization");
+#endif
+    auto fine_surface = capture_surface_accumulation(fine, fine_geometry);
+    if (!fine_surface) { return; }
+    const IntVect surface_ratio(refinement[0], refinement[1], 1);
+    AMREX_ALWAYS_ASSERT(surface_ratio.allGT(IntVect(0)));
+    AMREX_ALWAYS_ASSERT(fine_surface->boxArray().coarsenable(surface_ratio));
+    BoxArray restricted_boxes = fine_surface->boxArray();
+    restricted_boxes.coarsen(surface_ratio);
+    MultiFab restricted(restricted_boxes, fine_surface->DistributionMap(), 1, 0);
+    const int rx = refinement[0];
+    const int ry = refinement[1];
+    for (MFIter mfi(restricted, MFItInfo().SetDeviceSync(true)); mfi.isValid(); ++mfi) {
+        const auto from = fine_surface->const_array(mfi);
+        const auto to = restricted.array(mfi);
+        ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE (int i, int j, int) noexcept {
+            Real mass = 0;
+            for (int jj = 0; jj < ry; ++jj) {
+                for (int ii = 0; ii < rx; ++ii) {
+                    mass += from(i*rx+ii,j*ry+jj,0);
+                }
+            }
+            to(i,j,0) = mass;
+        });
+    }
+    auto coarse_surface = capture_surface_accumulation(coarse, coarse_geometry);
+    AMREX_ALWAYS_ASSERT(coarse_surface != nullptr);
+    coarse_surface->ParallelCopy(restricted, 0, 0, 1, 0, 0);
+    Gpu::streamSynchronizeAll();
+
+    const auto layout = make_surface_slice(coarse, coarse_geometry);
+    const int bottom = coarse_geometry.Domain().smallEnd(2);
+    for (MFIter mfi(*coarse_surface, MFItInfo().SetDeviceSync(true)); mfi.isValid(); ++mfi) {
+        const auto from = coarse_surface->const_array(mfi);
+        const auto to = coarse.array(layout.atmospheric_indices[mfi.index()]);
+        ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE (int i, int j, int) noexcept {
+            to(i,j,bottom) = from(i,j,0);
+        });
+    }
+}
+
 inline bool
 is_native_surface_accumulator (const amrex::MultiFab* field,
                                const SurfacePrecipAccumulationSources& sources)
