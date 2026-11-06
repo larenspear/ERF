@@ -38,6 +38,31 @@ def cases(originals):
         return name, {path: new}, fault, required if fault else (SUCCESS,)
 
     update = 'update_stretched_dz'
+    validation = 'validate_stretched_dz'
+    for before, after in [
+        ('nodes.size() >= 2', 'nodes.size() >= 1'),
+        ('heights.size() == nodes.size()-1', 'heights.size() <= nodes.size()-1'),
+        ('std::isfinite(nodes[0])', 'true'),
+        ('std::size_t k = 0', 'std::size_t k = 1'),
+        ('k < heights.size()', 'k+1 < heights.size()'),
+        ('++k', '--k'),
+        ('std::isfinite(nodes[k+1])', 'true'),
+        ('nodes[k+1] > nodes[k]', 'nodes[k+1] >= nodes[k]'),
+        ('nodes[k+1] > nodes[k]', 'nodes[k+1] > nodes[0]'),
+        ('std::isfinite(heights[k])', 'true'),
+        ('heights[k] > Real(0)', 'heights[k] >= Real(0)'),
+        ('AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::isfinite(heights[k])',
+         'AMREX_ASSERT_WITH_MESSAGE(std::isfinite(heights[k])'),
+    ]:
+        yield edit('validation rejects ' + after, validation, before, after)
+    yield edit('negative refresh level unchecked', update, 'AMREX_ALWAYS_ASSERT(lev >= 0);', '')
+    validation_call = 'validate_stretched_dz(zlevels_stag[lev], stretched_dz_h[lev]);'
+    for function in (update, 'init_zlevels'):
+        for after in ('', validation_call.replace('[lev]', '[0]'),
+                      'if (false) { '+validation_call+' }',
+                      validation_call.replace('zlevels_stag[lev], stretched_dz_h[lev]',
+                                              'stretched_dz_h[lev], zlevels_stag[lev]')):
+            yield edit(function+' validation call '+after, function, validation_call, after)
     for before, after, diagnostic in [
         ('zlevels_stag[lev].size()) - 1', 'zlevels_stag[lev].size()) - 2', 'update cell count [sat]'),
         ('stretched_dz_h[lev].resize(nz);', 'stretched_dz_h[lev].resize(nz+1);', 'update host extent [sat]'),
@@ -126,7 +151,8 @@ def cases(originals):
     for before, after in [('[lev-1][2]', '[lev-1][1]'), ('rr, false', 'rr, true'),
                           ('zlevels_stag[lev-1], rr', 'zlevels_stag[lev], rr')]:
         yield edit('refinement caller ' + after, init, refined, replace_once(refined, before, after))
-    copy_start = 'for (int lev = 0; lev <= max_level; lev++) {\n        stretched_dz_d[lev].resize'
+    copy_start = ('for (int lev = 0; lev <= max_level; lev++) {\n        '
+                  + validation_call + '\n        stretched_dz_d[lev].resize')
     yield edit('copy loop misses last level', init, copy_start, copy_start.replace('<= max_level', '< max_level'),
                ('copy_levels exact loop domain [sat]',))
     # A common scaling error preserves consistency but violates the independent

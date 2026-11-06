@@ -17,17 +17,21 @@ dz0>0 and ratio>0. Supplied levels must be strictly increasing. The geometric
 solver must return a same-sized strictly increasing nodal vector on its accepted
 path; check_geometric_grid.py supplies sufficient exact-real tolerance margins
 for this property. The caller's convergence assertion alone is insufficient.
-Its Newton convergence and floating-point positivity are NOT proved here. Abort
+Its Newton convergence and floating-point generation are NOT proved here. A
+complete source guard now checks finite, increasing stored nodes and finite,
+positive stored heights before either entry point copies them to the device.
+The algebraic identities below remain conditional on increasing inputs; rejected
+grids do not receive an arithmetic correctness claim. Abort
 and ALWAYS_ASSERT failures do not return. ParmParse has its ordinary semantics.
 
 The consumer indexing theorem requires a zero-based vertical domain and the
 corresponding freshly copied device vector as input. X/Y cells have 0<=k<n and
 interior Z nodes have 0<k<n. check_stretched_dz_bindings guards the owning vectors
 and synchronous callback path into SlowRhsPre under explicit nonmutation
-assumptions. GPU lifetime and refresh scheduling remain unproved. Neither input
-validation of monotonicity nor floating-point safety,
-external boundary budgets, physical volumes or whole-update conservation is
-established. Real-arithmetic identities need not hold exactly after rounding.
+assumptions. GPU lifetime and refresh scheduling remain unproved. Input checks
+beyond this guard, floating-point accuracy, external boundary budgets, physical
+volumes and whole-update conservation remain outside the claim. Real-arithmetic
+identities need not hold exactly after rounding.
 
 usage: check_stretched_dz.py [ERF_ROOT]
 exit: 0 success, 1 failure (including unknown), 77 z3 unavailable

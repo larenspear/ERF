@@ -71,6 +71,7 @@ def read_update(text):
         'lev': 'int', 'zlevels_stag': 'Vector<Vector<Real>>const&',
         'stretched_dz_h': 'Vector<Vector<Real>>&',
         'stretched_dz_d': 'Vector<Gpu::DeviceVector<Real>>&'})
+    literal(source, 'AMREX_ALWAYS_ASSERT(lev >= 0);')
     for name in ('zlevels_stag', 'stretched_dz_h', 'stretched_dz_d'):
         literal(source, f'AMREX_ALWAYS_ASSERT(lev < static_cast<int>({name}.size()));')
     size = scalar(source, 'const int nz')
@@ -79,6 +80,7 @@ def read_update(text):
     bounds = loop(source)
     target, value = assignment(source, 'stretched_dz_h')
     literal(source, '}')
+    literal(source, 'validate_stretched_dz(zlevels_stag[lev], stretched_dz_h[lev]);')
     device_size = resize(source, 'stretched_dz_d')
     copy(source)
     source.done()
@@ -172,6 +174,7 @@ def read_init(text):
     result['override_h'] = assignment(source, 'stretched_dz_h')
     literal(source, '} } }')
     result['copy_levels'] = loop(source, 'lev')
+    literal(source, 'validate_stretched_dz(zlevels_stag[lev], stretched_dz_h[lev]);')
     result['device_size'] = resize(source, 'stretched_dz_d')
     copy(source)
     literal(source, '}')
@@ -212,8 +215,26 @@ def read_refinement(text):
     return result
 
 
+def read_validation(text):
+    source = signature(text, 'validate_stretched_dz', {
+        'nodes': 'constVector<Real>&', 'heights': 'constVector<Real>&'})
+
+    def assertion(predicate):
+        literal(source, 'AMREX_ALWAYS_ASSERT_WITH_MESSAGE('+predicate+',')
+        source.take(STRING + r'\s*\)\s*;')
+
+    assertion('nodes.size() >= 2 && heights.size() == nodes.size()-1')
+    assertion('std::isfinite(nodes[0])')
+    literal(source, 'for (std::size_t k = 0; k < heights.size(); ++k) {')
+    assertion('std::isfinite(nodes[k+1]) && nodes[k+1] > nodes[k]')
+    assertion('std::isfinite(heights[k]) && heights[k] > Real(0)')
+    literal(source, '}')
+    source.done()
+
+
 def read_program(root):
     text = strip_comments((root / ZLEVELS).read_text())
+    read_validation(text)
     interpolation = strip_comments((root / INTERPOLATION).read_text())
     pattern = r'bool\s+destag\s*=\s*false(?=\s*\))'
     require(len(re.findall(pattern, interpolation)) == 1, 'refinement default argument changed')

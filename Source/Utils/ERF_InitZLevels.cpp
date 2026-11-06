@@ -8,6 +8,28 @@
 
 using namespace amrex;
 
+namespace {
+
+// Check the stored values after rounding and any supplied-level override. A
+// converged stretching ratio alone does not ensure that forcing the final node
+// to the domain top leaves a positive last layer.
+void
+validate_stretched_dz (const Vector<Real>& nodes, const Vector<Real>& heights)
+{
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(nodes.size() >= 2 && heights.size() == nodes.size()-1,
+        "Vertical grid must have one more node than cell heights");
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::isfinite(nodes[0]),
+        "Vertical grid nodes must be finite and strictly increasing");
+    for (std::size_t k = 0; k < heights.size(); ++k) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::isfinite(nodes[k+1]) && nodes[k+1] > nodes[k],
+            "Vertical grid nodes must be finite and strictly increasing");
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(std::isfinite(heights[k]) && heights[k] > Real(0),
+            "Vertical grid cell heights must be finite and positive");
+    }
+}
+
+}
+
 /**
  * Initialize staggered z-levels and grid spacing for all levels.
  *
@@ -150,6 +172,7 @@ init_zlevels (Vector<Vector<Real>>& zlevels_stag,
     }
 
     for (int lev = 0; lev <= max_level; lev++) {
+        validate_stretched_dz(zlevels_stag[lev], stretched_dz_h[lev]);
         stretched_dz_d[lev].resize(stretched_dz_h[lev].size());
         Gpu::copy(Gpu::hostToDevice, stretched_dz_h[lev].begin(), stretched_dz_h[lev].end(), stretched_dz_d[lev].begin());
     }
@@ -169,6 +192,7 @@ update_stretched_dz (int lev,
                      Vector<Vector<Real>>& stretched_dz_h,
                      Vector<Gpu::DeviceVector<Real>>& stretched_dz_d)
 {
+    AMREX_ALWAYS_ASSERT(lev >= 0);
     AMREX_ALWAYS_ASSERT(lev < static_cast<int>(zlevels_stag.size()));
     AMREX_ALWAYS_ASSERT(lev < static_cast<int>(stretched_dz_h.size()));
     AMREX_ALWAYS_ASSERT(lev < static_cast<int>(stretched_dz_d.size()));
@@ -181,6 +205,7 @@ update_stretched_dz (int lev,
         stretched_dz_h[lev][k] = zlevels_stag[lev][k+1] - zlevels_stag[lev][k];
     }
 
+    validate_stretched_dz(zlevels_stag[lev], stretched_dz_h[lev]);
     stretched_dz_d[lev].resize(nz);
     Gpu::copy(Gpu::hostToDevice, stretched_dz_h[lev].begin(), stretched_dz_h[lev].end(),
               stretched_dz_d[lev].begin());

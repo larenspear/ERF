@@ -1,8 +1,10 @@
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 #include <AMReX_Geometry.H>
 #include <AMReX_GpuContainers.H>
+#include <AMReX_ParmParse.H>
 #include <AMReX_Vector.H>
 
 #include <gtest/gtest.h>
@@ -55,6 +57,60 @@ allowance (Real scale)
 {
     return Real(16.0) * nz * std::numeric_limits<Real>::epsilon() * std::abs(scale);
 }
+
+struct ThrowOnError
+{
+    bool previous = amrex::system::throw_exception;
+    ThrowOnError () { amrex::system::throw_exception = true; }
+    ~ThrowOnError () { amrex::system::throw_exception = previous; }
+};
+
+struct SuppliedNodes
+{
+    Vector<Real> previous;
+    bool had_previous;
+    explicit SuppliedNodes (const Vector<Real>& nodes)
+    {
+        ParmParse pp("erf");
+        had_previous = pp.queryarr("terrain_z_levels", previous);
+        pp.addarr("terrain_z_levels", nodes);
+    }
+    ~SuppliedNodes ()
+    {
+        ParmParse pp("erf");
+        pp.remove("terrain_z_levels");
+        if (had_previous) { pp.addarr("terrain_z_levels", previous); }
+    }
+};
+
+struct GridStorage
+{
+    Vector<Vector<Real>> nodes{1};
+    Vector<Vector<Real>> host{1};
+    Vector<Gpu::DeviceVector<Real>> device{1};
+
+    GridStorage ()
+    {
+        const Vector<Real> sentinel{Real(17)};
+        device[0].resize(1);
+        Gpu::copy(Gpu::hostToDevice, sentinel.begin(), sentinel.end(), device[0].begin());
+    }
+
+    Vector<Real> copied () const
+    {
+        Vector<Real> result(device[0].size());
+        Gpu::copy(Gpu::deviceToHost, device[0].begin(), device[0].end(), result.begin());
+        return result;
+    }
+
+    void init (int layers, Real top, Real ratio, Real surface, Real first)
+    {
+        const Box domain(IntVect(0), IntVect(3,3,layers-1));
+        const RealBox rb(Real(0), Real(0), Real(0), Real(4), Real(4), top);
+        const Vector<Geometry> geom{Geometry(domain, rb, CoordSys::cartesian, {1,1,0})};
+        init_zlevels(nodes, host, device, geom, {}, ratio, surface, first);
+    }
+};
 
 } // namespace
 
@@ -120,4 +176,105 @@ TEST(InitZLevels, NeitherGivenIsUniform)
     for (int k(0); k<nz; ++k) {
         EXPECT_NEAR(z.dz[k], Real(32.0), allowance(Real(1024.0))) << "at k = " << k;
     }
+}
+
+// A small residual can coexist with an inverted last layer when the last node
+// is forced to the domain top. Reject it before overwriting device storage.
+TEST(InitZLevels, RejectsConvergedGridWithInvertedLastLayer)
+{
+    ThrowOnError errors;
+#ifdef AMREX_USE_FLOAT
+    const Real first = Real(1.e-5);
+#else
+    const Real first = Real(1.e-9);
+#endif
+    GridStorage grid;
+    EXPECT_THROW(grid.init(10, Real(10.1)*first, Real(0), Real(0), first),
+                 std::runtime_error);
+    EXPECT_EQ(grid.copied(), Vector<Real>{Real(17)});
+}
+
+TEST(InitZLevels, RejectsInvalidSuppliedNodesBeforeDeviceCopy)
+{
+    ThrowOnError errors;
+    const Real inf = std::numeric_limits<Real>::infinity();
+    const Real nan = std::numeric_limits<Real>::quiet_NaN();
+    for (const Real bad : {Real(1), Real(0), inf, -inf, nan}) {
+        SCOPED_TRACE(bad);
+        SuppliedNodes supplied({Real(0), Real(1), bad, Real(3)});
+        GridStorage grid;
+        EXPECT_THROW(grid.init(3, Real(3), Real(0), Real(0), Real(0)),
+                     std::runtime_error);
+        EXPECT_EQ(grid.copied(), Vector<Real>{Real(17)});
+    }
+}
+
+TEST(InitZLevels, RejectsCollapsedAndOverflowedExplicitGrids)
+{
+    ThrowOnError errors;
+    // Positive requested thickness can round away when added to the surface.
+    GridStorage collapsed;
+    EXPECT_THROW(collapsed.init(3, Real(3), Real(1), Real(1.e20), Real(1)),
+                 std::runtime_error);
+    EXPECT_EQ(collapsed.copied(), Vector<Real>{Real(17)});
+
+    GridStorage overflowed;
+    EXPECT_THROW(overflowed.init(3, Real(3), Real(4), Real(0),
+                                std::numeric_limits<Real>::max()/Real(4)),
+                 std::runtime_error);
+    EXPECT_EQ(overflowed.copied(), Vector<Real>{Real(17)});
+}
+
+TEST(InitZLevels, RefreshRejectsInvalidNodesBeforeDeviceCopy)
+{
+    ThrowOnError errors;
+    const Real inf = std::numeric_limits<Real>::infinity();
+    const Real nan = std::numeric_limits<Real>::quiet_NaN();
+    const Real largest = std::numeric_limits<Real>::max();
+    const Vector<Vector<Real>> cases{
+        {}, {Real(0)}, {Real(0), Real(0)}, {Real(1), Real(0)},
+        {nan, Real(1)}, {Real(0), nan}, {Real(0), inf}, {-inf, Real(0)},
+        {-largest, largest}}; // Finite, increasing nodes whose difference overflows.
+    for (const auto& nodes : cases) {
+        GridStorage grid;
+        grid.nodes[0] = nodes;
+        EXPECT_THROW(update_stretched_dz(0, grid.nodes, grid.host, grid.device),
+                     std::runtime_error);
+        EXPECT_EQ(grid.copied(), Vector<Real>{Real(17)});
+    }
+}
+
+TEST(InitZLevels, RefreshRejectsNegativeLevelBeforeIndexing)
+{
+    ThrowOnError errors;
+    GridStorage grid;
+    grid.nodes[0] = {Real(0), Real(1)};
+    EXPECT_THROW(update_stretched_dz(-1, grid.nodes, grid.host, grid.device),
+                 std::runtime_error);
+    EXPECT_EQ(grid.copied(), Vector<Real>{Real(17)});
+}
+
+TEST(InitZLevels, CopiesValidSuppliedAndRefinedHeightsExactly)
+{
+    SuppliedNodes supplied({Real(0), Real(1), Real(3), Real(6)});
+    const RealBox rb(Real(0), Real(0), Real(0), Real(4), Real(4), Real(6));
+    const Vector<Geometry> geom{
+        Geometry(Box(IntVect(0), IntVect(3,3,2)), rb, CoordSys::cartesian, {1,1,0}),
+        Geometry(Box(IntVect(0), IntVect(7,7,5)), rb, CoordSys::cartesian, {1,1,0})};
+    Vector<Vector<Real>> nodes(2), host(2);
+    Vector<Gpu::DeviceVector<Real>> device(2);
+    init_zlevels(nodes, host, device, geom, {IntVect(2)}, Real(0), Real(0), Real(0));
+    EXPECT_EQ(host[0], (Vector<Real>{Real(1), Real(2), Real(3)}));
+    EXPECT_EQ(host[1], (Vector<Real>{Real(0.5), Real(0.5), Real(1), Real(1), Real(1.5), Real(1.5)}));
+    for (int lev = 0; lev < 2; ++lev) {
+        Vector<Real> copied(device[lev].size());
+        Gpu::copy(Gpu::deviceToHost, device[lev].begin(), device[lev].end(), copied.begin());
+        EXPECT_EQ(copied, host[lev]);
+    }
+    nodes[1] = {Real(0), Real(1), Real(2), Real(4), Real(6), Real(9), Real(12)};
+    update_stretched_dz(1, nodes, host, device);
+    Vector<Real> copied(device[1].size());
+    Gpu::copy(Gpu::deviceToHost, device[1].begin(), device[1].end(), copied.begin());
+    EXPECT_EQ(copied, (Vector<Real>{Real(1), Real(1), Real(2), Real(2), Real(3), Real(3)}));
+    EXPECT_EQ(host[0], (Vector<Real>{Real(1), Real(2), Real(3)}));
 }
