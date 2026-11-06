@@ -18,8 +18,24 @@
 #include "ERF_SBMStateManager.H"
 #include "ERF_SBMTransport.H"
 #include "ERF_PrecipitationRemap.H"
+#include "ERF_SurfacePrecipitationRemap.H"
 
 using namespace amrex;
+
+namespace {
+
+// These Eulerian schemes expose their cumulative surface fields through stable
+// qmoist slots. Particle schemes have a separate multilevel state lifecycle.
+bool preserve_surface_precipitation (MoistureType moisture)
+{
+    return moisture == MoistureType::Kessler || moisture == MoistureType::Kessler_NoRain ||
+           moisture == MoistureType::SAM || moisture == MoistureType::SAM_NoIce ||
+           moisture == MoistureType::SAM_NoPrecip_NoIce ||
+           moisture == MoistureType::Morrison || moisture == MoistureType::Morrison_NoIce ||
+           moisture == MoistureType::WSM6 || moisture == MoistureType::WDM6;
+}
+
+} // namespace
 
 // Make a new level from scratch using provided BoxArray and DistributionMapping.
 // This is called both for initialization and for restart
@@ -585,6 +601,24 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
         qmoist[lev][mvar] = micro->Get_Qmoist_Ptr(lev,mvar);
     }
 
+    const bool preserve_surface_accumulation =
+        preserve_surface_precipitation(solverChoice.moisture_type);
+    if (preserve_surface_accumulation) {
+        const auto sources = micro->Get_Surface_Precip_Accumulation_Ptrs(lev);
+        const auto coarse_sources = micro->Get_Surface_Precip_Accumulation_Ptrs(lev-1);
+        for (int mvar = 0; mvar < qmoist[lev].size(); ++mvar) {
+            if (erf_precipitation::is_native_surface_accumulator(qmoist[lev][mvar], sources)) {
+                AMREX_ALWAYS_ASSERT(mvar < qmoist[lev-1].size());
+                auto* coarse = qmoist[lev-1][mvar];
+                AMREX_ALWAYS_ASSERT(erf_precipitation::is_native_surface_accumulator(
+                    coarse, coarse_sources));
+                erf_precipitation::restore_native_surface_accumulation(
+                    *qmoist[lev][mvar], nullptr, geom[lev], coarse, &geom[lev-1],
+                    refRatio(lev-1));
+            }
+        }
+    }
+
     // ********************************************************************************************
     // Build the data structures for calculating diffusive/turbulent terms
     // ********************************************************************************************
@@ -734,6 +768,11 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
 #ifdef ERF_USE_NETCDF
     }
 #endif
+
+    if (precip[lev] && preserve_surface_accumulation) {
+        erf_precipitation::seed_slm_baseline_from_surface(*precip[lev],
+            micro->Get_Surface_Precip_Accumulation_Ptrs(lev), geom[lev]);
+    }
 
     // ********************************************************************************************
     // Initialize the integrator class
@@ -1264,6 +1303,20 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     //********************************************************************************************
     // Microphysics
     // *******************************************************************************************
+    // Define/Init replaces the native cumulative fields. Preserve their valid
+    // surface history before either call can destroy the old allocation.
+    const bool preserve_surface_accumulation =
+        preserve_surface_precipitation(solverChoice.moisture_type);
+    Vector<std::unique_ptr<MultiFab>> old_surface_accumulation(qmoist[lev].size());
+    if (preserve_surface_accumulation) {
+        const auto sources = micro->Get_Surface_Precip_Accumulation_Ptrs(lev);
+        for (int mvar = 0; mvar < qmoist[lev].size(); ++mvar) {
+            if (erf_precipitation::is_native_surface_accumulator(qmoist[lev][mvar], sources)) {
+                old_surface_accumulation[mvar] =
+                    erf_precipitation::capture_surface_accumulation(*qmoist[lev][mvar], geom[lev]);
+            }
+        }
+    }
     int q_size = micro->Get_Qmoist_Size(lev);
     qmoist[lev].resize(q_size);
     micro->Define(lev, solverChoice);
@@ -1279,6 +1332,29 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     }
     for (int mvar(0); mvar<qmoist[lev].size(); ++mvar) {
         qmoist[lev][mvar] = micro->Get_Qmoist_Ptr(lev,mvar);
+    }
+
+    if (preserve_surface_accumulation) {
+        const auto sources = micro->Get_Surface_Precip_Accumulation_Ptrs(lev);
+        const auto coarse_sources = lev > 0
+            ? micro->Get_Surface_Precip_Accumulation_Ptrs(lev-1)
+            : SurfacePrecipAccumulationSources{};
+        AMREX_ALWAYS_ASSERT(old_surface_accumulation.size() == qmoist[lev].size());
+        for (int mvar = 0; mvar < qmoist[lev].size(); ++mvar) {
+            if (erf_precipitation::is_native_surface_accumulator(qmoist[lev][mvar], sources)) {
+                MultiFab* coarse = nullptr;
+                if (lev > 0) {
+                    AMREX_ALWAYS_ASSERT(mvar < qmoist[lev-1].size());
+                    coarse = qmoist[lev-1][mvar];
+                    AMREX_ALWAYS_ASSERT(erf_precipitation::is_native_surface_accumulator(
+                        coarse, coarse_sources));
+                }
+                erf_precipitation::restore_native_surface_accumulation(
+                    *qmoist[lev][mvar], old_surface_accumulation[mvar].get(), geom[lev],
+                    coarse, lev > 0 ? &geom[lev-1] : nullptr,
+                    lev > 0 ? refRatio(lev-1) : IntVect(1));
+            }
+        }
     }
 
     //********************************************************************************************
@@ -1363,6 +1439,12 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     //     so we must explicitly pass dm.
     Interp2DArrays(lev,ba2d[lev],dm);
 
+    // New cells must difference the same native history restored above. Retained
+    // cells keep their old baseline, including any unconsumed interval history.
+    if (precip[lev] && preserve_surface_accumulation) {
+        erf_precipitation::seed_slm_baseline_from_surface(*precip[lev],
+            micro->Get_Surface_Precip_Accumulation_Ptrs(lev), geom[lev]);
+    }
     if (precip[lev] && old_precip) {
         erf_precipitation::restore_accumulation(*precip[lev], *old_precip,
                                                 geom[lev].periodicity());
