@@ -376,7 +376,9 @@ public:
     void InitData_post ();
 
     // Interpolate 2D arrays lat_m, lon_m, sinPhi, cosPhi
-    void Interp2DArrays (int lev, const amrex::BoxArray& my_ba2d, const amrex::DistributionMapping& my_dm);
+    void Interp2DArrays (int lev, const amrex::BoxArray& my_ba2d,
+                        const amrex::DistributionMapping& my_dm,
+                        bool interpolate_precipitation = true);
 
     // Fill the map factors at lev by interpolation from lev-1
     void interp_mapfac_from_coarse (int lev);

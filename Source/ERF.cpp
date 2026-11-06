@@ -1547,7 +1547,11 @@ ERF::InitData_post ()
     // If lev > 0, we need to fill bc's by interpolation from coarser grid
     for (int lev = 1; lev <= finest_level; ++lev)
     {
-        Interp2DArrays(lev,ba2d[lev],dmap[lev]);
+        // Restart has already restored this level's cumulative precipitation
+        // baseline (or seeded it from its native accumulator for old files).
+        // Replacing it with coarse history would lose or repeat rainfall on
+        // the first resumed step. Other surface fields still need this fill.
+        Interp2DArrays(lev,ba2d[lev],dmap[lev], restart_chkfile.empty());
     } // lev
 
 #ifdef ERF_USE_WW3_COUPLING
@@ -2673,7 +2677,8 @@ ERF::interp_land_masks_from_coarse (int lev)
 }
 
 void
-ERF::Interp2DArrays (int lev, const BoxArray& my_ba2d, const DistributionMapping& my_dm)
+ERF::Interp2DArrays (int lev, const BoxArray& my_ba2d, const DistributionMapping& my_dm,
+                    bool interpolate_precipitation)
 {
     if (lev == 0) { return; }
 
@@ -2700,7 +2705,7 @@ ERF::Interp2DArrays (int lev, const BoxArray& my_ba2d, const DistributionMapping
         interp_land_masks_from_coarse(lev);
     }
 
-    if (solverChoice.lsm_type == LandSurfaceType::SLM &&
+    if (interpolate_precipitation && solverChoice.lsm_type == LandSurfaceType::SLM &&
         precip[lev-1] && precip[lev]) {
         IntVect ngv = precip[lev]->nGrowVect(); ngv[2] = 0;
         InterpFromCoarseLevel(*precip[lev], ngv, IntVect(0,0,0),

@@ -3583,6 +3583,25 @@ foreach(_slm_phase IN ITEMS Init Evolution)
         ATTACHED_FILES_ON_FAIL "${_slm_directory}/SLM_FineInit.log")
 endforeach()
 
+if(TARGET erf_precipitation_checkpoint_tool)
+    resolve_test_exe("" "erf_exec" _precip_history_exe)
+    add_test(NAME SLM_PrecipitationRestart_Runtime
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_slm_precipitation_restart_runtime.py
+            --erf "${_precip_history_exe}"
+            --checkpoint-tool $<TARGET_FILE:erf_precipitation_checkpoint_tool>
+            --output "${CMAKE_CURRENT_BINARY_DIR}/slm_precipitation_restart")
+    add_test(NAME SurfacePrecipitationRegrid_Runtime
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_surface_precipitation_regrid.py
+            --executable "${_precip_history_exe}"
+            --checkpoint-tool $<TARGET_FILE:erf_precipitation_checkpoint_tool>
+            --input-dir "${CMAKE_CURRENT_SOURCE_DIR}/test_files/SLM_Restart"
+            --working-directory "${CMAKE_CURRENT_BINARY_DIR}/surface_precipitation_regrid")
+    set_tests_properties(SLM_PrecipitationRestart_Runtime SurfacePrecipitationRegrid_Runtime
+        PROPERTIES TIMEOUT 300 PROCESSORS 1 LABELS "regression;lsm;precipitation")
+endif()
+
 # The same deck across a level-0 regrid, which ReadCheckpointFile still refuses: SLM does its
 # own checkpoint I/O and reads onto the grids the run uses, so it cannot yet take grids that
 # moved. Checkpoint on one rank and restart on two to reach the automatic branch without

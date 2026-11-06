@@ -62,6 +62,19 @@ if(ERF_ENABLE_TESTS)
   message(STATUS "   Extra LSM tests enabled       = ${ERF_TEST_ENABLE_EXTRA_LSM_TESTS}")
   message(STATUS "   Gated SDM smoke tests         = ${ERF_TEST_SDM_SMOKE_GATED}")
 
+  # Seed and compare actual native/SLM checkpoint payloads for rainfall-history
+  # invariance through AMR and restart. These fixtures currently target CPU double.
+  if(UNIX AND ERF_PRECISION STREQUAL "DOUBLE" AND NOT ERF_ENABLE_MPI
+     AND NOT (ERF_ENABLE_CUDA OR ERF_ENABLE_HIP OR ERF_ENABLE_SYCL)
+     AND Python3_Interpreter_FOUND)
+    add_executable(erf_precipitation_checkpoint_tool
+      ${CMAKE_CURRENT_SOURCE_DIR}/Unit/LandSurfaceModel/ERF_PrecipitationCheckpointTool.cpp)
+    target_link_libraries(erf_precipitation_checkpoint_tool PRIVATE AMReX::amrex)
+    target_include_directories(erf_precipitation_checkpoint_tool PRIVATE
+      ${PROJECT_SOURCE_DIR}/Source)
+    target_compile_features(erf_precipitation_checkpoint_tool PRIVATE cxx_std_17)
+  endif()
+
   add_executable(erf_shoc_plotfile_check
     ${CMAKE_CURRENT_SOURCE_DIR}/ShocPlotfileCheck.cpp)
   target_link_libraries(erf_shoc_plotfile_check PRIVATE AMReX::amrex)
