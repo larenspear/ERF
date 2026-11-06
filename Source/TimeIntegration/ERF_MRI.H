@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <utility>
 
 /**
  * @brief Split integrator for MRI simulations handling slow and fast timescales.
@@ -83,9 +84,13 @@ private:
         // TODO: We can optimize memory by making the cell-centered part of S_sum
         //       have only 2 components, not ncomp_cons components
         const bool include_ghost = true;
-        amrex::IntegratorOps<T>::CreateLike(T_store, S_data, include_ghost);
+        // CreateLike appends. Replace both scratch states on reinitialization,
+        // after cloning the layout in case S_data refers to existing storage.
+        amrex::Vector<std::unique_ptr<T> > new_store;
+        amrex::IntegratorOps<T>::CreateLike(new_store, S_data, include_ghost);
+        amrex::IntegratorOps<T>::CreateLike(new_store, S_data, include_ghost);
+        T_store = std::move(new_store);
         S_sum = T_store[0].get();
-        amrex::IntegratorOps<T>::CreateLike(T_store, S_data, include_ghost);
         F_slow = T_store[1].get();
         // initializing to zero
         for (long idx = 0; idx < S_sum->size(); idx++) { (*S_sum)[idx].setVal(0); }
