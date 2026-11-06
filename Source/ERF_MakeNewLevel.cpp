@@ -19,6 +19,7 @@
 #include "ERF_SBMTransport.H"
 #include "ERF_PrecipitationRemap.H"
 #include "ERF_SurfacePrecipitationRemap.H"
+#include "LandSurfaceModel/Noah-MP/ERF_NOAHMP_LevelDriver.H"
 
 using namespace amrex;
 
@@ -439,6 +440,18 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
     // Note that "time" here is elapsed time
     //
     AMREX_ALWAYS_ASSERT(lev > 0);
+    if (solverChoice.lsm_type == LandSurfaceType::NOAHMP) {
+        // Define sets the setup-selection mode without constructing the driver.
+        // Reject unsupported late creation before allocating grids or land state.
+        lsm.Define(lev, solverChoice);
+        if (!noahmp_new_level_is_supported(
+                lsm.Will_Run_Own_Land_Driver(lev, nc_init_file), time)) {
+            Abort("Creating level " + std::to_string(lev) + " at nonzero elapsed time "
+                  "would cold-start its Noah-MP land state and firing clock. Create "
+                  "own-driver levels at startup and keep their grids fixed, or drop "
+                  "the level's setup file so it takes its land state from level 0.");
+        }
+    }
     bool lsm_initialized = false;
 #ifdef ERF_USE_NETCDF
     [[maybe_unused]] bool use_surface_only = false;
@@ -1508,7 +1521,8 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
         !((lev == 0) && (solverChoice.lsm_type == LandSurfaceType::NOAHMP)),
         "RemakeLevel at level 0 would cold-start the Noah-MP soil state: "
         "NoahmpIO_type redistribution onto a new DistributionMapping is not implemented");
-    if (lev > 0 && solverChoice.lsm_type == LandSurfaceType::NOAHMP && lsm.Runs_Own_Land_Driver(lev)) {
+    if (lev > 0 && solverChoice.lsm_type == LandSurfaceType::NOAHMP &&
+        !noahmp_level_rebuild_or_removal_is_supported(lsm.Runs_Own_Land_Driver(lev))) {
         Abort("Regridding level " + std::to_string(lev) + " would rebuild its Noah-MP land "
               "state: the level runs the land model on a setup file of its own, and "
               "NoahmpIO_type redistribution onto new grids is not implemented. Keep that "
@@ -1619,6 +1633,17 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
 void
 ERF::ClearLevel (int lev)
 {
+    // The Fortran block array has no release path; reject removal before any
+    // state is discarded, including on ranks whose new box set would be empty.
+    if (solverChoice.lsm_type == LandSurfaceType::NOAHMP &&
+        !noahmp_level_rebuild_or_removal_is_supported(lsm.Runs_Own_Land_Driver(lev))) {
+        Abort("Removing level " + std::to_string(lev) + " would discard its Noah-MP land "
+              "state: the level runs the land model on a setup file of its own, and "
+              "NoahmpIO_type destruction and recreation are not implemented. Keep that "
+              "level's grids fixed (erf.regrid_int < 0), or drop its setup file so it "
+              "takes its land state from level 0.");
+    }
+
     if (auxiliary_inert_tracer && auxiliary_inert_tracer->is_defined(lev)) {
         auxiliary_inert_tracer->destroy(lev);
     }

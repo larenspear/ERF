@@ -259,6 +259,12 @@ class NullSurf {
     bool
     Runs_Own_Land_Driver () const { return false; }
 
+    // Query the setup decision after Define, before Init allocates or writes.
+    [[nodiscard]] virtual bool
+    Will_Run_Own_Land_Driver (
+        const int&,
+        const amrex::Vector<amrex::Vector<std::string>>&) const { return false; }
+
     // Scalar LSM step counter (NoahMP itimestep). Persisted in checkpoint so
     // the LSM substepping schedule survives restart. 0 means "uninitialized".
     virtual

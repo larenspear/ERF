@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "ERF_NOAHMP_LevelDriver.H"
+#include "LandSurfaceModel/Noah-MP/ERF_NOAHMP_LevelDriver.H"
 
 // Which AMR levels run the Noah-MP driver on a land setup file of their own, and which
 // take their land state from level 0 (noahmp_level_runs_driver).
@@ -46,4 +46,27 @@ TEST(NoahMPLevelDriver, WrfRunIgnoresTheNamelistAlone)
         EXPECT_FALSE(noahmp_level_runs_driver(lev, false, false, true));
         EXPECT_FALSE(noahmp_level_runs_driver(lev, false, false, false));
     }
+}
+
+// The policy is independent of the external library; keep these tests enabled
+// in CPU builds without NoahMP so unsupported AMR transitions stay covered.
+TEST(NoahMPLevelDriver, OwnDriverCreationRequiresTimeZero)
+{
+    EXPECT_TRUE(noahmp_new_level_is_supported(true, 0.0));
+    for (const double time : {0.01, 1.0, 7200.0}) {
+        EXPECT_FALSE(noahmp_new_level_is_supported(true, time));
+    }
+}
+
+TEST(NoahMPLevelDriver, FilelessLevelsCanAppearAtNonzeroTime)
+{
+    for (const double time : {0.0, 0.01, 1.0, 7200.0}) {
+        EXPECT_TRUE(noahmp_new_level_is_supported(false, time));
+    }
+}
+
+TEST(NoahMPLevelDriver, OnlyFilelessLevelsCanBeRemadeOrRemoved)
+{
+    EXPECT_FALSE(noahmp_level_rebuild_or_removal_is_supported(true));
+    EXPECT_TRUE(noahmp_level_rebuild_or_removal_is_supported(false));
 }

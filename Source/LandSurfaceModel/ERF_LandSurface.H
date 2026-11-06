@@ -324,6 +324,14 @@ public:
                m_lsm_model[lev]->Runs_Own_Land_Driver();
     }
 
+    [[nodiscard]] bool
+    Will_Run_Own_Land_Driver (
+        const int& lev,
+        const amrex::Vector<amrex::Vector<std::string>>& nc_init_file) const
+    {
+        return m_lsm_model[lev]->Will_Run_Own_Land_Driver(lev, nc_init_file);
+    }
+
     std::unordered_map<std::string,std::string>&
     Get_WRFInputNames () { return m_lsm_model[0]->Lsm_WRFInputNames(); }
 

@@ -89,6 +89,12 @@ public:
     [[nodiscard]] bool
     Runs_Own_Land_Driver () const override { return m_has_nc_file; }
 
+    // Uses the same file-selection rule as Init, without allocating a driver.
+    [[nodiscard]] bool
+    Will_Run_Own_Land_Driver (
+        const int& lev,
+        const amrex::Vector<amrex::Vector<std::string>>& nc_init_file) const override;
+
     // Initialize data structures
     void
     Init (const int& lev,

@@ -255,6 +255,18 @@ namelist_names_setup_file (int lev)
 
 } // namespace
 
+bool
+NOAHMP::Will_Run_Own_Land_Driver (
+    const int& lev,
+    const Vector<Vector<std::string>>& nc_init_file) const
+{
+    const bool has_init_file = !nc_init_file[lev].empty();
+    const bool namelist_names_setup = (lev > 0 && !has_init_file && m_idealized_init)
+                                    ? namelist_names_setup_file(lev) : false;
+    return noahmp_level_runs_driver(lev, has_init_file, m_idealized_init,
+                                    namelist_names_setup);
+}
+
 void
 NOAHMP::Init (const int& lev,
               const MultiFab& cons_in,
@@ -397,11 +409,7 @@ NOAHMP::Init (const int& lev,
     // (interp_from_lev0) and the radiation written to its own inputs goes unused. The rule
     // is noahmp_level_runs_driver. The namelist is read only where it decides, on every
     // rank alike: the conditions do not depend on the rank, and its broadcast is collective.
-    const bool has_init_file = !nc_init_file[lev].empty();
-    const bool namelist_names_setup = (lev > 0 && !has_init_file && m_idealized_init)
-                                    ? namelist_names_setup_file(lev) : false;
-    m_has_nc_file = noahmp_level_runs_driver(lev, has_init_file, m_idealized_init,
-                                             namelist_names_setup);
+    m_has_nc_file = Will_Run_Own_Land_Driver(lev, nc_init_file);
     if (lev > 0) {
         Print() << "Noah-MP at level " << lev << ": "
                 << (m_has_nc_file ? "runs the land model on its own setup file"

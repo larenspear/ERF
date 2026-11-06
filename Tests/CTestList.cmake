@@ -2383,6 +2383,11 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}/Tests/check_noahmp_precipitation_order.py)
     set_tests_properties(NoahMP_PrecipitationOrder PROPERTIES
         TIMEOUT 30 PROCESSORS 1 LABELS "lsm;unit")
+    add_test(NAME NoahMP_LevelLifecycle
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_noahmp_level_lifecycle.py)
+    set_tests_properties(NoahMP_LevelLifecycle PROPERTIES
+        TIMEOUT 30 PROCESSORS 1 LABELS "lsm;unit")
 endif()
 
 # The linear advection stencils in Source/Utils/ERF_Interpolation_UPW.H, checked

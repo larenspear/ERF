@@ -26,4 +26,21 @@ noahmp_level_runs_driver (int lev, bool has_init_file, bool idealized_init,
     return idealized_init && namelist_names_setup;
 }
 
+// An independent driver can be cold-initialized only at the simulation's time
+// origin. At later times its private state and firing clock need a transfer
+// contract; advancing the fresh counter would replay past land intervals.
+[[nodiscard]] inline bool
+noahmp_new_level_is_supported (bool runs_own_driver, double elapsed_time) noexcept
+{
+    return !runs_own_driver || elapsed_time == 0.0;
+}
+
+// Neither remaking nor removing an owning driver is supported: its Fortran
+// blocks cannot be redistributed or released for later level recreation.
+[[nodiscard]] inline bool
+noahmp_level_rebuild_or_removal_is_supported (bool runs_own_driver) noexcept
+{
+    return !runs_own_driver;
+}
+
 #endif

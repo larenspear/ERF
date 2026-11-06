@@ -246,6 +246,8 @@ target_sources(${erf_exe_name}
     # closes the grid on prob_hi, and an explicit ratio must not be solved for.
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestInitZLevels.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestTerrainPhysicalGrid.cpp
+    # Setup selection and supported AMR transitions do not need external NoahMP.
+    ${CMAKE_CURRENT_SOURCE_DIR}/LandSurfaceModel/Noah-MP/ERF_GTestNoahMPLevelDriver.cpp
     # Scratch storage must follow reinitialized layouts and survive template/move destruction.
     ${CMAKE_CURRENT_SOURCE_DIR}/TimeIntegration/ERF_GTestMRIStorage.cpp
     # Motivation: a BTF fine level's mesh must not depend on how its grids are split in z.
@@ -332,7 +334,6 @@ endif()
 if(ERF_ENABLE_NOAHMP)
   target_sources(${erf_exe_name} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/LandSurfaceModel/Noah-MP/ERF_GTestNoahMPResultPolicy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/LandSurfaceModel/Noah-MP/ERF_GTestNoahMPLevelDriver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/LandSurfaceModel/Noah-MP/ERF_GTestNoahMPPrecipSnapshots.cpp
   )
 endif()
