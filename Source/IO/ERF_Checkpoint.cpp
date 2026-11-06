@@ -785,7 +785,7 @@ ERF::WriteCheckpointFile () const
     } // for lev
 
     if (m_SurfaceModel) {
-        m_SurfaceModel->WriteCheckpoint(checkpointname);
+        m_SurfaceModel->WriteCheckpoint(checkpointname, finest_level);
     }
 
     // Write zlevels to its own directory and read it as well, similar to bdy data

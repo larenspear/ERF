@@ -3607,6 +3607,15 @@ if(TARGET erf_precipitation_checkpoint_tool)
             --working-directory "${CMAKE_CURRENT_BINARY_DIR}/surface_precipitation_regrid")
     set_tests_properties(SLM_PrecipitationRestart_Runtime SurfacePrecipitationRegrid_Runtime
         PROPERTIES TIMEOUT 300 PROCESSORS 1 LABELS "regression;lsm;precipitation")
+    add_test(NAME SurfaceModel_Derefinement_Runtime
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_surface_model_derefinement_runtime.py
+            --executable "${_precip_history_exe}"
+            --checkpoint-tool $<TARGET_FILE:erf_precipitation_checkpoint_tool>
+            --input-dir "${CMAKE_CURRENT_SOURCE_DIR}/test_files/SLM_Restart"
+            --working-directory "${CMAKE_CURRENT_BINARY_DIR}/surface_model_derefinement")
+    set_tests_properties(SurfaceModel_Derefinement_Runtime PROPERTIES
+        TIMEOUT 300 PROCESSORS 1 LABELS "regression;lsm;checkpoint")
 endif()
 
 # The same deck across a level-0 regrid, which ReadCheckpointFile still refuses: SLM does its

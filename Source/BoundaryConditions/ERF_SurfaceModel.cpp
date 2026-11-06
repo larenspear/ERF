@@ -827,8 +827,11 @@ SurfaceModel::GotoNextLine (std::istream& is)
     is.ignore(bl_ignore_max, '\n');
 }
 
-void SurfaceModel::WriteCheckpoint (const std::string &checkpointname)
+void SurfaceModel::WriteCheckpoint (const std::string &checkpointname, int finest_lev)
 {
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(finest_lev >= 0 && finest_lev < m_nlevs,
+        "SurfaceModel checkpoint requires an initialized active hierarchy");
+    const int checkpoint_nlevs = finest_lev + 1;
     request_surface_outputs(false);
     activate_all_field_maps(false);
     auto check_start = amrex::second();
@@ -855,7 +858,7 @@ void SurfaceModel::WriteCheckpoint (const std::string &checkpointname)
         HeaderFile << "Checkpoint file for SurfaceModel\n";
 
         // write out number of levels
-        HeaderFile << m_nlevs << "\n";
+        HeaderFile << checkpoint_nlevs << "\n";
 
         // write out flags
         HeaderFile << m_use_urban << "\n";
@@ -866,13 +869,13 @@ void SurfaceModel::WriteCheckpoint (const std::string &checkpointname)
         HeaderFile << "\n";
 
         // Write box arrays
-        for (int lev = 0; lev < m_nlevs; lev++) {
+        for (int lev = 0; lev < checkpoint_nlevs; lev++) {
             m_ba[lev].writeOn(HeaderFile);
             HeaderFile << '\n';
 
         }
         HeaderFile << '\n';
-        for (int lev = 0; lev < m_nlevs; lev++) {
+        for (int lev = 0; lev < checkpoint_nlevs; lev++) {
             m_ba2d[lev].writeOn(HeaderFile);
             HeaderFile << '\n';
         }
@@ -907,7 +910,7 @@ void SurfaceModel::WriteCheckpoint (const std::string &checkpointname)
 
     // Radiation input fields are derived from provider data and are intentionally
     // rebuilt after restart rather than written to the checkpoint.
-    for (int lev = 0; lev < m_nlevs; lev++) {
+    for (int lev = 0; lev < checkpoint_nlevs; lev++) {
         IntVect ng(1,1,0);
         calculate_weight_average(lev, m_last_urban_frac[lev], false);
 

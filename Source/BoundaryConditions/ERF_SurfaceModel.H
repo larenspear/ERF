@@ -786,8 +786,9 @@ public:
     /**
      * @brief Writes surface-model state to a checkpoint file.
      * @param checkpointname Checkpoint file name.
+     * @param finest_lev Finest active AMR level; allocated capacity may be larger.
      */
-    void WriteCheckpoint (const std::string &checkpointname);
+    void WriteCheckpoint (const std::string &checkpointname, int finest_lev);
 
     /**
      * @brief Restores surface-model state from a checkpoint file.

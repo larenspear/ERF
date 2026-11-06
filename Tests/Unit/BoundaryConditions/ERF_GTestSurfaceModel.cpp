@@ -589,7 +589,7 @@ TEST(SurfaceModel, CheckpointRoundTripPreservesSyntheticState)
     amrex::MultiFab writer_fraction(writer.ba, writer.dm, 1, amrex::IntVect(0));
     writer_fraction.setVal(Real(0.25));
     writer.model->calculate_weight_average(0, &writer_fraction);
-    writer.model->WriteCheckpoint(checkpoint.string());
+    writer.model->WriteCheckpoint(checkpoint.string(), 0);
 
     const std::filesystem::path header = checkpoint / "SurfaceModel_Header";
     ASSERT_TRUE(std::filesystem::exists(header));
@@ -620,6 +620,79 @@ TEST(SurfaceModel, CheckpointRoundTripPreservesSyntheticState)
     EXPECT_EQ(reader.model->get_field("mapped")->max(0),
               writer.model->get_field("mapped")->max(0));
 
+}
+
+// Allocation can retain a removed fine level. Checkpoint storage must follow
+// the current hierarchy, and that same model can later write both levels again.
+TEST(SurfaceModel, CheckpointTracksActiveHierarchyAfterFineLevelRemoval)
+{
+    const std::filesystem::path root =
+        erf_gtest_temp_path("erf_surface_model_removed_level_checkpoint");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::filesystem::remove_all(path); }
+    } cleanup{root};
+    std::filesystem::remove_all(root);
+    const auto coarse_checkpoint = root / "coarse";
+    const auto restored_checkpoint = root / "restored";
+    ASSERT_TRUE(std::filesystem::create_directories(coarse_checkpoint / "Level_0"));
+    ASSERT_TRUE(std::filesystem::create_directories(restored_checkpoint / "Level_0"));
+    ASSERT_TRUE(std::filesystem::create_directories(restored_checkpoint / "Level_1"));
+
+    SurfaceModelFixture writer(2);
+    writer.model->request_surface_outputs();
+    auto land0 = writer.make_fields(0, Real(10), Real(10), 1);
+    auto urban0 = writer.make_fields(0, Real(100), Real(10), 0);
+    auto land1 = writer.make_fields(1, Real(20), Real(10), 1);
+    auto urban1 = writer.make_fields(1, Real(200), Real(10), 0);
+    writer.configure_models(0, land0, urban0);
+    writer.configure_models(1, land1, urban1);
+    writer.model->register_field_map("mapped", std::pair<int,int>{5,5});
+    writer.model->activate_field_map("mapped");
+    amrex::MultiFab fraction0(writer.bas[0], writer.dms[0], 1, amrex::IntVect(0));
+    amrex::MultiFab fraction1(writer.bas[1], writer.dms[1], 1, amrex::IntVect(0));
+    fraction0.setVal(Real(0.25));
+    fraction1.setVal(Real(0.5));
+    writer.model->calculate_weight_average(0, &fraction0);
+    writer.model->calculate_weight_average(1, &fraction1);
+
+    // No Level_1 directory exists for the removed level. A capacity-based
+    // writer attempts a stale fine-level output and throws here.
+    ASSERT_NO_THROW(writer.model->WriteCheckpoint(coarse_checkpoint.string(), 0));
+    EXPECT_FALSE(std::filesystem::exists(coarse_checkpoint / "Level_1"));
+    SurfaceModelFixture coarse_reader;
+    coarse_reader.model->request_surface_outputs();
+    auto coarse_land = coarse_reader.make_fields(Real(-1), Real(1), 1);
+    auto coarse_urban = coarse_reader.make_fields(Real(-2), Real(1), 0);
+    coarse_reader.configure_models(coarse_land, coarse_urban);
+    coarse_reader.model->register_field_map("mapped", std::pair<int,int>{5,5});
+    coarse_reader.model->activate_field_map("mapped");
+    ASSERT_NO_THROW(coarse_reader.model->ReadCheckpoint(coarse_checkpoint.string()));
+    EXPECT_EQ(coarse_reader.model->get_ustar(0)->max(0),
+              writer.model->get_ustar(0)->max(0));
+    EXPECT_EQ(coarse_reader.model->get_tsurf(0)->max(0),
+              writer.model->get_tsurf(0)->max(0));
+    EXPECT_EQ(coarse_reader.model->get_field("mapped")->max(0),
+              writer.model->get_field("mapped")->max(0));
+
+    // The active count passed for one write must not discard the level
+    // capacity: a subsequent checkpoint can again include both levels.
+    ASSERT_NO_THROW(writer.model->WriteCheckpoint(restored_checkpoint.string(), 1));
+    SurfaceModelFixture fine_reader(2);
+    fine_reader.model->request_surface_outputs();
+    auto reader_land0 = fine_reader.make_fields(0, Real(-1), Real(1), 1);
+    auto reader_urban0 = fine_reader.make_fields(0, Real(-2), Real(1), 0);
+    auto reader_land1 = fine_reader.make_fields(1, Real(-3), Real(1), 1);
+    auto reader_urban1 = fine_reader.make_fields(1, Real(-4), Real(1), 0);
+    fine_reader.configure_models(0, reader_land0, reader_urban0);
+    fine_reader.configure_models(1, reader_land1, reader_urban1);
+    fine_reader.model->register_field_map("mapped", std::pair<int,int>{5,5});
+    fine_reader.model->activate_field_map("mapped");
+    ASSERT_NO_THROW(fine_reader.model->ReadCheckpoint(restored_checkpoint.string()));
+    EXPECT_EQ(fine_reader.model->get_ustar(1)->max(0),
+              writer.model->get_ustar(1)->max(0));
+    EXPECT_EQ(fine_reader.model->get_tsurf(1)->max(0),
+              writer.model->get_tsurf(1)->max(0));
 }
 
 } // namespace
