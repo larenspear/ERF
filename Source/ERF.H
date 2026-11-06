@@ -1025,6 +1025,7 @@ public:
      *  the active moist conserved components using detJ/mfac weighting, reusing
      *  AverageDownTo with perturbational-state and momentum handling disabled. */
     void AverageDownMoistStateTo (int crse_lev);
+    void AverageDownMicrophysics (int finest_lev, bool surface_only = false, int coarsest_lev = 0);
 
     // Write checkpoint file to disk
     void WriteCheckpointFile () const;

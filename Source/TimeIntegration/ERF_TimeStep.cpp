@@ -181,6 +181,13 @@ ERF::timeStep (int lev, double time, int /*iteration*/)
                 // footprint can disappear even when coupling is OneWay.
                 if (solverChoice.coupling_type == CouplingType::OneWay &&
                     Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian) {
+                    // SLM consumes rain on every level. Noah-MP can instead
+                    // interpolate fine land state from a coarse owner; its
+                    // unconsumed fine rain needs a separate transfer policy.
+                    if (solverChoice.lsm_type == LandSurfaceType::None ||
+                        solverChoice.lsm_type == LandSurfaceType::SLM) {
+                        AverageDownMicrophysics(finest_level, true, lev);
+                    }
                     for (int flev = finest_level; flev > lev; --flev) {
                         const auto fine = micro->Get_Ground_Mass_Accumulation_Ptrs(flev);
                         const auto coarse = micro->Get_Ground_Mass_Accumulation_Ptrs(flev-1);
@@ -199,7 +206,7 @@ ERF::timeStep (int lev, double time, int /*iteration*/)
                     solverChoice.moisture_type != MoistureType::None &&
                     Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian &&
                     finest_level >= 1) {
-                    micro->AverageDownMicroVars(finest_level);
+                    AverageDownMicrophysics(finest_level);
                     for (int flev = finest_level-1; flev >= lev; --flev) {
                         AverageDownMoistStateTo(flev);
                     }

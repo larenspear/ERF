@@ -321,7 +321,7 @@ ERF::BuildPlot3DScratch (const Vector<std::string>& plot_var_names, Plot3DScratc
         && Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian
         && solverChoice.coupling_type == CouplingType::TwoWay
         && finest_level >= 1) {
-        micro->AverageDownMicroVars(finest_level);
+        AverageDownMicrophysics(finest_level);
         for (int flev = finest_level-1; flev >= 0; --flev) {
             AverageDownMoistStateTo(flev);
         }

@@ -12,6 +12,10 @@ TIMESTEP = "Source/TimeIntegration/ERF_TimeStep.cpp"
 DRIVER = "Source/ERF.cpp"
 HOOK = """if (solverChoice.coupling_type == CouplingType::OneWay &&
     Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian) {
+    if (solverChoice.lsm_type == LandSurfaceType::None ||
+        solverChoice.lsm_type == LandSurfaceType::SLM) {
+        AverageDownMicrophysics(finest_level, true, lev);
+    }
     for (int flev = finest_level; flev > lev; --flev) {
         const auto fine = micro->Get_Ground_Mass_Accumulation_Ptrs(flev);
         const auto coarse = micro->Get_Ground_Mass_Accumulation_Ptrs(flev-1);
@@ -29,7 +33,7 @@ TWOWAY = """if (solverChoice.coupling_type == CouplingType::TwoWay &&
     solverChoice.moisture_type != MoistureType::None &&
     Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian &&
     finest_level >= 1) {
-    micro->AverageDownMicroVars(finest_level);
+    AverageDownMicrophysics(finest_level);
     for (int flev = finest_level-1; flev >= lev; --flev) {
         AverageDownMoistStateTo(flev);
     }
@@ -44,14 +48,14 @@ def verify(sources):
     assert cadence.startswith(expected), "transfer must precede regrid without widening atmospheric feedback"
     assert cadence.index(compact(HOOK)) < cadence.index("regrid(lev,static_cast<Real>(time));")
     assert timestep.count("sum_down_surface_mass(") == 1
-    assert timestep.count("micro->AverageDownMicroVars(") == 1
+    assert timestep.count("AverageDownMicrophysics(") == 2
     assert timestep.count("Get_Ground_Mass_Accumulation_Ptrs(") == 2
     assert "regrid(" not in compact(body(sources[DRIVER], r"ERF::restart\s*\(")), "new restart topology route needs lifecycle review"
     init = compact(body(sources[DRIVER], r"ERF::InitData_post\s*\("))
     assert "Get_Ground_Mass_Accumulation_Ptrs(" not in init
     assert ("if(restart_chkfile.empty()&&solverChoice.coupling_type==CouplingType::TwoWay&&"
             "Microphysics::modelType(solverChoice.moisture_type)==MoistureModelType::Lagrangian&&"
-            "finest_level>=1){micro->AverageDownMicroVars(finest_level);") in init
+            "finest_level>=1){AverageDownMicrophysics(finest_level);") in init
 
 
 def self_test(sources):
@@ -73,7 +77,7 @@ def self_test(sources):
         (TIMESTEP, "int old_finest = finest_level;", "int old_finest = finest_level; if (false)"),
         (TIMESTEP, "int old_finest = finest_level;", "int old_finest = finest_level;\n#if 0"),
         (TIMESTEP, "int old_finest = finest_level;", "int old_finest = finest_level; regrid(lev, time);"),
-        (TIMESTEP, "micro->AverageDownMicroVars(finest_level);", "micro->AverageDownMicroVars(0);"),
+        (TIMESTEP, "AverageDownMicrophysics(finest_level);", "AverageDownMicrophysics(0);"),
         (DRIVER, "ReadCheckpointFile();", "ReadCheckpointFile(); regrid(0, t_new[0]);"),
     ]
     for file, old, new in faults:

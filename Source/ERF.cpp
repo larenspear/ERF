@@ -11,6 +11,7 @@
 #include "ERF_Constants.H"
 
 #include "ERF_EOS.H"
+#include "ERF_PrecipitationHistory.H"
 #include "ERF.H"
 #include "AMReX_buildInfo.H"
 #include "AMReX_FileSystem.H"
@@ -31,6 +32,55 @@
 #endif
 
 using namespace amrex;
+
+void ERF::AverageDownMicrophysics (int finest_lev, bool surface_only, int coarsest_lev)
+{
+    if (finest_lev <= coarsest_lev) return;
+    AMREX_ALWAYS_ASSERT(micro && coarsest_lev >= 0);
+    // The ordinary microphysics restriction visits every coarse level. The
+    // OneWay path visits only levels affected by this regrid and transfers
+    // native surface histories, without atmospheric feedback.
+    const int first = surface_only ? coarsest_lev : 0;
+    const bool has_land = solverChoice.lsm_type == LandSurfaceType::SLM;
+    AMREX_ALWAYS_ASSERT(!surface_only || has_land ||
+                        solverChoice.lsm_type == LandSurfaceType::None);
+    Vector<erf_precipitation::CapturedSlmPrecipitation> before(finest_lev);
+    if (has_land) {
+        for (int clev = first; clev < finest_lev; ++clev) {
+            if (precip[clev]) {
+                before[clev] = erf_precipitation::capture_slm_precipitation(
+                    micro->Get_Surface_Precip_Accumulation_Ptrs(clev), geom[clev]);
+            }
+        }
+    }
+    if (surface_only) {
+        for (int flev = finest_lev; flev > first; --flev) {
+            const auto fine = micro->Get_Surface_Precip_Accumulation_Ptrs(flev);
+            const auto coarse = micro->Get_Surface_Precip_Accumulation_Ptrs(flev-1);
+            for (int mvar = 0; mvar < qmoist[flev].size(); ++mvar) {
+                if (erf_precipitation::is_native_surface_accumulator(qmoist[flev][mvar], fine)) {
+                    AMREX_ALWAYS_ASSERT(mvar < qmoist[flev-1].size());
+                    AMREX_ALWAYS_ASSERT(erf_precipitation::is_native_surface_accumulator(
+                        qmoist[flev-1][mvar], coarse));
+                    erf_precipitation::average_down_surface_accumulation(
+                        *qmoist[flev][mvar], *qmoist[flev-1][mvar],
+                        geom[flev], geom[flev-1], refRatio(flev-1));
+                }
+            }
+        }
+    } else {
+        micro->AverageDownMicroVars(finest_lev);
+    }
+    if (has_land) {
+        for (int clev = first; clev < finest_lev; ++clev) {
+            const auto after = micro->Get_Surface_Precip_Accumulation_Ptrs(clev);
+            if (solverChoice.lsm_type == LandSurfaceType::SLM && precip[clev]) {
+                erf_precipitation::rebase_slm_precipitation(
+                    *precip[clev], before[clev], after, geom[clev]);
+            }
+        }
+    }
+}
 
 double ERF::startCPUTime        = 0.0;
 double ERF::previousCPUTimeUsed = 0.0;
@@ -2026,7 +2076,7 @@ ERF::InitData_post ()
             solverChoice.coupling_type == CouplingType::TwoWay &&
             Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian &&
             finest_level >= 1) {
-            micro->AverageDownMicroVars(finest_level);
+            AverageDownMicrophysics(finest_level);
             for (int flev = finest_level-1; flev >= 0; --flev) {
                 AverageDownMoistStateTo(flev);
             }
