@@ -357,12 +357,18 @@ void SuperDropletPC::addParticles ( int a_lev,
 
         int np = 0;
         {
-            int ncell = static_cast<int>(num_superdroplets[mfi].numPts());
-            const int* in = num_superdroplets[mfi].dataPtr();
-            int* out = offsets[mfi].dataPtr();
+            const int ncell = static_cast<int>(tile_box.numPts());
+            const auto counts = num_superdroplets.const_array(mfi);
+            const auto cell_offsets = offsets.array(mfi);
+            // One particle tile owns this tile_box only. A whole-FAB scan
+            // would reserve entries for cells initialized by other tiles.
             np = Scan::PrefixSum<int>( ncell,
-                                       [=] AMREX_GPU_DEVICE (int i) -> int { return in[i]; },
-                                       [=] AMREX_GPU_DEVICE (int i, int const &x) { out[i] = x; },
+                [=] AMREX_GPU_DEVICE (int n) -> int {
+                    return counts(tile_box.atOffset(n));
+                },
+                [=] AMREX_GPU_DEVICE (int n, int const& value) {
+                    cell_offsets(tile_box.atOffset(n)) = value;
+                },
                                        Scan::Type::exclusive,
                                        Scan::retSum );
         }
