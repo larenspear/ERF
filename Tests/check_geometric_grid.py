@@ -239,15 +239,17 @@ def check_builder(p, m):
     first, ratio, dz, top = z3.Reals('first ratio dz requested_top')
     z = z3.Function('node', z3.IntSort(), z3.RealSort())
     env = {'nz': n, 'k': k, 'gs.dz0': first, 'gs.ratio': ratio, 'dz': dz, 'z_top': top}
-    domain = [n >= 1, k >= 1, k <= n]
+    domain = [n >= 1, k >= 2, k <= n]
     p.equal(m['builder_seed'], first, {'gs.dz0': first, 'gs.ratio': ratio}, 'builder thickness seed')
     p.equal(m['bottom'], z3.RealVal(0), {}, 'builder bottom')
+    p.equal(m['first_node'], first, {'dz': first}, 'builder first node')
     actual = p.equal(m['node'], z(k-1)+dz, env, 'builder node recurrence', domain, read=z)
     factor = p.equal(m['factor'], ratio, env, 'builder ratio')
     p.prove(actual-z(k-1) > 0, 'unadjusted layer positive', [*domain, dz > 0])
     p.prove(dz*factor > 0, 'builder next thickness positive', [*domain, dz > 0, ratio >= 1])
     forced = p.equal(m['top'], top, {'z_top': top, 'nz': n}, 'builder forced top')
-    # The consumed unit-step loop gives the recurrence for every 1<=k<=n.
+    # The first-node assignment and unit-step loop cover every 1<=k<=n.
+    # Only k>=2 multiplies a thickness. IEEE exception behavior is tested in C++.
     # Its raw sum is the solver's geometric sum by the certificates above.
     total, last, residual, tol = z3.Reals('raw_total last residual tol')
     common = [n >= 1, first > 0, last >= first, tol > 0, top > 0,

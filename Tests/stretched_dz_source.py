@@ -54,7 +54,7 @@ def copy(source):
 
 
 def prints(source):
-    operand = (STRING + r'|std\s*::\s*endl|zlevels_stag\s*\[\s*lev\s*\]\s*\[\s*k\s*\]'
+    operand = (STRING + r'|std\s*::\s*endl|zlevels_stag\s*\[\s*lev\s*\]\s*\[\s*(?:k|1)\s*\]'
                r'|gs\s*\.\s*(?:dz0|ratio)|nz\s*\+\s*1|dz0|zsurf|lev|n_zlevels')
     while re.match(r'\s*Print\s*\(', source.text[source.pos:]):
         source.take(r'Print\s*\(\s*\)\s*(?:<<\s*(?:' + operand + r')\s*)+;')
@@ -137,12 +137,15 @@ def read_init(text):
     literal(source, 'zlevels_stag[lev][0] = zsurf;')
     result['geometric_seed'] = scalar(source, 'Real dz')
     prints(source)
+    result['geometric_first_h'] = assignment(source, 'stretched_dz_h')
+    result['geometric_first_z'] = assignment(source, 'zlevels_stag')
+    prints(source)
     result['geometric_loop'] = loop(source)
+    literal(source, 'dz *=')
+    result['geometric_factor'] = source.take(EXPR + ';')[1]
     result['geometric_h'] = assignment(source, 'stretched_dz_h')
     result['geometric_z'] = assignment(source, 'zlevels_stag')
     prints(source)
-    literal(source, 'dz *=')
-    result['geometric_factor'] = source.take(EXPR + ';')[1]
     literal(source, '}')
     prints(source)
     literal(source, '} else if (lev > 0) {')

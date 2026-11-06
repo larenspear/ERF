@@ -111,6 +111,11 @@ def cases(originals):
     yield edit('update extra trailing write', update, update_copy, update_copy + '\n    stretched_dz_h[lev].clear();')
 
     init = 'init_zlevels'
+    yield edit('unused final thickness', init, 'for (int k = 2; k < nz+1; k++)',
+               'dz *= grid_stretching_ratio; for (int k = 2; k < nz+1; k++)')
+    yield edit('multiply after storage', init,
+               'dz *= grid_stretching_ratio;\n                stretched_dz_h[lev][k-1] = dz;',
+               'stretched_dz_h[lev][k-1] = dz; dz *= grid_stretching_ratio;')
     for before, after, diagnostic in [
         ('zlevels_stag[lev].resize(nz+1);', 'zlevels_stag[lev].resize(nz);', 'constructor nodal extent [sat]'),
         ('stretched_dz_h[lev].resize(domain.length(2));', 'stretched_dz_h[lev].resize(domain.length(2)+1);', 'constructor host extent [sat]'),
@@ -121,6 +126,12 @@ def cases(originals):
         ('stretched_dz_h[lev][k-1] = zlevels_stag[lev][k] - zlevels_stag[lev][k-1];', 'stretched_dz_h[lev][k] = zlevels_stag[lev][k] - zlevels_stag[lev][k-1];', 'generated destination [sat]'),
         ('stretched_dz_h[lev][k-1] = zlevels_stag[lev][k] - zlevels_stag[lev][k-1];', 'stretched_dz_h[lev][k-1] = zlevels_stag[lev][k+1] - zlevels_stag[lev][k];', 'generated read 0 in initialized range [sat]'),
         ('Real dz = dz0;', 'Real dz = -dz0;', 'geometric positive induction base [sat]'),
+        ('stretched_dz_h[lev][0] = dz;', 'stretched_dz_h[lev][1] = dz;', 'geometric first thickness destination [sat]'),
+        ('stretched_dz_h[lev][0] = dz;', 'stretched_dz_h[lev][0] = 2*dz;', 'geometric first thickness [sat]'),
+        ('zlevels_stag[lev][1] = zlevels_stag[lev][0] + dz;', 'zlevels_stag[lev][2] = zlevels_stag[lev][0] + dz;', 'geometric first node destination [sat]'),
+        ('zlevels_stag[lev][0] + dz;', 'zlevels_stag[lev][0] - dz;', 'geometric first adjacent-level difference [sat]'),
+        ('for (int k = 2; k < nz+1; k++)', 'for (int k = 1; k < nz+1; k++)', 'geometric recurrence exact loop domain [sat]'),
+        ('for (int k = 2; k < nz+1; k++)', 'for (int k = 3; k < nz+1; k++)', 'geometric recurrence exact loop domain [sat]'),
         ('stretched_dz_h[lev][k-1] = dz;', 'stretched_dz_h[lev][k-1] = 2*dz;', 'geometric stored current thickness [sat]'),
         ('zlevels_stag[lev][k-1] + dz;', 'zlevels_stag[lev][k-1] - dz;', 'geometric adjacent-level difference [sat]'),
         ('dz *= grid_stretching_ratio;', 'dz *= Real(0);', 'geometric positive induction step [sat]'),

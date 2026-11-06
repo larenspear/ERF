@@ -70,10 +70,14 @@ def cases(original):
         ('builder assertion', 'AMREX_ALWAYS_ASSERT_WITH_MESSAGE(nz >= 1,', 'AMREX_ALWAYS_ASSERT_WITH_MESSAGE(nz >= 0,'),
         ('builder argument binding', 'geometric_stretch(dz0, z_top, nz, tol);', 'geometric_stretch(z_top, dz0, nz, tol);'),
         ('failed solve guard', 'if (!gs.converged) { return gs; }', ''),
-        ('builder lower bound', 'for (int k(1); k<=nz; ++k)', 'for (int k(0); k<=nz; ++k)'),
-        ('builder upper bound', 'for (int k(1); k<=nz; ++k)', 'for (int k(1); k<nz; ++k)'),
+        ('builder lower bound', 'for (int k(2); k<=nz; ++k)', 'for (int k(1); k<=nz; ++k)'),
+        ('builder upper bound', 'for (int k(2); k<=nz; ++k)', 'for (int k(2); k<nz; ++k)'),
         ('builder destination', 'zlevels[k] =', 'zlevels[k-1] ='),
         ('builder product', 'dz *= gs.ratio;', 'dz += gs.ratio;'),
+        ('builder first destination', 'zlevels[1] = dz;', 'zlevels[0] = dz;'),
+        ('unused final thickness', 'zlevels[nz] = z_top;', 'dz *= gs.ratio; zlevels[nz] = z_top;'),
+        ('multiply after storage', 'dz *= gs.ratio;\n        zlevels[k] = zlevels[k-1] + dz;',
+         'zlevels[k] = zlevels[k-1] + dz; dz *= gs.ratio;'),
         ('builder top destination', 'zlevels[nz] = z_top;', 'zlevels[nz-1] = z_top;'),
         ('guard loop bound', 'for (int k = 1; k <= nz; ++k)', 'for (int k = 1; k < nz; ++k)'),
         ('guard monotonicity', 'zlevels[k] > zlevels[k-1]', 'zlevels[k] >= zlevels[k-1]'),
@@ -112,6 +116,7 @@ def cases(original):
         ('returned finite', 'gs.converged = (amrex::Math::abs(residual) <= largest);', 'gs.converged = (residual <= largest);', 'nonuniform return converged [sat]'),
         ('builder seed value', 'amrex::Real dz = gs.dz0;', 'amrex::Real dz = 2*gs.dz0;', 'builder thickness seed [sat]'),
         ('builder bottom', 'zlevels[0] = amrex::Real(0.0);', 'zlevels[0] = amrex::Real(1.0);', 'builder bottom [sat]'),
+        ('builder first value', 'zlevels[1] = dz;', 'zlevels[1] = 2*dz;', 'builder first node [sat]'),
         ('builder recurrence', 'zlevels[k-1] + dz;', 'zlevels[k-1] - dz;', 'builder node recurrence [sat]'),
         ('builder factor', 'dz *= gs.ratio;', 'dz *= 2*gs.ratio;', 'builder ratio [sat]'),
         ('builder top', 'zlevels[nz] = z_top;', 'zlevels[nz] = z_top+1;', 'builder forced top [sat]'),
@@ -120,7 +125,7 @@ def cases(original):
         yield edit(name, before, after, diagnostic)
     yield edit('uninitialized node read', 'zlevels[k-1] + dz;', 'zlevels[k] + dz;',
                'builder node recurrence initialized read [sat]')
-    yield edit('negative node read', 'zlevels[k-1] + dz;', 'zlevels[k-2] + dz;',
+    yield edit('negative node read', 'zlevels[k-1] + dz;', 'zlevels[k-3] + dz;',
                'builder node recurrence initialized read [sat]')
     controls = [
         ('uniform quotient', 'gs.dz0       = z_top/Nz;', 'gs.dz0       = (z_top*amrex::Real(1))/Nz;'),

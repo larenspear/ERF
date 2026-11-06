@@ -1,3 +1,4 @@
+#include <cfenv>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -290,4 +291,41 @@ TEST(InitZLevels, CopiesValidSuppliedAndRefinedHeightsExactly)
     Gpu::copy(Gpu::deviceToHost, device[1].begin(), device[1].end(), copied.begin());
     EXPECT_EQ(copied, (Vector<Real>{Real(1), Real(1), Real(2), Real(2), Real(3), Real(3)}));
     EXPECT_EQ(host[0], (Vector<Real>{Real(1), Real(2), Real(3)}));
+}
+
+// Both the solved and explicit-ratio paths must stop once every requested
+// layer is stored. The next unused thickness overflows, but these nodes and
+// host/device cell heights are finite and exactly representable.
+TEST(InitZLevels, DoesNotOverflowAfterTheFinalLayer)
+{
+    const Real scale = std::ldexp(Real(1), std::numeric_limits<Real>::max_exponent - 5);
+    const Real top = Real(8)*scale;
+    const Vector<IntVect> refinement;
+    for (const int layers : {1, 2}) {
+        const Real first = layers == 1 ? top : scale;
+        const Box domain(IntVect(0), IntVect(0,0,layers-1));
+        const RealBox box(Real(0), Real(0), Real(0), Real(1), Real(1), top);
+        Vector<Geometry> geom{Geometry(domain, box, CoordSys::cartesian, {0,0,0})};
+        const Vector<Real> expected_nodes = layers == 1 ?
+            Vector<Real>{Real(0), top} : Vector<Real>{Real(0), first, top};
+        const Vector<Real> expected_heights = layers == 1 ?
+            Vector<Real>{top} : Vector<Real>{first, Real(7)*first};
+        for (const Real ratio : {Real(0), Real(7)}) {
+            SCOPED_TRACE(::testing::Message() << layers << " layers, ratio " << ratio);
+            Vector<Vector<Real>> nodes(1), host(1);
+            Vector<Gpu::DeviceVector<Real>> device(1);
+            std::fenv_t environment;
+            ASSERT_EQ(std::feholdexcept(&environment), 0);
+            init_zlevels(nodes, host, device, geom, refinement, ratio, Real(0), first);
+            const int overflow = std::fetestexcept(FE_OVERFLOW);
+            ASSERT_EQ(std::fesetenv(&environment), 0);
+
+            EXPECT_EQ(overflow, 0);
+            EXPECT_EQ(nodes[0], expected_nodes);
+            EXPECT_EQ(host[0], expected_heights);
+            Vector<Real> copied(layers);
+            Gpu::copy(Gpu::deviceToHost, device[0].begin(), device[0].end(), copied.begin());
+            EXPECT_EQ(copied, host[0]);
+        }
+    }
 }

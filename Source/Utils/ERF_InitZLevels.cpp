@@ -112,12 +112,17 @@ init_zlevels (Vector<Vector<Real>>& zlevels_stag,
             zlevels_stag[lev][0] = zsurf;
             Real dz = dz0;
             Print() << "Stretched grid levels at level : " << lev << " is " <<  zsurf;
-            for (int k = 1; k < nz+1; k++)
+            stretched_dz_h[lev][0] = dz;
+            zlevels_stag[lev][1] = zlevels_stag[lev][0] + dz;
+            Print() << " " << zlevels_stag[lev][1];
+            // Compute only thicknesses that will be stored; an unused final
+            // multiplication can overflow even when every layer is finite.
+            for (int k = 2; k < nz+1; k++)
             {
+                dz *= grid_stretching_ratio;
                 stretched_dz_h[lev][k-1] = dz;
                 zlevels_stag[lev][k] = zlevels_stag[lev][k-1] + dz;
                 Print() << " " << zlevels_stag[lev][k];
-                dz *= grid_stretching_ratio;
             }
             Print() << std::endl;
         } else if (lev > 0) {

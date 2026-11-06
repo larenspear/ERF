@@ -91,9 +91,10 @@ def read_program(text):
                     'if (!gs.converged) { return gs; }')
     model['builder_seed'] = expression(source, 'amrex::Real dz =')
     model['bottom'] = expression(source, 'zlevels[0] =')
-    literal(source, 'for (int k(1); k<=nz; ++k) {')
-    model['node'] = expression(source, 'zlevels[k] =')
+    model['first_node'] = expression(source, 'zlevels[1] =')
+    literal(source, 'for (int k(2); k<=nz; ++k) {')
     model['factor'] = expression(source, 'dz *=')
+    model['node'] = expression(source, 'zlevels[k] =')
     literal(source, '}')
     model['top'] = expression(source, 'zlevels[nz] =')
     literal(source, 'for (int k = 1; k <= nz; ++k) { '

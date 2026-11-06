@@ -313,9 +313,12 @@ build_geometric_zlevels (amrex::Vector<amrex::Real>& zlevels,
     if (!gs.converged) { return gs; }
     amrex::Real dz = gs.dz0;
     zlevels[0] = amrex::Real(0.0);
-    for (int k(1); k<=nz; ++k) {
-        zlevels[k] = zlevels[k-1] + dz;
+    zlevels[1] = dz;
+    // Compute each later thickness only when its layer will be stored. An
+    // unused multiplication after the final layer can overflow a valid grid.
+    for (int k(2); k<=nz; ++k) {
         dz *= gs.ratio;
+        zlevels[k] = zlevels[k-1] + dz;
     }
     zlevels[nz] = z_top;
     for (int k = 1; k <= nz; ++k) {

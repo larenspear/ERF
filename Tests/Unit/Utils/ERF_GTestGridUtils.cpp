@@ -1,3 +1,4 @@
+#include <cfenv>
 #include <AMReX_Gpu.H>
 #include <AMReX_GpuContainers.H>
 
@@ -512,4 +513,26 @@ TEST(GeometricStretch, AcceptsNearlyUniformRequestsAtTheStorageLimit)
             for (int k = 1; k <= layers; ++k) { ASSERT_GT(nodes[k], nodes[k-1]); }
         }
     }
+}
+
+// The two represented layers fit: first + 7*first = top. A third, unused
+// thickness would be 49*first, beyond Real's finite range in either precision.
+TEST(GeometricStretch, DoesNotOverflowAfterTheFinalLayer)
+{
+    using amrex::Real;
+    const Real first = std::ldexp(Real(1), std::numeric_limits<Real>::max_exponent - 5);
+    const Real top = Real(8)*first;
+    amrex::Vector<Real> nodes(3);
+    std::fenv_t environment;
+    ASSERT_EQ(std::feholdexcept(&environment), 0);
+    const auto gs = erf_grid_utils::build_geometric_zlevels(nodes, first, top, stretch_tol);
+    const int overflow = std::fetestexcept(FE_OVERFLOW);
+    ASSERT_EQ(std::fesetenv(&environment), 0);
+
+    EXPECT_EQ(overflow, 0);
+    ASSERT_TRUE(gs.converged);
+    EXPECT_EQ(gs.ratio, Real(7));
+    EXPECT_EQ(nodes[0], Real(0));
+    EXPECT_EQ(nodes[1], first);
+    EXPECT_EQ(nodes[2], top);
 }
