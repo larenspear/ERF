@@ -1101,8 +1101,10 @@ SLM::Lsm_Regrid_Level (const int& lev,
                        const Geometry& source_geom,
                        const Geometry& source_lsm_geom,
                        const IntVect& source_ref_ratio,
-                       const bool has_source)
+                       const bool has_source,
+                       const bool source_needs_initialization)
 {
+    const bool was_first_step = first_step;
     const Geometry old_geom = m_geom;
     const Geometry old_lsm_geom = m_lsm_geom;
     Vector<std::unique_ptr<MultiFab>> saved_data(m_lsm_data_size);
@@ -1125,7 +1127,8 @@ SLM::Lsm_Regrid_Level (const int& lev,
 
     if (has_source) {
         Lsm_Interpolate_From_Source(source_geom, source_lsm_geom,
-                                    source_ref_ratio, LSMTransferMode::ProcessedState);
+                                    source_ref_ratio, LSMTransferMode::ProcessedState,
+                                    source_needs_initialization);
 
         for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
             lsm_fab_vars[LsmDataMap[ivar]]->ParallelCopy(*saved_data[ivar], 0, 0, 1);
@@ -1148,7 +1151,8 @@ SLM::Lsm_Regrid_Level (const int& lev,
         }
 
         Lsm_Interpolate_From_Source(old_geom, old_lsm_geom,
-                                    IntVect(1), LSMTransferMode::ProcessedState);
+                                    IntVect(1), LSMTransferMode::ProcessedState,
+                                    was_first_step);
     }
 
     // ERF checkpoints the mapped fields and this registry of otherwise-private
@@ -1159,6 +1163,7 @@ SLM::Lsm_Regrid_Level (const int& lev,
     }
     initialize_processed_state(true);
     initialize_zrefxy();
+    first_step = was_first_step;
 
     source_data.clear();
     source_flux.clear();
@@ -1172,7 +1177,8 @@ void
 SLM::Lsm_Interpolate_From_Source (const Geometry& source_geom,
                                   const Geometry& source_lsm_geom,
                                   const IntVect& ref_ratio,
-                                  const LSMTransferMode mode)
+                                  const LSMTransferMode mode,
+                                  const bool source_needs_initialization)
 {
     AMREX_ALWAYS_ASSERT(static_cast<int>(source_data.size()) == m_lsm_data_size);
     AMREX_ALWAYS_ASSERT(static_cast<int>(source_flux.size()) == m_lsm_flux_size);
@@ -1215,7 +1221,10 @@ SLM::Lsm_Interpolate_From_Source (const Geometry& source_geom,
     } else {
         initialize_processed_state();
         initialize_zrefxy();
-        first_step = false;
+        // At startup the source land fields precede the atmospheric initial
+        // conditions. Keep the deferred canopy initialization until this
+        // level's first Update_Lsm_Vars has copied its atmospheric state.
+        first_step = source_needs_initialization;
         wrfinput_initialized = use_wrfinput;
     }
 }

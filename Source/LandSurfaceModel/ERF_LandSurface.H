@@ -228,7 +228,8 @@ public:
         Set_Source_Ptrs(lev, source_lev);
         m_lsm_model[lev]->Lsm_Interpolate_From_Source(
             m_lsm_model[source_lev]->Lsm_Atmos_Geom(),
-            m_lsm_model[source_lev]->Lsm_Geom(), ref_ratio, mode);
+            m_lsm_model[source_lev]->Lsm_Geom(), ref_ratio, mode,
+            m_lsm_model[source_lev]->Lsm_Needs_Initialization());
     }
 
     /**
@@ -261,7 +262,8 @@ public:
         m_lsm_model[lev]->Lsm_Regrid_Level(
             lev, cons_in, u_in, v_in, geom, geom0, domain_bcs_type,
             ref_ratio, dt_advance, z_phys_nd, nc_init_file,
-            source_geom, source_lsm_geom, source_ref_ratio, has_source);
+            source_geom, source_lsm_geom, source_ref_ratio, has_source,
+            has_source && m_lsm_model[source_lev]->Lsm_Needs_Initialization());
     }
 
     void

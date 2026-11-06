@@ -1074,3 +1074,151 @@ TEST_F(SLMInterfaceTest, ReadsDirectSLMCheckpointIntoFreshSLM)
 }
 
 } // namespace
+
+
+TEST_F(SLMInterfaceTest, ProcessedStartupTransferInitializesCanopyBeforeAdvance)
+{
+    initialize_multilevel(2);
+    auto& fine = *multilevel_states[1];
+    fine.cons.setVal(0.0);
+    fine.cons.setVal(amrex::Real(1.0), Rho_comp, 1);
+    fine.cons.setVal(amrex::Real(300.0), RhoTheta_comp, 1);
+    fine.cons.setVal(amrex::Real(0.01), RhoQ1_comp, 1);
+    fine.uvel.setVal(0.1);
+    fine.vvel.setVal(0.1);
+
+    // ERF creates both land levels before the atmosphere is initialized.
+    land_surface.Initialize_From_Source(1, 0, amrex::IntVect(2),
+                                         LSMTransferMode::ProcessedState);
+    land_surface.Update_Lsm_Vars_Lev(1, fine.cons, fine.uvel, fine.vvel);
+    const amrex::Real reference_temperature =
+        get_slm_data(land_surface, 1, "ref_t")->max(0);
+    ASSERT_GT(reference_temperature, amrex::Real(273.15));
+    ASSERT_NEAR(get_slm_data(land_surface, 1, "tveg")->max(0),
+                reference_temperature, amrex::Real(1.e-12));
+
+    land_surface.Advance(1, amrex::Real(0.005), amrex::Real(0.005), amrex::Real(0));
+    EXPECT_FALSE(get_slm_data(land_surface, 1, "tsoil")->contains_nan());
+    EXPECT_FALSE(land_surface.Get_Flux_Ptr(1, LsmFlux_SLM::t_flux)->contains_nan());
+}
+
+TEST_F(SLMInterfaceTest, EvolvedProcessedTransferDoesNotRepeatInitialization)
+{
+    initialize_multilevel(2);
+    for (auto& level : multilevel_states) {
+        level->cons.setVal(0.0);
+        level->cons.setVal(amrex::Real(1.0), Rho_comp, 1);
+        level->cons.setVal(amrex::Real(300.0), RhoTheta_comp, 1);
+        level->cons.setVal(amrex::Real(0.01), RhoQ1_comp, 1);
+        level->uvel.setVal(0.1);
+        level->vvel.setVal(0.1);
+    }
+    auto& coarse = *multilevel_states[0];
+    auto& fine = *multilevel_states[1];
+    land_surface.Update_Lsm_Vars_Lev(0, coarse.cons, coarse.uvel, coarse.vvel);
+    land_surface.Advance(0, amrex::Real(0.005), amrex::Real(0.005), amrex::Real(0));
+    seed_transfer_state(0, amrex::Real(286), amrex::Real(291),
+                        amrex::Real(0.45), amrex::Real(4));
+    get_slm_data(land_surface, 0, "soilt_nudge")->setVal(278.0);
+    get_slm_data(land_surface, 0, "soilw_nudge")->setVal(0.35);
+    land_surface.Initialize_From_Source(1, 0, amrex::IntVect(2),
+                                         LSMTransferMode::ProcessedState);
+    const amrex::Real canopy_after_transfer =
+        get_slm_data(land_surface, 1, "tveg")->max(0);
+    fine.cons.setVal(amrex::Real(310.0), RhoTheta_comp, 1);
+    land_surface.Update_Lsm_Vars_Lev(1, fine.cons, fine.uvel, fine.vvel);
+    EXPECT_EQ(get_slm_data(land_surface, 1, "tveg")->max(0), canopy_after_transfer);
+    EXPECT_EQ(get_slm_data(land_surface, 1, "tsoil")->max(0), amrex::Real(291));
+    EXPECT_EQ(get_slm_data(land_surface, 1, "wsoil")->max(0), amrex::Real(0.45));
+    EXPECT_EQ(get_slm_data(land_surface, 1, "soilt_nudge")->max(0), amrex::Real(278));
+    EXPECT_EQ(get_slm_data(land_surface, 1, "soilw_nudge")->max(0), amrex::Real(0.35));
+}
+
+TEST_F(SLMInterfaceTest, RemakeBeforeFirstStepRetainsCanopyInitialization)
+{
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(1);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Remake_Level(0, state->cons, state->uvel, state->vvel,
+                              state->geom, state->geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1.0), z_phys_nd, nc_init_file);
+    land_surface.Update_Lsm_Vars_Lev(0, state->cons, state->uvel, state->vvel);
+    ASSERT_NEAR(get_slm_data(land_surface, 0, "tveg")->max(0),
+                get_slm_data(land_surface, 0, "ref_t")->max(0), amrex::Real(1.e-12));
+    land_surface.Advance(0, amrex::Real(0.005), amrex::Real(0.005), amrex::Real(0));
+    EXPECT_FALSE(get_slm_data(land_surface, 0, "tsoil")->contains_nan());
+}
+
+TEST_F(SLMInterfaceTest, ProcessedStartupCheckpointRetainsCanopyInitialization)
+{
+    initialize_multilevel(2);
+    auto& fine = *multilevel_states[1];
+    fine.cons.setVal(0.0);
+    fine.cons.setVal(amrex::Real(1.0), Rho_comp, 1);
+    fine.cons.setVal(amrex::Real(300.0), RhoTheta_comp, 1);
+    fine.cons.setVal(amrex::Real(0.01), RhoQ1_comp, 1);
+    fine.uvel.setVal(0.1);
+    fine.vvel.setVal(0.1);
+    land_surface.Initialize_From_Source(1, 0, amrex::IntVect(2),
+                                         LSMTransferMode::ProcessedState);
+    const auto checkpoint = erf_gtest_temp_path("erf_slm_processed_startup");
+    std::filesystem::create_directories(checkpoint / "Level_1");
+    land_surface.WriteCheckpoint(1, checkpoint.string());
+    land_surface.ReadCheckpoint(1, checkpoint.string());
+    std::filesystem::remove_all(checkpoint);
+    land_surface.Update_Lsm_Vars_Lev(1, fine.cons, fine.uvel, fine.vvel);
+    ASSERT_NEAR(get_slm_data(land_surface, 1, "tveg")->max(0),
+                get_slm_data(land_surface, 1, "ref_t")->max(0), amrex::Real(1.e-12));
+    land_surface.Advance(1, amrex::Real(0.005), amrex::Real(0.005), amrex::Real(0));
+    EXPECT_FALSE(get_slm_data(land_surface, 1, "tsoil")->contains_nan());
+}
+
+TEST_F(SLMInterfaceTest, ProcessedWRFTransferInitializesCanopyWithoutConvertingSoilAgain)
+{
+    initialize_multilevel(2, InitType::WRFInput);
+    for (auto& level : multilevel_states) {
+        level->cons.setVal(0.0);
+        level->cons.setVal(amrex::Real(1.0), Rho_comp, 1);
+        level->cons.setVal(amrex::Real(300.0), RhoTheta_comp, 1);
+        level->cons.setVal(amrex::Real(0.01), RhoQ1_comp, 1);
+        level->uvel.setVal(0.1);
+        level->vvel.setVal(0.1);
+    }
+    seed_transfer_state(0, amrex::Real(286), amrex::Real(291),
+                        amrex::Real(0.4), amrex::Real(0));
+    auto& coarse = *multilevel_states[0];
+    auto& fine = *multilevel_states[1];
+    // Process the source WRF fields without taking its first land timestep.
+    land_surface.Update_Lsm_Vars_Lev(0, coarse.cons, coarse.uvel, coarse.vvel);
+    land_surface.Initialize_From_Source(1, 0, amrex::IntVect(2),
+                                         LSMTransferMode::ProcessedState);
+    const amrex::Real soil_water = get_slm_data(land_surface, 1, "wsoil")->max(0);
+    fine.cons.setVal(amrex::Real(310.0), RhoTheta_comp, 1);
+    land_surface.Update_Lsm_Vars_Lev(1, fine.cons, fine.uvel, fine.vvel);
+    ASSERT_NEAR(get_slm_data(land_surface, 1, "tveg")->max(0),
+                get_slm_data(land_surface, 1, "ref_t")->max(0), amrex::Real(1.e-12));
+    EXPECT_EQ(get_slm_data(land_surface, 1, "wsoil")->max(0), soil_water);
+    EXPECT_EQ(get_slm_data(land_surface, 1, "tsoil")->max(0), amrex::Real(291));
+}
+
+TEST_F(SLMInterfaceTest, RemakeEvolvedLevelDoesNotRepeatInitialization)
+{
+    land_surface.Update_Lsm_Vars_Lev(0, state->cons, state->uvel, state->vvel);
+    land_surface.Advance(0, amrex::Real(0.005), amrex::Real(0.005), amrex::Real(0));
+    seed_transfer_state(0, amrex::Real(286), amrex::Real(291),
+                        amrex::Real(0.45), amrex::Real(4));
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(1);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Remake_Level(0, state->cons, state->uvel, state->vvel,
+                              state->geom, state->geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1.0), z_phys_nd, nc_init_file);
+    const amrex::Real canopy_after_remake = get_slm_data(land_surface, 0, "tveg")->max(0);
+    state->cons.setVal(amrex::Real(310.0), RhoTheta_comp, 1);
+    land_surface.Update_Lsm_Vars_Lev(0, state->cons, state->uvel, state->vvel);
+    EXPECT_EQ(get_slm_data(land_surface, 0, "tveg")->max(0), canopy_after_remake);
+    EXPECT_EQ(get_slm_data(land_surface, 0, "tsoil")->max(0), amrex::Real(291));
+    EXPECT_EQ(get_slm_data(land_surface, 0, "wsoil")->max(0), amrex::Real(0.45));
+}

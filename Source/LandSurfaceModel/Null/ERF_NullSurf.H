@@ -199,6 +199,10 @@ class NullSurf {
     amrex::Geometry
     Lsm_Atmos_Geom () { return m_lsm_geom; }
 
+    // True while atmospheric-dependent initialization is still pending.
+    [[nodiscard]] virtual bool
+    Lsm_Needs_Initialization () const { return false; }
+
     /**
      * Transfers exposed state from a source AMR level.
      */
@@ -207,7 +211,8 @@ class NullSurf {
     Lsm_Interpolate_From_Source (const amrex::Geometry& /*source_geom*/,
                                  const amrex::Geometry& /*source_lsm_geom*/,
                                  const amrex::IntVect& /*ref_ratio*/,
-                                 LSMTransferMode /*mode*/)
+                                 LSMTransferMode /*mode*/,
+                                 const bool /*source_needs_initialization*/)
     {}
 
     /**
@@ -229,7 +234,8 @@ class NullSurf {
                       const amrex::Geometry& /*source_geom*/,
                       const amrex::Geometry& /*source_lsm_geom*/,
                       const amrex::IntVect& /*source_ref_ratio*/,
-                      const bool /*has_source*/)
+                      const bool /*has_source*/,
+                      const bool /*source_needs_initialization*/)
     {}
 
     virtual

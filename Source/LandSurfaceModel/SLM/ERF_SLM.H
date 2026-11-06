@@ -253,7 +253,8 @@ public:
                       const amrex::Geometry& source_geom,
                       const amrex::Geometry& source_lsm_geom,
                       const amrex::IntVect& source_ref_ratio,
-                      const bool has_source) override;
+                      const bool has_source,
+                      const bool source_needs_initialization) override;
 
     // Wrapper to do all the updating
     void
@@ -322,6 +323,9 @@ public:
     amrex::Geometry
     Lsm_Atmos_Geom () override { return m_geom; }
 
+    [[nodiscard]] bool
+    Lsm_Needs_Initialization () const override { return first_step; }
+
     /**
      * Registers an exposed source data field.
      */
@@ -387,7 +391,8 @@ public:
     Lsm_Interpolate_From_Source (const amrex::Geometry& source_geom,
                                  const amrex::Geometry& source_lsm_geom,
                                  const amrex::IntVect& ref_ratio,
-                                 LSMTransferMode mode) override;
+                                 LSMTransferMode mode,
+                                 const bool source_needs_initialization) override;
 
     // Get number of vars lsm class contains
     int
@@ -459,7 +464,7 @@ public:
         if (first_step) {
             if (use_wrfinput && !wrfinput_initialized) {
                 this->init_wrfinput_vars();
-            } else if (!use_wrfinput) {
+            } else {
                 this->init_slm_vars();
             }
         }
