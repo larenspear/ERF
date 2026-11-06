@@ -1,3 +1,4 @@
+#include <AMReX_BCUtil.H>
 #include <ERF_SLM.H>
 #include "ERF_SLM_DefaultParams.H"
 #include "ERF_EOS.H"
@@ -180,6 +181,22 @@ SLM::Init (const int& /*lev*/,
             unmapped_fields.push_back(i);
         }
     }
+
+
+    // Private checkpoint fields must follow their state through grid changes.
+    private_checkpoint_fields = {
+        &soilt_vars, &soilw_vars, &net_rad, &slm_diag, &LAI,
+        &SAI, &sstxy, &t_canop, &mw, &mws,
+        &t_skin, &t_ground_skin, &t_cas, &q_cas, &vege_YES,
+        &cp_vege, &z0_sfc, &Khai_L, &phi_1, &phi_2,
+        &IR_emis_vege, &IR_emis_soil, &ztop, &disp_hgt, &Rgl,
+        &Rc_min, &hs_rc, &precip_extinc, &mw_mx, &mws_mx,
+        &BAI, &mw_inc, &evapo_dry, &shf_canop, &shf_soil,
+        &shf_air, &lhf_canop, &lhf_soil, &lhf_air, &albedovis_v,
+        &albedonir_v, &albedovis_s, &albedonir_s, &r_a, &r_b,
+        &r_c, &r_d, &r_soil, &wet_canop, &zrefxy,
+        &albold_noahmp, &tauss_noahmp
+    };
 
     // Initial olen to neutral condition
     lsm_fab_flux[LsmFlux_SLM::olen]->setVal(1.0E34);
@@ -1083,6 +1100,47 @@ void SLM::init_wrfinput_vars ()
     wrfinput_initialized = true;
 }
 
+namespace {
+// Interpolation reads current valid state and a freshly filled horizontal halo.
+// SLM's private checkpoint arrays have no ghosts; exposed arrays can carry
+// stale atmosphere-facing ghosts that are not part of the prognostic state.
+void interpolate_slm_field (amrex::MultiFab& fine, const amrex::MultiFab& source,
+                            const amrex::Geometry& coarse_geom,
+                            const amrex::Geometry& fine_geom,
+                            const amrex::IntVect& ratio)
+{
+    using namespace amrex;
+    AMREX_ALWAYS_ASSERT(source.nComp() == fine.nComp());
+#ifdef AMREX_USE_GPU
+    // AMReX interpolation owns internal temporaries and uses default MFIter
+    // completion. ERF's level lifecycle calls this in a synchronized region.
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!Gpu::inNoSyncRegion(),
+        "SLM state interpolation requires GPU synchronization");
+#endif
+    MultiFab coarse(source.boxArray(), source.DistributionMap(),
+                    source.nComp(), IntVect(1,1,0));
+    coarse.setVal(0);
+    MultiFab::Copy(coarse, source, 0, 0, source.nComp(), 0);
+    Gpu::streamSynchronizeAll();
+    Vector<BCRec> bcs(source.nComp());
+    for (auto& bc : bcs) {
+        for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+            const int kind = coarse_geom.isPeriodic(dir) ? BCType::int_dir : BCType::foextrap;
+            bc.setLo(dir, kind);
+            bc.setHi(dir, kind);
+        }
+    }
+    coarse.FillBoundary(coarse_geom.periodicity());
+    Gpu::streamSynchronizeAll();
+    FillDomainBoundary(coarse, coarse_geom, bcs);
+    Gpu::streamSynchronizeAll();
+    InterpFromCoarseLevel(fine, fine.nGrowVect(), IntVect(0),
+                         coarse, 0, 0, source.nComp(), coarse_geom, fine_geom,
+                         ratio, &cell_cons_interp, bcs, 0);
+    Gpu::streamSynchronizeAll(); // coarse must outlive all interpolation reads
+}
+}
+
 /**
  * Rebuilds SLM arrays on a remade atmospheric grid and transfers state.
  */
@@ -1109,7 +1167,7 @@ SLM::Lsm_Regrid_Level (const int& lev,
     const Geometry old_lsm_geom = m_lsm_geom;
     Vector<std::unique_ptr<MultiFab>> saved_data(m_lsm_data_size);
     Vector<std::unique_ptr<MultiFab>> saved_flux(m_lsm_flux_size);
-    Vector<std::unique_ptr<MultiFab>> saved_unmapped(unmapped_fields.size());
+    Vector<std::unique_ptr<MultiFab>> saved_unmapped(Lsm_Unmapped_Size());
 
     for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
         saved_data[ivar] = std::make_unique<MultiFab>(Lsm_Data_Ptr(ivar)->deepCopy());
@@ -1117,9 +1175,9 @@ SLM::Lsm_Regrid_Level (const int& lev,
     for (int ivar = 0; ivar < m_lsm_flux_size; ++ivar) {
         saved_flux[ivar] = std::make_unique<MultiFab>(Lsm_Flux_Ptr(ivar)->deepCopy());
     }
-    for (int ivar = 0; ivar < static_cast<int>(unmapped_fields.size()); ++ivar) {
+    for (int ivar = 0; ivar < Lsm_Unmapped_Size(); ++ivar) {
         saved_unmapped[ivar] = std::make_unique<MultiFab>(
-            lsm_fab_vars[unmapped_fields[ivar]]->deepCopy());
+            Lsm_Unmapped_Ptr(ivar)->deepCopy());
     }
 
     Init(lev, cons_in, u_in, v_in, geom, geom0, domain_bcs_type,
@@ -1129,24 +1187,17 @@ SLM::Lsm_Regrid_Level (const int& lev,
         Lsm_Interpolate_From_Source(source_geom, source_lsm_geom,
                                     source_ref_ratio, LSMTransferMode::ProcessedState,
                                     source_needs_initialization);
-
-        for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
-            lsm_fab_vars[LsmDataMap[ivar]]->ParallelCopy(*saved_data[ivar], 0, 0, 1);
-        }
-        for (int ivar = 0; ivar < m_lsm_flux_size; ++ivar) {
-            lsm_fab_flux[LsmFluxMap[ivar]]->ParallelCopy(*saved_flux[ivar], 0, 0, 1);
-        }
     } else {
         source_data.resize(m_lsm_data_size, nullptr);
         source_flux.resize(m_lsm_flux_size, nullptr);
-        source_unmapped.resize(unmapped_fields.size(), nullptr);
+        source_unmapped.resize(Lsm_Unmapped_Size(), nullptr);
         for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
             source_data[ivar] = saved_data[ivar].get();
         }
         for (int ivar = 0; ivar < m_lsm_flux_size; ++ivar) {
             source_flux[ivar] = saved_flux[ivar].get();
         }
-        for (int ivar = 0; ivar < static_cast<int>(unmapped_fields.size()); ++ivar) {
+        for (int ivar = 0; ivar < Lsm_Unmapped_Size(); ++ivar) {
             source_unmapped[ivar] = saved_unmapped[ivar].get();
         }
 
@@ -1155,15 +1206,24 @@ SLM::Lsm_Regrid_Level (const int& lev,
                                     was_first_step);
     }
 
+    for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
+        Lsm_Data_Ptr(ivar)->ParallelCopy(*saved_data[ivar], 0, 0, 1);
+    }
+    for (int ivar = 0; ivar < m_lsm_flux_size; ++ivar) {
+        Lsm_Flux_Ptr(ivar)->ParallelCopy(*saved_flux[ivar], 0, 0, 1);
+    }
+
     // ERF checkpoints the mapped fields and this registry of otherwise-private
     // SLM fields. Restore the latter after rebuilding the level so a remake
     // does not discard state which ERF does not expose through lsm_data.
-    for (int ivar = 0; ivar < static_cast<int>(unmapped_fields.size()); ++ivar) {
-        lsm_fab_vars[unmapped_fields[ivar]]->ParallelCopy(*saved_unmapped[ivar], 0, 0, 1);
+    for (int ivar = 0; ivar < Lsm_Unmapped_Size(); ++ivar) {
+        auto* field = Lsm_Unmapped_Ptr(ivar);
+        field->ParallelCopy(*saved_unmapped[ivar], 0, 0, field->nComp());
     }
+    restore_surface_state_planes();
+    first_step = was_first_step;
     initialize_processed_state(true);
     initialize_zrefxy();
-    first_step = was_first_step;
 
     source_data.clear();
     source_flux.clear();
@@ -1182,50 +1242,62 @@ SLM::Lsm_Interpolate_From_Source (const Geometry& source_geom,
 {
     AMREX_ALWAYS_ASSERT(static_cast<int>(source_data.size()) == m_lsm_data_size);
     AMREX_ALWAYS_ASSERT(static_cast<int>(source_flux.size()) == m_lsm_flux_size);
-    AMREX_ALWAYS_ASSERT(source_unmapped.size() == unmapped_fields.size());
+    AMREX_ALWAYS_ASSERT(static_cast<int>(source_unmapped.size()) == Lsm_Unmapped_Size());
 
     const IntVect rr2d(ref_ratio[0], ref_ratio[1], 1);
     for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
         AMREX_ALWAYS_ASSERT(source_data[ivar] != nullptr);
-        InterpFromCoarseLevel(*lsm_fab_vars[LsmDataMap[ivar]],
-                              lsm_fab_vars[LsmDataMap[ivar]]->nGrowVect(),
-                              IntVect(0,0,0), *source_data[ivar], 0, 0, 1,
-                              source_lsm_geom, m_lsm_geom, rr2d,
-                              &cell_cons_interp, m_domain_bcs_type,
-                              BCVars::cons_bc);
+        interpolate_slm_field(*lsm_fab_vars[LsmDataMap[ivar]], *source_data[ivar],
+                               source_lsm_geom, m_lsm_geom, rr2d);
     }
 
     for (int ivar = 0; ivar < m_lsm_flux_size; ++ivar) {
         AMREX_ALWAYS_ASSERT(source_flux[ivar] != nullptr);
-        InterpFromCoarseLevel(*lsm_fab_flux[LsmFluxMap[ivar]],
-                              lsm_fab_flux[LsmFluxMap[ivar]]->nGrowVect(),
-                              IntVect(0,0,0), *source_flux[ivar], 0, 0, 1,
-                              source_geom, m_geom, rr2d,
-                              &cell_cons_interp, m_domain_bcs_type,
-                              BCVars::cons_bc);
+        interpolate_slm_field(*lsm_fab_flux[LsmFluxMap[ivar]], *source_flux[ivar],
+                               source_geom, m_geom, rr2d);
     }
 
-    for (int ivar = 0; ivar < static_cast<int>(unmapped_fields.size()); ++ivar) {
+    for (int ivar = 0; ivar < Lsm_Unmapped_Size(); ++ivar) {
         AMREX_ALWAYS_ASSERT(source_unmapped[ivar] != nullptr);
-        InterpFromCoarseLevel(*lsm_fab_vars[unmapped_fields[ivar]],
-                              lsm_fab_vars[unmapped_fields[ivar]]->nGrowVect(),
-                              IntVect(0,0,0), *source_unmapped[ivar], 0, 0, 1,
-                              source_lsm_geom, m_lsm_geom, rr2d,
-                              &cell_cons_interp, m_domain_bcs_type,
-                              BCVars::cons_bc);
+        auto* field = Lsm_Unmapped_Ptr(ivar);
+        AMREX_ALWAYS_ASSERT(source_unmapped[ivar]->nComp() == field->nComp());
+        const bool soil_field = field->boxArray()[0].smallEnd(2) < 0;
+        const Geometry& cg = soil_field ? source_lsm_geom : source_geom;
+        const Geometry& fg = soil_field ? m_lsm_geom : m_geom;
+        interpolate_slm_field(*field, *source_unmapped[ivar], cg, fg, rr2d);
     }
+
+    restore_surface_state_planes();
 
     if (mode == LSMTransferMode::RawInput) {
         first_step = true;
         wrfinput_initialized = false;
     } else {
-        initialize_processed_state();
-        initialize_zrefxy();
         // At startup the source land fields precede the atmospheric initial
         // conditions. Keep the deferred canopy initialization until this
         // level's first Update_Lsm_Vars has copied its atmospheric state.
         first_step = source_needs_initialization;
+        initialize_processed_state(true);
+        initialize_zrefxy();
         wrfinput_initialized = use_wrfinput;
+    }
+}
+
+/**
+ * Restores surface values stored above the valid soil domain from their top-layer mirrors.
+ */
+void SLM::restore_surface_state_planes ()
+{
+    const int top = khi_lsm;
+    for (int ivar = 0; ivar < LsmVar_SLM::NumVars; ++ivar) {
+        auto& field = *lsm_fab_vars[ivar];
+        for (MFIter mfi(field, TileNoZ()); mfi.isValid(); ++mfi) {
+            const Box box = mfi.tilebox().makeSlab(2, 0);
+            auto values = field.array(mfi);
+            ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int) noexcept {
+                values(i, j, 0) = values(i, j, top);
+            });
+        }
     }
 }
 
@@ -1263,6 +1335,10 @@ SLM::initialize_processed_state (const bool preserve_checkpoint_fields)
 {
     const int d_khi_lsm = khi_lsm;
     const int islake = 21;
+    // Before the first step the canopy has no evolved state. Build its initial
+    // values from the processed soil fields; preserve all private state afterward.
+    const int n_preserved_unmapped = first_step
+        ? static_cast<int>(unmapped_fields.size()) : Lsm_Unmapped_Size();
 
     MultiFab saved_tsurf = lsm_fab_vars[LsmVar_SLM::tsurf]->deepCopy();
     MultiFab saved_soilt = lsm_fab_vars[LsmVar_SLM::soilt]->deepCopy();
@@ -1275,10 +1351,10 @@ SLM::initialize_processed_state (const bool preserve_checkpoint_fields)
             saved_data[ivar] = std::make_unique<MultiFab>(
                 lsm_fab_vars[LsmDataMap[ivar]]->deepCopy());
         }
-        saved_unmapped.resize(unmapped_fields.size());
-        for (int ivar = 0; ivar < static_cast<int>(unmapped_fields.size()); ++ivar) {
+        saved_unmapped.resize(n_preserved_unmapped);
+        for (int ivar = 0; ivar < n_preserved_unmapped; ++ivar) {
             saved_unmapped[ivar] = std::make_unique<MultiFab>(
-                lsm_fab_vars[unmapped_fields[ivar]]->deepCopy());
+                Lsm_Unmapped_Ptr(ivar)->deepCopy());
         }
     }
 
@@ -1334,10 +1410,13 @@ SLM::initialize_processed_state (const bool preserve_checkpoint_fields)
             MultiFab::Copy(*lsm_fab_vars[LsmDataMap[ivar]], *saved_data[ivar],
                            0, 0, 1, ng);
         }
-        for (int ivar = 0; ivar < static_cast<int>(unmapped_fields.size()); ++ivar) {
-            const IntVect ng = lsm_fab_vars[unmapped_fields[ivar]]->nGrowVect();
-            MultiFab::Copy(*lsm_fab_vars[unmapped_fields[ivar]], *saved_unmapped[ivar],
-                           0, 0, 1, ng);
+        for (int ivar = 0; ivar < n_preserved_unmapped; ++ivar) {
+            auto* field = Lsm_Unmapped_Ptr(ivar);
+            MultiFab::Copy(*field, *saved_unmapped[ivar],
+                           0, 0, field->nComp(), field->nGrowVect());
+        }
+        if (!first_step) {
+            rebuild_restart_fields();
         }
     }
 }

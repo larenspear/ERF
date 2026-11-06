@@ -358,7 +358,10 @@ public:
      * Returns the number of private SLM state fields.
      */
     int
-    Lsm_Unmapped_Size () override { return static_cast<int>(unmapped_fields.size()); }
+    Lsm_Unmapped_Size () override
+    {
+        return static_cast<int>(unmapped_fields.size() + private_checkpoint_fields.size());
+    }
 
     /**
      * Returns a private SLM state field.
@@ -366,8 +369,10 @@ public:
     amrex::MultiFab*
     Lsm_Unmapped_Ptr (const int& varIdx) override
     {
-        AMREX_ALWAYS_ASSERT(varIdx >= 0 && varIdx < static_cast<int>(unmapped_fields.size()));
-        return lsm_fab_vars[unmapped_fields[varIdx]].get();
+        AMREX_ALWAYS_ASSERT(varIdx >= 0 && varIdx < Lsm_Unmapped_Size());
+        const int nregistry = static_cast<int>(unmapped_fields.size());
+        return varIdx < nregistry ? lsm_fab_vars[unmapped_fields[varIdx]].get()
+                                  : private_checkpoint_fields[varIdx - nregistry];
     }
 
     /**
@@ -377,9 +382,9 @@ public:
     Lsm_Set_Source_Unmapped_Ptr (const int& varIdx,
                                   amrex::MultiFab* source_data_ptr) override
     {
-        AMREX_ALWAYS_ASSERT(varIdx >= 0 && varIdx < static_cast<int>(unmapped_fields.size()));
-        if (source_unmapped.size() != unmapped_fields.size()) {
-            source_unmapped.resize(unmapped_fields.size(), nullptr);
+        AMREX_ALWAYS_ASSERT(varIdx >= 0 && varIdx < Lsm_Unmapped_Size());
+        if (static_cast<int>(source_unmapped.size()) != Lsm_Unmapped_Size()) {
+            source_unmapped.resize(Lsm_Unmapped_Size(), nullptr);
         }
         source_unmapped[varIdx] = source_data_ptr;
     }
@@ -505,6 +510,7 @@ public:
     void init_soil_tw ();
 
     void init_slm_vars ();
+    void restore_surface_state_planes ();
 
     /**
      * Initializes local SLM fields from WRFInput data.
@@ -715,6 +721,8 @@ private:
     amrex::Vector<amrex::MultiFab*> source_data;
     amrex::Vector<amrex::MultiFab*> source_flux;
     amrex::Vector<amrex::MultiFab*> source_unmapped;
+    // Additional checkpoint state; disk indices in unmapped_fields stay unchanged.
+    amrex::Vector<amrex::MultiFab*> private_checkpoint_fields;
 
     // Number of grid points in z
     int m_nz_lsm = 7;

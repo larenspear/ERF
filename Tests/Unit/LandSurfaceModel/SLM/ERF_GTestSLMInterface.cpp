@@ -17,6 +17,7 @@
 #include <AMReX_RealBox.H>
 #include <AMReX_Reduce.H>
 #include <AMReX_Utility.H>
+#include <AMReX_VisMF.H>
 
 #include <gtest/gtest.h>
 
@@ -1221,4 +1222,210 @@ TEST_F(SLMInterfaceTest, RemakeEvolvedLevelDoesNotRepeatInitialization)
     EXPECT_EQ(get_slm_data(land_surface, 0, "tveg")->max(0), canopy_after_remake);
     EXPECT_EQ(get_slm_data(land_surface, 0, "tsoil")->max(0), amrex::Real(291));
     EXPECT_EQ(get_slm_data(land_surface, 0, "wsoil")->max(0), amrex::Real(0.45));
+}
+
+
+namespace {
+std::filesystem::path write_preservation_checkpoint (
+    LandSurface& ls, const int lev, const std::string& tag)
+{
+    auto path = erf_gtest_temp_path("slm_preservation_" + tag);
+    std::filesystem::create_directories(path / ("Level_" + std::to_string(lev)));
+    ls.WriteCheckpoint(lev, path.string());
+    return path;
+}
+
+amrex::Real checkpoint_max (const std::filesystem::path& path,
+                           const int lev, const std::string& name)
+{
+    amrex::MultiFab field;
+    amrex::VisMF::Read(field, (path / ("Level_" + std::to_string(lev)) /
+                             ("SLM_" + name)).string());
+    return field.max(0);
+}
+
+void seed_evolved_atmosphere (SLMTestState& state)
+{
+    state.cons.setVal(0.0);
+    state.cons.setVal(amrex::Real(1.0), Rho_comp, 1);
+    state.cons.setVal(amrex::Real(300.0), RhoTheta_comp, 1);
+    state.cons.setVal(amrex::Real(0.01), RhoQ1_comp, 1);
+    state.uvel.setVal(0.1);
+    state.vvel.setVal(0.1);
+}
+
+void evolve_with_rain (LandSurface& ls, const int lev, SLMTestState& state,
+                       const amrex::Real rainfall = amrex::Real(0.02))
+{
+    seed_evolved_atmosphere(state);
+    ls.Update_Lsm_Vars_Lev(lev, state.cons, state.uvel, state.vvel);
+    const auto* soil = get_slm_data(ls, lev, "tsurf");
+    const auto surface_ba = make_surface_box_array(soil->boxArray());
+    amrex::MultiFab rain(surface_ba, soil->DistributionMap(), 1, amrex::IntVect(0));
+    rain.setVal(rainfall);
+    ls.set_LSM_precip_input(lev, &rain);
+    ls.Advance(lev, amrex::Real(0.3), amrex::Real(0.3), amrex::Real(0));
+}
+
+void expect_private_preserved (const std::filesystem::path& before,
+                              const int before_lev,
+                              const std::filesystem::path& after,
+                              const int after_lev)
+{
+    for (const char* name : {"t_canop", "mw", "mws", "t_ground_skin", "t_cas", "q_cas"}) {
+        const auto expected = checkpoint_max(before, before_lev, name);
+        const auto actual = checkpoint_max(after, after_lev, name);
+        EXPECT_EQ(actual, expected) << name; // uniform fields transfer exactly
+    }
+}
+
+void expect_preserved_surface_partition (amrex::MultiFab& actual,
+                                         amrex::Real coarse_value,
+                                         amrex::Real retained_value)
+{
+    // The old patch covers x=0,1. Only x=2,3 must inherit the coarse state.
+    // A pointwise check also rejects exchanging those two equally sized regions.
+    for (amrex::MFIter mfi(actual); mfi.isValid(); ++mfi) {
+        const auto values = actual.array(mfi);
+        amrex::ParallelFor(mfi.validbox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                values(i,j,k) -= i < 2 ? retained_value : coarse_value;
+            });
+    }
+    EXPECT_FALSE(actual.contains_nan());
+    EXPECT_EQ(actual.norm0(), amrex::Real(0));
+}
+}
+
+TEST_F(SLMInterfaceTest, PrivatePreservationCheckpointRoundTripControl)
+{
+    evolve_with_rain(land_surface, 0, *state);
+    const auto before = write_preservation_checkpoint(land_surface, 0, "roundtrip_before");
+    ASSERT_GT(checkpoint_max(before, 0, "mw"), amrex::Real(1.e-6));
+    land_surface.ReadCheckpoint(0, before.string());
+    const auto after = write_preservation_checkpoint(land_surface, 0, "roundtrip_after");
+    expect_private_preserved(before, 0, after, 0);
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, PrivatePreservationProcessedTransfer)
+{
+    initialize_multilevel(2);
+    evolve_with_rain(land_surface, 0, *multilevel_states[0]);
+    const auto before = write_preservation_checkpoint(land_surface, 0, "transfer_before");
+    ASSERT_GT(checkpoint_max(before, 0, "mw"), amrex::Real(1.e-6));
+    land_surface.Initialize_From_Source(1, 0, amrex::IntVect(2),
+                                         LSMTransferMode::ProcessedState);
+    const auto after = write_preservation_checkpoint(land_surface, 1, "transfer_after");
+    expect_private_preserved(before, 0, after, 1);
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, PrivatePreservationSameLayoutRemake)
+{
+    evolve_with_rain(land_surface, 0, *state);
+    const auto before = write_preservation_checkpoint(land_surface, 0, "remake_before");
+    const auto public_canopy = get_slm_data(land_surface, 0, "tveg")->max(0);
+    const auto public_water = get_slm_data(land_surface, 0, "mv")->max(0);
+    ASSERT_GT(checkpoint_max(before, 0, "mw"), amrex::Real(1.e-6));
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(1);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Remake_Level(0, state->cons, state->uvel, state->vvel,
+                              state->geom, state->geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1.0), z_phys_nd, nc_init_file);
+    EXPECT_EQ(get_slm_data(land_surface, 0, "tveg")->max(0), public_canopy);
+    EXPECT_EQ(get_slm_data(land_surface, 0, "mv")->max(0), public_water);
+    const auto after = write_preservation_checkpoint(land_surface, 0, "remake_after");
+    expect_private_preserved(before, 0, after, 0);
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, PrivatePreservationRepartitionedRemake)
+{
+    evolve_with_rain(land_surface, 0, *state);
+    const auto before = write_preservation_checkpoint(land_surface, 0, "repartition_before");
+    ASSERT_GT(checkpoint_max(before, 0, "mw"), amrex::Real(1.e-6));
+    amrex::BoxArray boxes = state->ba;
+    boxes.maxSize(amrex::IntVect(1, 1, 8));
+    amrex::DistributionMapping dm(boxes);
+    amrex::MultiFab cons(boxes, dm, 8, amrex::IntVect(0));
+    amrex::MultiFab u(amrex::convert(boxes, amrex::IntVect(1, 0, 0)), dm, 1, amrex::IntVect(0));
+    amrex::MultiFab v(amrex::convert(boxes, amrex::IntVect(0, 1, 0)), dm, 1, amrex::IntVect(0));
+    cons.ParallelCopy(state->cons);
+    u.ParallelCopy(state->uvel);
+    v.ParallelCopy(state->vvel);
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(1);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Remake_Level(0, cons, u, v,
+                              state->geom, state->geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1.0), z_phys_nd, nc_init_file);
+    const auto after = write_preservation_checkpoint(land_surface, 0, "repartition_after");
+    expect_private_preserved(before, 0, after, 0);
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, PrivatePreservationRemakeUsesCoarseForNewCells)
+{
+    initialize_multilevel(2);
+    auto& coarse = *multilevel_states[0];
+    auto& fine = *multilevel_states[1];
+    evolve_with_rain(land_surface, 0, coarse);
+    SLMTestState partial(amrex::Box(amrex::IntVect(0,0,0), amrex::IntVect(1,3,7)));
+    partial.geom = fine.geom;
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(2);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Init(1, partial.cons, partial.uvel, partial.vvel,
+                      fine.geom, coarse.geom, domain_bcs_type, ref_ratio,
+                      amrex::Real(1), z_phys_nd, nc_init_file);
+    evolve_with_rain(land_surface, 1, partial, amrex::Real(0.04));
+    const auto saved_coarse = write_preservation_checkpoint(land_surface, 0, "newcells_coarse");
+    const auto saved_fine = write_preservation_checkpoint(land_surface, 1, "newcells_fine");
+    land_surface.Remake_Level(1, fine.cons, fine.uvel, fine.vvel,
+                              fine.geom, coarse.geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1), z_phys_nd, nc_init_file,
+                              0, amrex::IntVect(2));
+    const auto after = write_preservation_checkpoint(land_surface, 1, "newcells_after");
+    for (const char* name : {"t_canop", "mw", "mws", "t_ground_skin", "t_cas", "q_cas"}) {
+        const auto coarse_value = checkpoint_max(saved_coarse, 0, name);
+        const auto fine_value = checkpoint_max(saved_fine, 1, name);
+        amrex::MultiFab actual;
+        amrex::VisMF::Read(actual, (after / "Level_1" / (std::string("SLM_") + name)).string());
+        SCOPED_TRACE(name);
+        expect_preserved_surface_partition(actual, coarse_value, fine_value);
+    }
+    EXPECT_GT(checkpoint_max(saved_fine, 1, "mw"), checkpoint_max(saved_coarse, 0, "mw"));
+    std::filesystem::remove_all(saved_coarse);
+    std::filesystem::remove_all(saved_fine);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, PrivatePreservationTransferIgnoresStaleSourceHalos)
+{
+    initialize_multilevel(3);
+    evolve_with_rain(land_surface, 1, *multilevel_states[1]);
+    set_surface_temperature_gradient(land_surface, 1, amrex::Real(290));
+    land_surface.Initialize_From_Source(2, 1, amrex::IntVect(2),
+                                         LSMTransferMode::ProcessedState);
+    auto expected = get_slm_data(land_surface, 2, "tsurf")->deepCopy();
+    for (int var = 0; var < land_surface.Get_Data_Size(); ++var) {
+        land_surface.Get_Data_Ptr(1, var)->setBndry(amrex::Real(-1000));
+    }
+    for (int var = 0; var < land_surface.Get_Flux_Size(); ++var) {
+        land_surface.Get_Flux_Ptr(1, var)->setBndry(amrex::Real(-1000));
+    }
+    land_surface.Initialize_From_Source(2, 1, amrex::IntVect(2),
+                                         LSMTransferMode::ProcessedState);
+    auto difference = get_slm_data(land_surface, 2, "tsurf")->deepCopy();
+    amrex::MultiFab::Subtract(difference, expected, 0, 0, 1, 0);
+    EXPECT_EQ(difference.norm0(0), amrex::Real(0));
 }
