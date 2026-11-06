@@ -1,4 +1,5 @@
 #include <random>
+#include <AMReX_MultiFabUtil.H>
 #include "ERF_SuperDropletPC.H"
 
 #ifdef ERF_USE_PARTICLES
@@ -244,7 +245,8 @@ void SuperDropletPC::setNumSDBubbleDistribution ( int a_lev,
 */
 void SuperDropletPC::addParticles ( int a_lev,
                                     const MFPtr& a_height_ptr, /*!< terrain */
-                                    const SDInitProperties& a_init /*!< initialization parameters */ )
+                                    const SDInitProperties& a_init, /*!< initialization parameters */
+                                    const bool a_initialization )
 {
     BL_PROFILE("SuperDropletPC::addParticles");
 
@@ -326,6 +328,25 @@ void SuperDropletPC::addParticles ( int a_lev,
         amrex::Error("See error message!");
     }
 
+    // Cold-start seeding visits every active AMR level. Only the finest
+    // available cells own that population; covered coarse cells must not
+    // create another copy. Injection visits level zero only and remains
+    // unmasked so redistribution can carry its particles to finer levels.
+    iMultiFab uncovered;
+    if (a_initialization && a_lev < finestLevel()) {
+        uncovered = makeFineMask(ParticleBoxArray(a_lev),
+                                  ParticleDistributionMap(a_lev),
+                                  ParticleBoxArray(a_lev + 1),
+                                  GetParGDB()->refRatio(a_lev), 1, 0);
+        for (MFIter mfi(num_superdroplets); mfi.isValid(); ++mfi) {
+            const auto count = num_superdroplets.array(mfi);
+            const auto mask = uncovered.const_array(mfi);
+            ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                if (mask(i,j,k) == 0) { count(i,j,k) = 0; }
+            });
+        }
+    }
+
     iMultiFab offsets( ParticleBoxArray(a_lev),
                        ParticleDistributionMap(a_lev),
                        1, 0 );
@@ -345,6 +366,8 @@ void SuperDropletPC::addParticles ( int a_lev,
                                        Scan::Type::exclusive,
                                        Scan::retSum );
         }
+        // A covered or empty tile has no particle storage to address.
+        if (np == 0) { continue; }
         auto offset_arr = offsets[mfi].array();
 
         auto& particle_tile = DefineAndReturnParticleTile(a_lev, mfi);
@@ -460,6 +483,7 @@ void SuperDropletPC::addParticles ( int a_lev,
         ParallelForRNG(tile_box, [=] AMREX_GPU_DEVICE (int i, int j, int k, const RandomEngine& rnd_engine) noexcept
         {
             int num_sd_this_cell = num_superdroplets_arr(i,j,k);
+            if (num_sd_this_cell == 0) { return; }
             Real num_to_add = num_par_per_cell;
             Real n_par_per_supdrop = std::ceil(num_par_per_cell/num_sd_per_cell);
 
@@ -523,7 +547,8 @@ void SuperDropletPC::addParticles ( int a_lev,
                     }
                 }
 
-                active_ptr[n] = 1;
+                // Positive tags record the level where this SD was created.
+                active_ptr[n] = a_lev + 1;
                 vx_ptr[n] = vy_ptr[n] = vz_ptr[n] = zero;
 
                 if (perbox) {

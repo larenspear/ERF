@@ -170,7 +170,8 @@ class SuperDropletPC : public ERFPC
         virtual void InjectParticles (const double, const MFPtr& a_ptr, const double);
 
         /*! \brief add particles for a given set of initialization parameters */
-        void addParticles ( int a_lev, const MFPtr&, const SDInitProperties& );
+        void addParticles ( int a_lev, const MFPtr&, const SDInitProperties&,
+                            bool a_initialization );
 
         /*! \brief Set initial number of superdroplets per cell as a box with uniform density */
         void setNumSDBoxDistribution ( int a_lev,

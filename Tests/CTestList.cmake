@@ -3639,6 +3639,13 @@ if(TARGET erf_precipitation_checkpoint_tool)
                 --work-dir "${CMAKE_CURRENT_BINARY_DIR}/particle_ground_restart")
         set_tests_properties(ParticleGroundMassRestart_Runtime PROPERTIES
             TIMEOUT 180 PROCESSORS 1 LABELS "regression;microphysics;checkpoint")
+        add_test(NAME ParticleInitialization_Runtime
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/Tests/check_particle_initialization_runtime.py
+                --erf "${_precip_history_exe}"
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/particle_initialization")
+        set_tests_properties(ParticleInitialization_Runtime PROPERTIES
+            TIMEOUT 300 PROCESSORS 1 LABELS "regression;microphysics;amr")
     endif()
     add_test(NAME SLM_PrecipitationRestart_Runtime
         COMMAND ${Python3_EXECUTABLE}

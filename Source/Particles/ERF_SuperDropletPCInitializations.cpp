@@ -379,7 +379,7 @@ void SuperDropletPC::InitializeParticles (const int a_lev, const double a_t, con
         if (a_lev == 0) {
             m_initializations[i]->printParameters(m_species_mat, m_aerosol_mat);
         }
-        addParticles( a_lev, a_ptr, *(m_initializations[i]) );
+        addParticles( a_lev, a_ptr, *(m_initializations[i]), true );
         Print() << "  Particle container size (level " << a_lev << "): "
                 << NumberOfParticlesAtLevel(a_lev) << "\n";
     }
@@ -406,7 +406,7 @@ void SuperDropletPC::InjectParticles (const double a_t, const MFPtr& a_ptr, cons
         if (active) {
             Print() << "SuperDropletPC(" << m_name << "): "
                     << " injecting particles (" << i << ").\n";
-            addParticles( 0, a_ptr, *(m_injections[i]) );
+            addParticles( 0, a_ptr, *(m_injections[i]), false );
             Print() << "    Particle container size: " << NumSuperDroplets() << "\n";
         }
     }
