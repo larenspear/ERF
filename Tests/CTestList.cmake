@@ -3556,6 +3556,25 @@ add_test_restart_parity(SLM_Restart SLM_Restart 7 20
     FCOMPARE_RTOL "0.0" FCOMPARE_ATOL "0.0")
 endif()
 
+# File-less SLM fine levels also initialize in builds without NetCDF.
+resolve_test_exe("" "erf_exec" _slm_fine_exe)
+set(_slm_fine_mpiexec "")
+if(ERF_ENABLE_MPI)
+    set(_slm_fine_mpiexec "${MPIEXEC_EXECUTABLE}")
+endif()
+add_test(NAME SLM_FineInit COMMAND ${CMAKE_COMMAND}
+    "-DTEST_EXE=${_slm_fine_exe}"
+    "-DINPUT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/test_files/SLM_Restart"
+    "-DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/test_files/SLM_FineInit"
+    "-DMPIEXEC=${_slm_fine_mpiexec}"
+    "-DMPIEXEC_NUMPROC_FLAG=${MPIEXEC_NUMPROC_FLAG}"
+    "-DMPIEXEC_PREFLAGS=${MPIEXEC_PREFLAGS}"
+    "-DCONFIG=$<CONFIG>"
+    -P "${PROJECT_SOURCE_DIR}/Tests/RunSLMFineInit.cmake")
+set_tests_properties(SLM_FineInit PROPERTIES
+    TIMEOUT 120 PROCESSORS 1 LABELS "regression;lsm"
+    ATTACHED_FILES_ON_FAIL "${CMAKE_CURRENT_BINARY_DIR}/test_files/SLM_FineInit/SLM_FineInit.log")
+
 # The same deck across a level-0 regrid, which ReadCheckpointFile still refuses: SLM does its
 # own checkpoint I/O and reads onto the grids the run uses, so it cannot yet take grids that
 # moved. Checkpoint on one rank and restart on two to reach the automatic branch without

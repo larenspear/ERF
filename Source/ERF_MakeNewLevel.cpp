@@ -17,6 +17,7 @@
 #include "ERF_ProbCommon.H"
 #include "ERF_SBMStateManager.H"
 #include "ERF_SBMTransport.H"
+#include "ERF_PrecipitationRemap.H"
 
 using namespace amrex;
 
@@ -1363,10 +1364,8 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     Interp2DArrays(lev,ba2d[lev],dm);
 
     if (precip[lev] && old_precip) {
-        IntVect ngv = precip[lev]->nGrowVect(); ngv[2] = 0;
-        precip[lev]->ParallelCopy(*old_precip, 0, 0, 1, ngv, ngv,
-                                  geom[lev].periodicity());
-        precip[lev]->FillBoundary(geom[lev].periodicity());
+        erf_precipitation::restore_accumulation(*precip[lev], *old_precip,
+                                                geom[lev].periodicity());
     }
 
     // *******************************************************************************************
@@ -1708,7 +1707,7 @@ ERF::make_lsm_at_level (int lev, bool from_regrid,
                 // ERF-populated WRFInput fields are transferred raw so SLM performs its
                 // conversions once; idealized fields use the already-processed state.
                 if ((restart_chkfile.empty() || source_lev >= 0) &&
-                    nc_init_file[lev].empty() &&
+                    !has_own_init_file(lev) &&
                     solverChoice.init_type != InitType::Metgrid) {
                     IntVect source_ref_ratio(1);
                     if (source_lev < 0) {
