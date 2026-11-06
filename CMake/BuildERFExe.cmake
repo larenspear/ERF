@@ -527,6 +527,7 @@ function(build_erf_lib erf_lib_name)
        ${SRC_DIR}/Diagnostics/ERF_SeaLevelPressure.cpp
        ${SRC_DIR}/IO/ERF_WriteSubvolume.cpp
        ${SRC_DIR}/IO/ERF_WriteJobInfo.cpp
+       ${SRC_DIR}/IO/ERF_DescribeJSON.cpp
        ${SRC_DIR}/IO/ERF_NoahMPGitHash.cpp
        ${SRC_DIR}/IO/ERF_ConsoleIO.cpp
        ${SRC_DIR}/IO/ERF_ReadFromERFBdy.cpp
@@ -667,6 +668,41 @@ function(build_erf_lib erf_lib_name)
 
   include(AMReXBuildInfo)
   generate_buildinfo(${erf_lib_name} ${PROJECT_SOURCE_DIR})
+
+  # Like AMReX build info, source identity is captured at configure time.
+  # Reconfigure after changing source. The generator also serves GNU Make.
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  set(_erf_gpu_backend none)
+  set(_erf_gpu_targets "")
+  if(ERF_ENABLE_CUDA)
+    set(_erf_gpu_backend cuda)
+    get_target_property(_erf_gpu_targets ${erf_lib_name} CUDA_ARCHITECTURES)
+  elseif(ERF_ENABLE_HIP)
+    set(_erf_gpu_backend hip)
+    set(_erf_gpu_targets "${AMReX_AMD_ARCH}")
+  elseif(ERF_ENABLE_SYCL)
+    set(_erf_gpu_backend sycl)
+    if(AMReX_SYCL_AOT)
+      set(_erf_gpu_targets "${AMReX_INTEL_ARCH}")
+    endif()
+  endif()
+  if(_erf_gpu_targets MATCHES "-NOTFOUND$")
+    set(_erf_gpu_targets "")
+  endif()
+  set(_erf_amrex_source "")
+  if(ERF_USE_INTERNAL_AMREX)
+    set(_erf_amrex_source "${AMREX_SUBMOD_LOCATION}")
+  endif()
+  set(_erf_metadata "${CMAKE_CURRENT_BINARY_DIR}/ERF_BuildMetadata.cpp")
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/Tools/build_metadata.py
+      --source "${PROJECT_SOURCE_DIR}" --amrex "${_erf_amrex_source}"
+      --build-system cmake --gpu-backend "${_erf_gpu_backend}"
+      --gpu-targets "${_erf_gpu_targets}" --output "${_erf_metadata}"
+    COMMAND_ERROR_IS_FATAL ANY)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/Tools/build_metadata.py")
+  target_sources(${erf_lib_name} PRIVATE "${_erf_metadata}")
 
   # AMReX's generate_buildinfo() hard-codes exactly two hash slots (the app and
   # AMReX), so the Noah-MP hash is captured here instead and compiled into

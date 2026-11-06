@@ -1,0 +1,401 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:erf:build-description:1",
+  "title": "ERF executable build description, version 1",
+  "description": "Schema for --describe-json and the data obtained by safely loading --describe-yaml. Unknown values are explicit nulls; additive fields are permitted.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "application",
+    "build",
+    "source_describe",
+    "dimension",
+    "real_bits",
+    "particle_real_bits",
+    "gpu_backend",
+    "features",
+    "compiler",
+    "dependencies",
+    "mpi_standard"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "application": {
+      "type": "string",
+      "const": "ERF"
+    },
+    "build": {
+      "type": "object",
+      "required": [
+        "build_system",
+        "source",
+        "amrex_source",
+        "gpu_target_settings"
+      ],
+      "properties": {
+        "build_system": {
+          "enum": [
+            "cmake",
+            "gnu-make"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/source_identity"
+        },
+        "amrex_source": {
+          "$ref": "#/$defs/source_identity"
+        },
+        "gpu_target_settings": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Build-system tokens; [] for CPU, null if GPU targets are unavailable. Not a hardware or device-code probe."
+        }
+      },
+      "additionalProperties": true
+    },
+    "source_describe": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dimension": {
+      "type": "integer",
+      "const": 3
+    },
+    "real_bits": {
+      "type": "integer",
+      "enum": [
+        32,
+        64
+      ]
+    },
+    "particle_real_bits": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "enum": [
+        32,
+        64,
+        null
+      ]
+    },
+    "gpu_backend": {
+      "enum": [
+        "none",
+        "cuda",
+        "hip",
+        "sycl"
+      ]
+    },
+    "features": {
+      "type": "object",
+      "required": [
+        "mpi",
+        "openmp",
+        "particles",
+        "fft",
+        "netcdf",
+        "hdf5",
+        "noahmp",
+        "rrtmgp",
+        "eamxx_shoc",
+        "windfarm",
+        "native_shoc",
+        "morrison_fortran",
+        "wsm6_fortran",
+        "wdm6_fortran",
+        "multiblock",
+        "ww3_coupling"
+      ],
+      "properties": {
+        "mpi": {
+          "type": "boolean"
+        },
+        "openmp": {
+          "type": "boolean"
+        },
+        "particles": {
+          "type": "boolean"
+        },
+        "fft": {
+          "type": "boolean"
+        },
+        "netcdf": {
+          "type": "boolean"
+        },
+        "hdf5": {
+          "type": "boolean"
+        },
+        "noahmp": {
+          "type": "boolean"
+        },
+        "rrtmgp": {
+          "type": "boolean"
+        },
+        "eamxx_shoc": {
+          "type": "boolean"
+        },
+        "windfarm": {
+          "type": "boolean"
+        },
+        "native_shoc": {
+          "type": "boolean"
+        },
+        "morrison_fortran": {
+          "type": "boolean"
+        },
+        "wsm6_fortran": {
+          "type": "boolean"
+        },
+        "wdm6_fortran": {
+          "type": "boolean"
+        },
+        "multiblock": {
+          "type": "boolean"
+        },
+        "ww3_coupling": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "description": "Compiled capabilities, not active physics or site qualification."
+    },
+    "compiler": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "dependencies": {
+      "type": "object",
+      "required": [
+        "amrex",
+        "noahmp",
+        "netcdf",
+        "fft"
+      ],
+      "properties": {
+        "amrex": {
+          "type": "object",
+          "required": [
+            "version",
+            "describe"
+          ],
+          "properties": {
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "describe": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "noahmp": {
+          "type": "object",
+          "required": [
+            "describe"
+          ],
+          "properties": {
+            "describe": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "netcdf": {
+          "type": "object",
+          "required": [
+            "version"
+          ],
+          "properties": {
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "fft": {
+          "type": "object",
+          "required": [
+            "provider",
+            "version"
+          ],
+          "properties": {
+            "provider": {
+              "enum": [
+                null,
+                "fftw",
+                "cufft",
+                "rocfft",
+                "onemkl"
+              ]
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "mpi_standard": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "major",
+            "minor"
+          ],
+          "properties": {
+            "major": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minor": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": true
+        }
+      ],
+      "description": "MPI standard at compile time, not MPI implementation or host ABI compatibility."
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "source_identity": {
+      "type": "object",
+      "required": [
+        "revision",
+        "tracked_dirty"
+      ],
+      "properties": {
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "tracked_dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true,
+      "description": "Git-reported identity only; not a full content hash or container reuse decision."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "features": {
+            "properties": {
+              "particles": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "particle_real_bits": {
+            "type": "integer",
+            "enum": [
+              32,
+              64
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "particle_real_bits": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "features": {
+            "properties": {
+              "mpi": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "mpi_standard": {
+            "type": "object"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "mpi_standard": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

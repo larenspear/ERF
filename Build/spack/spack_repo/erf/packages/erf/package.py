@@ -194,6 +194,8 @@ class Erf(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("fortran", when="+eamxx_shoc")
         # The Noah-MP ERF driver generates part of its interface with Python (26.09+).
         depends_on("python@3:", when="+noahmp")
+        # Native build-description metadata is generated during configuration.
+        depends_on("python@3:", when="@develop")
         # ERF's FindNetCDF tries pkg-config before nc-config.
         depends_on("pkgconfig", when="+netcdf")
         # Replaces the bundled googletest submodule, which is not fetched (see patch()).

@@ -768,6 +768,9 @@ message(STATUS "Configuring installation")
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
+install(FILES Docs/schema/erf-build-description-v1.schema.json
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/erf/schema)
+
 # Create non-object library for use as external target
 add_library(erf_api)
 if (BUILD_SHARED_LIBS)

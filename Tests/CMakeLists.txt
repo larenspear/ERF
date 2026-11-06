@@ -19,6 +19,8 @@ if(ERF_ENABLE_TESTS OR ERF_ENABLE_UNIT_TESTS)
 
   set(ERF_PARALLEL_TEST_MPIEXEC_PREFLAGS "" CACHE STRING
       "Extra mpiexec preflags for parallel GoogleTest unit tests")
+
+  add_subdirectory(BuildDescription)
 endif()
 
 if(ERF_ENABLE_TESTS)
