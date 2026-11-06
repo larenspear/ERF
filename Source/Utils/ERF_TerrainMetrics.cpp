@@ -14,6 +14,54 @@
 
 using namespace amrex;
 
+namespace {
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+bool valid_physical_layer (Real lower, Real upper) noexcept
+{
+    const Real dz = upper - lower;
+    return amrex::Math::isfinite(lower) && amrex::Math::isfinite(upper) &&
+           amrex::Math::isfinite(dz) && dz > Real(0);
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+bool valid_physical_cell (Array4<Real const> const& z, int i, int j, int k) noexcept
+{
+    return valid_physical_layer(z(i,j,k), z(i,j,k+1)) &&
+           valid_physical_layer(z(i+1,j,k), z(i+1,j,k+1)) &&
+           valid_physical_layer(z(i,j+1,k), z(i,j+1,k+1)) &&
+           valid_physical_layer(z(i+1,j+1,k), z(i+1,j+1,k+1));
+}
+
+void reject_invalid_physical_grid (int invalid)
+{
+    ParallelDescriptor::ReduceIntMax(invalid);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(invalid == 0,
+        "Physical vertical grid must have finite, strictly positive stored layer "
+        "thicknesses and metrics. Terrain translation or grid spacing may be "
+        "unrepresentable at the configured precision.");
+}
+
+// Check stored valid nodal edges after the terrain transformation. Metric and
+// minimum-spacing routines also check the ghost edges their own stencils read.
+void validate_mapped_physical_grid (MultiFab const& z_phys_nd)
+{
+    ReduceOps<ReduceOpMax> reduce_op;
+    ReduceData<int> reduce_data(reduce_op);
+    for (MFIter mfi(z_phys_nd); mfi.isValid(); ++mfi) {
+        Box bx = mfi.validbox();
+        bx.growHi(2, -1);
+        auto const z = z_phys_nd.const_array(mfi);
+        reduce_op.eval(bx, reduce_data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) -> GpuTuple<int> {
+                return {valid_physical_layer(z(i,j,k), z(i,j,k+1)) ? 0 : 1};
+            });
+    }
+    reject_invalid_physical_grid(get<0>(reduce_data.value(reduce_op)));
+}
+
+} // namespace
+
 void
 validate_flat_terrain (int lev,
                        const MultiFab& z_phys_nd,
@@ -442,6 +490,7 @@ make_terrain_fitted_coords (int lev,
             });
         }
     }
+    validate_mapped_physical_grid(z_phys_nd);
 } // make_terrain_fitted_coords
 
 /**
@@ -1058,23 +1107,25 @@ make_J (const Geometry& geom,
     // Number of ghost cells
     int ngrow= detJ_cc.nGrow();
 
-#ifdef _OPENMP
-#pragma omp parallel if (Gpu::notInLaunchRegion())
-#endif
-    for ( MFIter mfi(detJ_cc, TilingIfNotGPU()); mfi.isValid(); ++mfi )
-    {
-        Box gbx = mfi.growntilebox(ngrow);
-        if (gbx.smallEnd(2) < domlo_z) {
-            gbx.setSmall(2,domlo_z);
-        }
-        Array4<Real const> z_nd = z_phys_nd.const_array(mfi);
-        Array4<Real      > detJ = detJ_cc.array(mfi);
-        ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-           detJ(i, j, k) = Real(.25) * dzInv * (
+    // Fuse validation with metric construction so all ghost edges consumed by
+    // this stencil are checked before any caller uses the resulting metric.
+    auto const& za = z_phys_nd.const_arrays();
+    auto const& ja = detJ_cc.arrays();
+    const auto result = ParReduce(TypeList<ReduceOpMax>{}, TypeList<int>{},
+        detJ_cc, IntVect(ngrow),
+        [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) noexcept -> GpuTuple<int>
+        {
+            if (k < domlo_z) { return {0}; }
+            auto const z_nd = za[box_no];
+            const Real metric = Real(.25) * dzInv * (
                    z_nd(i,j,k+1) + z_nd(i+1,j,k+1) + z_nd(i,j+1,k+1) + z_nd(i+1,j+1,k+1)
                   -z_nd(i,j,k  ) - z_nd(i+1,j,k  ) - z_nd(i,j+1,k  ) - z_nd(i+1,j+1,k  ) );
+            ja[box_no](i,j,k) = metric;
+            const bool valid = valid_physical_cell(z_nd, i, j, k) &&
+                               amrex::Math::isfinite(metric) && metric > Real(0);
+            return {valid ? 0 : 1};
         });
-    }
+    reject_invalid_physical_grid(result);
     detJ_cc.FillBoundary(geom.periodicity());
 }
 
@@ -1177,17 +1228,23 @@ Real
 get_dzmin_terrain (MultiFab& z_phys_nd)
 {
     auto const& ma_z_nd_arr = z_phys_nd.const_arrays();
-    GpuTuple<Real> min = ParReduce(TypeList<ReduceOpMin>{},
-                                   TypeList<Real>{},
+    const auto result = ParReduce(TypeList<ReduceOpMin, ReduceOpMax>{},
+                                   TypeList<Real, int>{},
                                    z_phys_nd, IntVect(0),
                                    [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) noexcept
-                                   -> GpuTuple<Real>
+                                   -> GpuTuple<Real, int>
                                    {
-                                       amrex::Real dz = Compute_Z_AtWFace(i,j,k+1,ma_z_nd_arr[box_no]) -
-                                                        Compute_Z_AtWFace(i,j,k  ,ma_z_nd_arr[box_no]);
-                                       return { dz };
+                                       auto const z = ma_z_nd_arr[box_no];
+                                       const Real dz = Compute_Z_AtWFace(i,j,k+1,z) -
+                                                       Compute_Z_AtWFace(i,j,k  ,z);
+                                       const bool valid = valid_physical_cell(z, i, j, k) &&
+                                           amrex::Math::isfinite(dz) && dz > Real(0);
+                                       // The separate integer flag cannot lose a NaN
+                                       // through the backend's minimum reduction.
+                                       return {valid ? dz : Real(0), valid ? 0 : 1};
                                    });
-    Real r = (get<0>(min) + std::numeric_limits<amrex::Real>::epsilon());
+    reject_invalid_physical_grid(get<1>(result));
+    Real r = (get<0>(result) + std::numeric_limits<amrex::Real>::epsilon());
     ParallelDescriptor::ReduceRealMin(r);
     return r;
 }

@@ -245,6 +245,7 @@ target_sources(${erf_exe_name}
     # Motivation: erf.initial_dz without a stretching ratio must solve for the ratio that
     # closes the grid on prob_hi, and an explicit ratio must not be solved for.
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestInitZLevels.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Utils/ERF_GTestTerrainPhysicalGrid.cpp
     # Scratch storage must follow reinitialized layouts and survive template/move destruction.
     ${CMAKE_CURRENT_SOURCE_DIR}/TimeIntegration/ERF_GTestMRIStorage.cpp
     # Motivation: a BTF fine level's mesh must not depend on how its grids are split in z.
