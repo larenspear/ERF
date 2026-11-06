@@ -3951,3 +3951,19 @@ endif()
 #=============================================================================
 # Performance tests
 #=============================================================================
+
+# Exercise nonzero vertical projection residuals; exit status alone misses wrong fluxes.
+if(UNIX AND ERF_ENABLE_FFT AND ERF_PRECISION STREQUAL "DOUBLE"
+   AND NOT ERF_ENABLE_MPI
+   AND NOT (ERF_ENABLE_CUDA OR ERF_ENABLE_HIP OR ERF_ENABLE_SYCL)
+   AND Python3_Interpreter_FOUND)
+    resolve_test_exe("" "erf_exec" _projection_vertical_exe)
+    add_test(NAME ProjectionVerticalBoundary_Runtime
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_projection_vertical_boundary_runtime.py
+            --erf "${_projection_vertical_exe}"
+            --output "${CMAKE_CURRENT_BINARY_DIR}/projection_vertical_boundary")
+    set_tests_properties(ProjectionVerticalBoundary_Runtime PROPERTIES
+        TIMEOUT 300 PROCESSORS 1 LABELS "regression;projection"
+        ATTACHED_FILES_ON_FAIL "${CMAKE_CURRENT_BINARY_DIR}/projection_vertical_boundary/results.json")
+endif()

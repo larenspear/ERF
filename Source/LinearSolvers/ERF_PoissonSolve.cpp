@@ -604,19 +604,10 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
 
         // *******************************************************************************************
         // Enforce solvability if the problem is singular (i.e all sides Neumann or periodic)
-        // Note that solves at lev > 0 are always singular because we impose Neumann bc's on all sides
+        // Fine patches touching a physical Dirichlet face are nonsingular too.
         // *******************************************************************************************
-        bool is_singular = true;
-        if (lev == 0) {
-            if ( (domain_bc_type[0] == "Outflow" || domain_bc_type[0] == "Open") && !solverChoice.use_real_bcs ) is_singular = false;
-            if ( (domain_bc_type[1] == "Outflow" || domain_bc_type[1] == "Open") && !solverChoice.use_real_bcs ) is_singular = false;
-            if ( (domain_bc_type[3] == "Outflow" || domain_bc_type[3] == "Open") && !solverChoice.use_real_bcs ) is_singular = false;
-            if ( (domain_bc_type[4] == "Outflow" || domain_bc_type[4] == "Open") && !solverChoice.use_real_bcs ) is_singular = false;
-            if ( (domain_bc_type[5] == "Outflow" || domain_bc_type[5] == "Open")                               ) is_singular = false;
-        } else {
-            Box my_region(subdomains[lev][isub].minimalBox());
-            if ( (domain_bc_type[5] == "Outflow" || domain_bc_type[5] == "Open") && (my_region.bigEnd(2) == domain.bigEnd(2)) ) is_singular = false;
-        }
+        const bool is_singular = projection_is_singular(geom[lev], domain_bc_type,
+            subdomains[lev][isub].minimalBox(), solverChoice.use_real_bcs);
 
         if (is_singular)
         {

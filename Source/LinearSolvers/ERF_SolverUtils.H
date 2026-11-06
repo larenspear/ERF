@@ -98,6 +98,40 @@ has_periodic_subdomain_connections (Geometry const& lev_geom,
     return false;
 }
 
+// A pressure increment is singular only when every solve-region face is
+// periodic or homogeneous Neumann. A physical Dirichlet face removes the null
+// mode at every AMR level, including lower z and lateral faces on fine patches.
+inline bool
+projection_is_singular (Geometry const& lev_geom,
+                         Array<std::string,2*AMREX_SPACEDIM> const& names,
+                         Box const& region, bool use_real_bcs)
+{
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        if (lev_geom.isPeriodic(dir) || (dir != 2 && use_real_bcs)) { continue; }
+        const auto& lo = names[Orientation(dir,Orientation::low)];
+        const auto& hi = names[Orientation(dir,Orientation::high)];
+        if ((region.smallEnd(dir) == lev_geom.Domain().smallEnd(dir) &&
+             (lo == "Outflow" || lo == "Open")) ||
+            (region.bigEnd(dir) == lev_geom.Domain().bigEnd(dir) &&
+             (hi == "Outflow" || hi == "Open"))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The reflected ghost center is one adjacent layer thickness from the first
+// or last cell center. Interior face distances average the two cell heights.
+// Requires 0 <= lo <= hi, lo <= k <= hi+1 and dz[0..hi]; hi+1 must fit int.
+// Zero-Neumann faces do not call this helper.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+Real projection_vertical_spacing (int k, int lo, int hi, Real const* dz) noexcept
+{
+    if (k == lo) { return dz[k]; }
+    if (k == hi+1) { return dz[k-1]; }
+    return Real(0.5)*(dz[k]+dz[k-1]);
+}
+
 #ifdef ERF_USE_FFT
 
 /**

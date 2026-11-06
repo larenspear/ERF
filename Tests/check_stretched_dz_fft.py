@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Guard FFT spacing subcolumn ownership and the later member-spacing reader.
 
-Four finite source contracts cover the member interface/solver types, automatic
+Five finite source contracts cover the member interface/solver types, automatic
 host/device subcolumns with exact indexing and blocking copy, an automatic
 MFIter enclosing four bare value-captured kernels, and the full-level spacing
-pointer used only for scalar reads in the stretched vertical-flux kernel.
+pointer forwarded only to the bounded inline spacing helper in the stretched
+vertical-flux kernel. Physical endpoint faces read one adjacent cell height;
+interior faces average two. Given 0 <= lo <= hi, lo <= k <= hi+1, representable
+hi+1 and storage at indices 0..hi, these accesses are bounded, including a
+one-cell column.
 
 The separately inspected pinned AMReX DeviceVector overload forwards spacing
 only to TriA/TriC in solve_z, whose GPU reader has a streamSynchronize directly
@@ -20,7 +24,7 @@ no undefined behavior/nonlocal transfer/concurrent launches, and preservation of
 spacing and stream/sync state by other code, headers, callees, aliases and globals.
 The nonconstant branch must select a supported stretched grid. Header macros
 must have their intended meanings. No FFT/tridiagonal numerical correctness,
-positivity/index bounds, solver construction/caller provenance, full solver
+positivity and caller-established index bounds, solver construction/caller provenance, full solver
 completion, boundary-condition internals or whole-program lifetime is proved.
 Only the Python standard library is required.
 """
@@ -39,7 +43,8 @@ from check_stretched_dz_mfiter import CONTROLS, enclosing, header
 from momentum_geometry import call_arguments, literal, unique
 
 SOURCE = 'Source/LinearSolvers/ERF_SolveWithFFT.cpp'
-FILES = (SOURCE, CLASS)
+UTILS = 'Source/LinearSolvers/ERF_SolverUtils.H'
+FILES = (SOURCE, CLASS, UTILS)
 DEFINITION = '''void ERF::solve_with_fft(int lev, int isub, const Box& subdomain,
     MultiFab& rhs, MultiFab& phi, Array<MultiFab,AMREX_SPACEDIM>& fluxes) {'''
 LOCALS = '''auto const sub_lo = lbound(subdomain);
@@ -59,15 +64,19 @@ SUBCOLUMN = '''stretched_dz_h_sub.resize(subdomain.length(2));
 BC = 'ImposeBCsOnPhi(lev, phi, subdomain);'
 GEOMETRY = '''auto dxInv = geom[lev].InvCellSizeArray();
     const Real dx_inv = dxInv[0]; const Real dy_inv = dxInv[1];
+    auto const dom_lo = lbound(geom[lev].Domain());
     auto const dom_hi = ubound(geom[lev].Domain());
+    auto const bc_type_zlo = domain_bc_type[Orientation(2,Orientation::low)];
+    const bool bottom_is_dirichlet = (sub_lo.z == dom_lo.z)
+        && (bc_type_zlo == "Outflow" || bc_type_zlo == "Open");
     auto const bc_type_zhi = domain_bc_type[Orientation(2,Orientation::high)];
     const bool top_is_dirichlet = (sub_hi.z == dom_hi.z)
         && (bc_type_zhi == "Outflow" || bc_type_zhi == "Open");'''
 LOOP = header('phi', 'TilingIfNotGPU()')
 STRETCHED = 'if (solverChoice.mesh_type != MeshType::ConstantDz) {'
 ALIAS = 'Real* stretched_dz_d_ptr = stretched_dz_d[lev].data();'
-BOUNDARY = 'if (k == sub_lo.z || (k == sub_hi.z+1 && !top_is_dirichlet))'
-READ = 'Real dz = myhalf * (stretched_dz_d_ptr[k] + stretched_dz_d_ptr[k-1]);'
+BOUNDARY = 'if ((k == sub_lo.z && !bottom_is_dirichlet) || (k == sub_hi.z+1 && !top_is_dirichlet))'
+READ = 'Real dz = projection_vertical_spacing(k, sub_lo.z, sub_hi.z, stretched_dz_d_ptr);'
 VERTICAL = BOUNDARY+''' { fz_arr(i,j,k) = zero; } else {
     '''+READ+''' fz_arr(i,j,k) = -(p_arr(i,j,k) - p_arr(i,j,k-1)) / dz; }'''
 CONSTANT_VERTICAL = BOUNDARY+''' { fz_arr(i,j,k) = zero; } else {
@@ -86,7 +95,8 @@ def load(root):
                 path+': unsupported lexical form')
         text = strip_comments(raw)
         for macro in re.finditer(r'(?m)^[ \t]*#\s*(define|undef)\b([^\n]*)', no_literals(text)):
-            require(path == CLASS and macro[1] == 'define' and macro[2].strip() == 'ERF_H_',
+            require(path in (CLASS,UTILS) and macro[1] == 'define' and
+                    macro[2].strip() == {CLASS:'ERF_H_',UTILS:'ERF_SOLVER_UTILS_H_'}[path],
                     path+': unsupported macro')
         reject_uses(text, CONTROLS, [], path+' stream/sync controls')
         texts[path] = text
@@ -243,23 +253,40 @@ def spacing(body, setup, readers, gate, regions):
         spans += [m.span() for m in re.finditer(pattern('amrex::Print() << "'+message+
                                       '" << subdomain << std::endl;'), body)]
     reject_uses(body, ['stretched_dz_h_sub','stretched_dz_d_sub','stretched_dz_h','stretched_dz_d',
-                      'stretched_dz_d_ptr','lev','isub','subdomain','sub_lo','sub_hi','top_is_dirichlet',
-                      'dom_hi','bc_type_zhi','m_2D_poisson','m_3D_poisson','solverChoice',
+                      'stretched_dz_d_ptr','lev','isub','subdomain','sub_lo','sub_hi','top_is_dirichlet','bottom_is_dirichlet','projection_vertical_spacing',
+                      'dom_hi','bc_type_zhi','dom_lo','bc_type_zlo','m_2D_poisson','m_3D_poisson','solverChoice',
                       'ImposeBCsOnPhi','phi','rhs','fluxes','this'], spans, 'FFT protected uses')
     print('  ok   full-level device spacing read only as scalars in the stretched vertical kernel')
+
+
+HELPER = """AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+Real projection_vertical_spacing(int k, int lo, int hi, Real const* dz) noexcept {
+    if (k == lo) { return dz[k]; }
+    if (k == hi+1) { return dz[k-1]; }
+    return Real(0.5)*(dz[k]+dz[k-1]);
+}"""
+
+
+def spacing_helper(text):
+    match = unique(pattern(HELPER), text, 'bounded vertical-spacing helper')
+    declaration_scope(text, match.start(), 'ERF_SOLVER_UTILS_H_')
+    reject_uses(text, ['projection_vertical_spacing'], [match.span()], 'vertical-spacing helper uses')
+    print('  ok   first/last faces read one stored cell, interior faces read their adjacent cells')
 
 
 def main():
     root = Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parent.parent
     try:
-        body = interface(load(root))
+        texts = load(root)
+        body = interface(texts)
+        spacing_helper(texts[UTILS])
         setup, geometry = subcolumn(body)
         readers, gate, regions = reader(body, geometry)
         spacing(body, setup, readers, gate, regions)
     except (OSError, ValueError) as error:
         print('FAIL source contract: '+str(error))
         return 1
-    print('4 FFT spacing source contracts passed; temporary/member completion relies on inspected AMReX and caller state.')
+    print('5 FFT spacing source contracts passed; temporary/member completion relies on inspected AMReX and caller state.')
     return 0
 
 

@@ -195,7 +195,11 @@ void ERF::solve_with_fft (int lev, int isub, const Box& subdomain,
     // ****************************************************************************
     auto dxInv = geom[lev].InvCellSizeArray();
     const Real dx_inv = dxInv[0]; const Real dy_inv = dxInv[1];
+    auto const dom_lo = lbound(geom[lev].Domain());
     auto const dom_hi = ubound(geom[lev].Domain());
+    auto const bc_type_zlo = domain_bc_type[Orientation(2,Orientation::low)];
+    const bool bottom_is_dirichlet = (sub_lo.z == dom_lo.z)
+        && (bc_type_zlo == "Outflow" || bc_type_zlo == "Open");
     auto const bc_type_zhi = domain_bc_type[Orientation(2,Orientation::high)];
     const bool top_is_dirichlet = (sub_hi.z == dom_hi.z)
         && (bc_type_zhi == "Outflow" || bc_type_zhi == "Open");
@@ -227,10 +231,10 @@ void ERF::solve_with_fft (int lev, int isub, const Box& subdomain,
             Real* stretched_dz_d_ptr = stretched_dz_d[lev].data();
             ParallelFor(zbx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
             {
-                if (k == sub_lo.z || (k == sub_hi.z+1 && !top_is_dirichlet)) {
+                if ((k == sub_lo.z && !bottom_is_dirichlet) || (k == sub_hi.z+1 && !top_is_dirichlet)) {
                     fz_arr(i,j,k) = zero;
                 } else {
-                    Real dz = myhalf * (stretched_dz_d_ptr[k] + stretched_dz_d_ptr[k-1]);
+                    Real dz = projection_vertical_spacing(k, sub_lo.z, sub_hi.z, stretched_dz_d_ptr);
                     fz_arr(i,j,k) = -(p_arr(i,j,k) - p_arr(i,j,k-1)) / dz;
                 }
             });
@@ -238,7 +242,7 @@ void ERF::solve_with_fft (int lev, int isub, const Box& subdomain,
             const Real dz_inv = dxInv[2];
             ParallelFor(zbx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
             {
-                if (k == sub_lo.z || (k == sub_hi.z+1 && !top_is_dirichlet)) {
+                if ((k == sub_lo.z && !bottom_is_dirichlet) || (k == sub_hi.z+1 && !top_is_dirichlet)) {
                     fz_arr(i,j,k) = zero;
                 } else {
                     fz_arr(i,j,k) = -(p_arr(i,j,k) - p_arr(i,j,k-1)) * dz_inv;

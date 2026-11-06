@@ -12,12 +12,12 @@ from check_stretched_dz_bindings import STRING, brace_block, no_literals, signat
 from check_stretched_dz_consumers import pattern
 from check_stretched_dz_fft import (ALIAS, BC, BOUNDARY, CALLEE, CLASS, CONSTANT,
     CONTROLS, DEFINITION, FILES, GEOMETRY, LOCALS, LOOP, MEMBERS, READ, SOURCE,
-    STRETCHED, SUBCOLUMN, UNIFORM, VERTICAL)
+    STRETCHED, SUBCOLUMN, UNIFORM, VERTICAL, UTILS, HELPER)
 from momentum_geometry import call_arguments, unique
 
 ROOT = Path(__file__).resolve().parent.parent
 VERIFY = ROOT/'Tests/check_stretched_dz_fft.py'
-SUCCESS = '4 FFT spacing source contracts passed;'
+SUCCESS = '5 FFT spacing source contracts passed;'
 
 
 def cases(original):
@@ -193,12 +193,13 @@ def cases(original):
         yield alter(name,ALIAS,ALIAS.replace(before,after))
     for name,before,after in (
         ('read reference','Real dz','Real& dz'),
-        ('read index','[k-1]','[k+1]'),
-        ('read escape','stretched_dz_d_ptr[k]','retain(stretched_dz_d_ptr[k])'),
-        ('read weight','myhalf','one'),
+        ('read index','projection_vertical_spacing(k,','projection_vertical_spacing(k+1,'),
+        ('read escape','stretched_dz_d_ptr)','retain(stretched_dz_d_ptr))'),
+        ('read interval','sub_lo.z, sub_hi.z','sub_hi.z, sub_lo.z'),
         ('lower boundary','k == sub_lo.z','k == sub_lo.z+1'),
         ('upper boundary','k == sub_hi.z+1','k == sub_hi.z'),
         ('top boundary','!top_is_dirichlet','top_is_dirichlet'),
+        ('bottom boundary','!bottom_is_dirichlet','bottom_is_dirichlet'),
         ('read deferred',READ,'auto later = [=] { '+READ+' };'),
         ('read host call',READ,'on_host([=] { '+READ+' });'),
         ('extra pointer alias',READ,READ+'auto alias = stretched_dz_d_ptr;'),
@@ -225,6 +226,20 @@ def cases(original):
         ('unknown conditional','#ifdef OTHER\n#endif'),('early return','return;'),
     ):
         yield body_fixture(name,body+'\n'+code+'\n')
+    for name,before,after in (
+        ('low index','return dz[k];','return dz[k-1];'),
+        ('top index','return dz[k-1];','return dz[k];'),
+        ('low test','k == lo','k == lo+1'),
+        ('top test','k == hi+1','k == hi'),
+        ('average weight','Real(0.5)','Real(1.0)'),
+        ('average neighbor','dz[k]+dz[k-1]','dz[k]+dz[k+1]'),
+        ('helper pointer escapes','return Real(0.5)','retain(dz); return Real(0.5)'),
+        ('helper static','Real projection_vertical_spacing','static Real projection_vertical_spacing'),
+    ):
+        yield replace('helper '+name,UTILS,HELPER,HELPER.replace(before,after))
+    yield replace('helper conditional',UTILS,HELPER,'#ifdef OTHER\n'+HELPER+'\n#endif')
+    yield replace('helper namespace',UTILS,HELPER,'namespace Other { '+HELPER+' }')
+    yield replace('helper duplicate',UTILS,HELPER,HELPER+HELPER)
     for path in FILES:
         for name,code in (
             ('stream control','Gpu::Device::setStreamIndex(1);'),
@@ -252,7 +267,7 @@ def cases(original):
     yield body_fixture('optional kernel noexcept',body.replace('noexcept',''),False)
     yield body_fixture('qualified launch',body.replace('ParallelFor(','amrex::ParallelFor('),False)
     yield body_fixture('OpenMP removed',re.sub(r'#ifdef _OPENMP\s*#pragma[^\n]*\s*#endif','',body),False)
-    yield replace('read comments',SOURCE,READ,READ.replace('myhalf *','myhalf /* scalar */ *'),False)
+    yield replace('read comments',SOURCE,READ,READ.replace('projection_vertical_spacing(', 'projection_vertical_spacing /* scalar */ ('),False)
     yield fixture('declaration parameter rename',CLASS,texts[CLASS][:declaration.start()]+
                   declaration[0].replace('MultiFab& p','MultiFab& solution')+texts[CLASS][declaration.end():],False)
 

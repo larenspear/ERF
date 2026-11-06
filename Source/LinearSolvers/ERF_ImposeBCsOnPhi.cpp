@@ -46,6 +46,7 @@ void ERF::ImposeBCsOnPhi (int lev, MultiFab& phi, const Box& subdomain)
         auto bc_type_xhi = domain_bc_type[Orientation(0,Orientation::high)];
         auto bc_type_ylo = domain_bc_type[Orientation(1,Orientation::low)];
         auto bc_type_yhi = domain_bc_type[Orientation(1,Orientation::high)];
+        auto bc_type_zlo = domain_bc_type[Orientation(2,Orientation::low)];
         auto bc_type_zhi = domain_bc_type[Orientation(2,Orientation::high)];
 
         if ( (bx_lo.x == dom_lo.x) && (bc_type_xlo == "Outflow" || bc_type_xlo == "Open") && !solverChoice.use_real_bcs) {
@@ -96,9 +97,14 @@ void ERF::ImposeBCsOnPhi (int lev, MultiFab& phi, const Box& subdomain)
             });
         }
 
-        // At low z we are always Neumann whether the box touches the bottom boundary or not
+        // Physical Outflow faces are Dirichlet; walls and coarse-fine faces are Neumann.
         Box zbx(bx); zbx.grow(0,1); zbx.grow(1,1); // Grow in x-dir and y-dir because we have filled that above
-        if (bx_lo.z == sub_lo.z) {
+        if ((bx_lo.z == dom_lo.z) && (bc_type_zlo == "Outflow" || bc_type_zlo == "Open")) {
+            ParallelFor(makeSlab(zbx,2,dom_lo.z), [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                pp_arr(i,j,k-1) = -pp_arr(i,j,k);
+            });
+        } else if (bx_lo.z == sub_lo.z) {
             ParallelFor(makeSlab(zbx,2,sub_lo.z), [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
             {
                 pp_arr(i,j,k-1) = pp_arr(i,j,k);

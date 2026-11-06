@@ -47,6 +47,8 @@ TerrainPoisson::TerrainPoisson (Geometry const& geom, Geometry const& lev_geom,
     if (!m_2D_fft_precond) {
         Box bounding_box = ba.minimalBox();
         bc_fft = get_fft_bc(lev_geom,domain_bcs_type,bounding_box,use_real_bcs);
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(bc_fft[2].first != FFT::Boundary::odd,
+            "Terrain projection does not support lower-z Outflow/Open boundaries");
         m_2D_fft_precond = std::make_unique<FFT::PoissonHybrid<MultiFab>>(geom,bc_fft);
     }
 
