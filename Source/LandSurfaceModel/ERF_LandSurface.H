@@ -215,6 +215,13 @@ public:
             m_lsm_model[lev]->Lsm_Set_Source_Unmapped_Ptr(
                 varIdx, m_lsm_model[source_lev]->Lsm_Unmapped_Ptr(varIdx));
         }
+
+        const int ncategory = m_lsm_model[lev]->Lsm_Category_Size();
+        AMREX_ALWAYS_ASSERT(ncategory == m_lsm_model[source_lev]->Lsm_Category_Size());
+        for (int varIdx = 0; varIdx < ncategory; ++varIdx) {
+            m_lsm_model[lev]->Lsm_Set_Source_Category_Ptr(
+                varIdx, m_lsm_model[source_lev]->Lsm_Category_Ptr(varIdx));
+        }
     }
 
     /**

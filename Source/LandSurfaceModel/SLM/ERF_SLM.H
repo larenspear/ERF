@@ -389,6 +389,23 @@ public:
         source_unmapped[varIdx] = source_data_ptr;
     }
 
+    int Lsm_Category_Size () override { return 3; }
+
+    amrex::iMultiFab* Lsm_Category_Ptr (const int& varIdx) override
+    {
+        AMREX_ALWAYS_ASSERT(varIdx >= 0 && varIdx < Lsm_Category_Size());
+        const amrex::Array<amrex::iMultiFab*, 3> fields{&landmask, &landtype, &vegetype};
+        return fields[varIdx];
+    }
+
+    void Lsm_Set_Source_Category_Ptr (const int& varIdx,
+                                      amrex::iMultiFab* source) override
+    {
+        AMREX_ALWAYS_ASSERT(varIdx >= 0 && varIdx < Lsm_Category_Size());
+        source_categories.resize(Lsm_Category_Size(), nullptr);
+        source_categories[varIdx] = source;
+    }
+
     /**
      * Transfers exposed state from a source AMR level.
      */
@@ -721,6 +738,7 @@ private:
     amrex::Vector<amrex::MultiFab*> source_data;
     amrex::Vector<amrex::MultiFab*> source_flux;
     amrex::Vector<amrex::MultiFab*> source_unmapped;
+    amrex::Vector<amrex::iMultiFab*> source_categories;
     // Additional checkpoint state; disk indices in unmapped_fields stay unchanged.
     amrex::Vector<amrex::MultiFab*> private_checkpoint_fields;
 

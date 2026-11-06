@@ -1101,13 +1101,37 @@ void SLM::init_wrfinput_vars ()
 }
 
 namespace {
+// Copy the parent category to each child cell; categories have no slopes.
+void interpolate_slm_category (amrex::iMultiFab& fine, const amrex::iMultiFab& source,
+                               const amrex::Geometry& coarse_geom,
+                               const amrex::IntVect& ratio)
+{
+    using namespace amrex;
+    iMultiFab coarse(amrex::coarsen(fine.boxArray(), ratio),
+                     fine.DistributionMap(), 1, 0);
+    coarse.setVal(0);
+    coarse.ParallelCopy(source, 0, 0, 1, 0, 0, coarse_geom.periodicity());
+    Gpu::streamSynchronizeAll();
+    for (MFIter mfi(fine, TileNoZ()); mfi.isValid(); ++mfi) {
+        const auto from = coarse.const_array(mfi);
+        const auto to = fine.array(mfi);
+        const int rx = ratio[0];
+        const int ry = ratio[1];
+        ParallelFor(mfi.tilebox(), [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            to(i,j,k) = from(amrex::coarsen(i, rx), amrex::coarsen(j, ry), k);
+        });
+    }
+    Gpu::streamSynchronizeAll();
+}
+
 // Interpolation reads current valid state and a freshly filled horizontal halo.
 // SLM's private checkpoint arrays have no ghosts; exposed arrays can carry
 // stale atmosphere-facing ghosts that are not part of the prognostic state.
 void interpolate_slm_field (amrex::MultiFab& fine, const amrex::MultiFab& source,
                             const amrex::Geometry& coarse_geom,
                             const amrex::Geometry& fine_geom,
-                            const amrex::IntVect& ratio)
+                            const amrex::IntVect& ratio,
+                            const bool categorical = false)
 {
     using namespace amrex;
     AMREX_ALWAYS_ASSERT(source.nComp() == fine.nComp());
@@ -1134,9 +1158,11 @@ void interpolate_slm_field (amrex::MultiFab& fine, const amrex::MultiFab& source
     Gpu::streamSynchronizeAll();
     FillDomainBoundary(coarse, coarse_geom, bcs);
     Gpu::streamSynchronizeAll();
+    Interpolater* mapper = categorical ? static_cast<Interpolater*>(&pc_interp)
+                                       : static_cast<Interpolater*>(&cell_cons_interp);
     InterpFromCoarseLevel(fine, fine.nGrowVect(), IntVect(0),
                          coarse, 0, 0, source.nComp(), coarse_geom, fine_geom,
-                         ratio, &cell_cons_interp, bcs, 0);
+                         ratio, mapper, bcs, 0);
     Gpu::streamSynchronizeAll(); // coarse must outlive all interpolation reads
 }
 }
@@ -1168,6 +1194,15 @@ SLM::Lsm_Regrid_Level (const int& lev,
     Vector<std::unique_ptr<MultiFab>> saved_data(m_lsm_data_size);
     Vector<std::unique_ptr<MultiFab>> saved_flux(m_lsm_flux_size);
     Vector<std::unique_ptr<MultiFab>> saved_unmapped(Lsm_Unmapped_Size());
+    Vector<std::unique_ptr<iMultiFab>> saved_categories(Lsm_Category_Size());
+    for (int ivar = 0; ivar < Lsm_Category_Size(); ++ivar) {
+        const auto* field = Lsm_Category_Ptr(ivar);
+        saved_categories[ivar] = std::make_unique<iMultiFab>(
+            field->boxArray(), field->DistributionMap(), 1, 0);
+        iMultiFab::Copy(*saved_categories[ivar], *field, 0, 0, 1, 0);
+    }
+    Gpu::streamSynchronizeAll();
+
 
     for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
         saved_data[ivar] = std::make_unique<MultiFab>(Lsm_Data_Ptr(ivar)->deepCopy());
@@ -1191,6 +1226,11 @@ SLM::Lsm_Regrid_Level (const int& lev,
         source_data.resize(m_lsm_data_size, nullptr);
         source_flux.resize(m_lsm_flux_size, nullptr);
         source_unmapped.resize(Lsm_Unmapped_Size(), nullptr);
+        source_categories.resize(Lsm_Category_Size(), nullptr);
+        for (int ivar = 0; ivar < Lsm_Category_Size(); ++ivar) {
+            source_categories[ivar] = saved_categories[ivar].get();
+        }
+
         for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
             source_data[ivar] = saved_data[ivar].get();
         }
@@ -1220,6 +1260,10 @@ SLM::Lsm_Regrid_Level (const int& lev,
         auto* field = Lsm_Unmapped_Ptr(ivar);
         field->ParallelCopy(*saved_unmapped[ivar], 0, 0, field->nComp());
     }
+    for (int ivar = 0; ivar < Lsm_Category_Size(); ++ivar) {
+        Lsm_Category_Ptr(ivar)->ParallelCopy(*saved_categories[ivar], 0, 0, 1);
+    }
+    Gpu::streamSynchronizeAll();
     restore_surface_state_planes();
     first_step = was_first_step;
     initialize_processed_state(true);
@@ -1228,6 +1272,7 @@ SLM::Lsm_Regrid_Level (const int& lev,
     source_data.clear();
     source_flux.clear();
     source_unmapped.clear();
+    source_categories.clear();
 }
 
 /**
@@ -1247,8 +1292,10 @@ SLM::Lsm_Interpolate_From_Source (const Geometry& source_geom,
     const IntVect rr2d(ref_ratio[0], ref_ratio[1], 1);
     for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
         AMREX_ALWAYS_ASSERT(source_data[ivar] != nullptr);
+        const bool categorical = LsmDataMap[ivar] == LsmVar_SLM::vegtype ||
+                                  LsmDataMap[ivar] == LsmVar_SLM::soiltype;
         interpolate_slm_field(*lsm_fab_vars[LsmDataMap[ivar]], *source_data[ivar],
-                               source_lsm_geom, m_lsm_geom, rr2d);
+                               source_lsm_geom, m_lsm_geom, rr2d, categorical);
     }
 
     for (int ivar = 0; ivar < m_lsm_flux_size; ++ivar) {
@@ -1267,6 +1314,14 @@ SLM::Lsm_Interpolate_From_Source (const Geometry& source_geom,
         interpolate_slm_field(*field, *source_unmapped[ivar], cg, fg, rr2d);
     }
 
+    if (mode == LSMTransferMode::ProcessedState) {
+        AMREX_ALWAYS_ASSERT(static_cast<int>(source_categories.size()) == Lsm_Category_Size());
+        for (int ivar = 0; ivar < Lsm_Category_Size(); ++ivar) {
+            AMREX_ALWAYS_ASSERT(source_categories[ivar] != nullptr);
+            interpolate_slm_category(*Lsm_Category_Ptr(ivar), *source_categories[ivar],
+                                     source_geom, rr2d);
+        }
+    }
     restore_surface_state_planes();
 
     if (mode == LSMTransferMode::RawInput) {
@@ -1345,6 +1400,15 @@ SLM::initialize_processed_state (const bool preserve_checkpoint_fields)
     MultiFab saved_soilw = lsm_fab_vars[LsmVar_SLM::soilw]->deepCopy();
     Vector<std::unique_ptr<MultiFab>> saved_data;
     Vector<std::unique_ptr<MultiFab>> saved_unmapped;
+    Vector<std::unique_ptr<iMultiFab>> saved_categories(Lsm_Category_Size());
+    for (int ivar = 0; ivar < Lsm_Category_Size(); ++ivar) {
+        const auto* field = Lsm_Category_Ptr(ivar);
+        saved_categories[ivar] = std::make_unique<iMultiFab>(
+            field->boxArray(), field->DistributionMap(), 1, 0);
+        iMultiFab::Copy(*saved_categories[ivar], *field, 0, 0, 1, 0);
+    }
+    Gpu::streamSynchronizeAll();
+
     if (preserve_checkpoint_fields) {
         saved_data.resize(m_lsm_data_size);
         for (int ivar = 0; ivar < m_lsm_data_size; ++ivar) {
@@ -1387,6 +1451,13 @@ SLM::initialize_processed_state (const bool preserve_checkpoint_fields)
         });
     }
 
+    // The external mask is independent of the vegetation category. Restore
+    // authoritative integer state before any derived initialization uses it.
+    for (int ivar = 0; ivar < Lsm_Category_Size(); ++ivar) {
+        iMultiFab::Copy(*Lsm_Category_Ptr(ivar), *saved_categories[ivar], 0, 0, 1, 0);
+    }
+    Gpu::streamSynchronizeAll();
+
     slm_init();
 
     const IntVect state_ng = lsm_fab_vars[LsmVar_SLM::tsurf]->nGrowVect();
@@ -1415,6 +1486,10 @@ SLM::initialize_processed_state (const bool preserve_checkpoint_fields)
             MultiFab::Copy(*field, *saved_unmapped[ivar],
                            0, 0, field->nComp(), field->nGrowVect());
         }
+        for (int ivar = 0; ivar < Lsm_Category_Size(); ++ivar) {
+            iMultiFab::Copy(*Lsm_Category_Ptr(ivar), *saved_categories[ivar], 0, 0, 1, 0);
+        }
+        Gpu::streamSynchronizeAll();
         if (!first_step) {
             rebuild_restart_fields();
         }

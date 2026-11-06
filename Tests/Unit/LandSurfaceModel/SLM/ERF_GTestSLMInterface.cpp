@@ -1429,3 +1429,175 @@ TEST_F(SLMInterfaceTest, PrivatePreservationTransferIgnoresStaleSourceHalos)
     amrex::MultiFab::Subtract(difference, expected, 0, 0, 1, 0);
     EXPECT_EQ(difference.norm0(0), amrex::Real(0));
 }
+
+namespace {
+void install_checkerboard_terrain (LandSurface& ls, const int lev,
+                                   const int nlevels, SLMTestState& state)
+{
+    seed_evolved_atmosphere(state);
+    const auto* soil = get_slm_data(ls, lev, "tsurf");
+    const auto surface_ba = make_surface_box_array(soil->boxArray());
+    amrex::Vector<amrex::Vector<std::unique_ptr<amrex::MultiFab>>> sst(nlevels);
+    amrex::Vector<amrex::Vector<std::unique_ptr<amrex::iMultiFab>>> mask(nlevels);
+    sst[lev].resize(1);
+    mask[lev].resize(1);
+    sst[lev][0] = std::make_unique<amrex::MultiFab>(surface_ba, soil->DistributionMap(), 1, 0);
+    mask[lev][0] = std::make_unique<amrex::iMultiFab>(surface_ba, soil->DistributionMap(), 1, 0);
+    sst[lev][0]->setVal(300);
+    set_checkerboard_landmask(*mask[lev][0]);
+    ls.set_LSM_terrain_inputs(lev, sst, mask);
+    ls.Update_Lsm_Vars_Lev(lev, state.cons, state.uvel, state.vvel);
+}
+
+amrex::Real checkpoint_sum (const std::filesystem::path& checkpoint,
+                            const int lev, const std::string& name)
+{
+    amrex::MultiFab field;
+    amrex::VisMF::Read(field, (checkpoint / ("Level_" + std::to_string(lev)) /
+                              ("SLM_" + name)).string());
+    return field.sum(0);
+}
+
+void seed_discrete_categories (LandSurface& ls, const int lev)
+{
+    auto& vegetation = *get_slm_data(ls, lev, "vegtype");
+    auto& soil = *get_slm_data(ls, lev, "soiltype");
+    for (amrex::MFIter mfi(vegetation, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto veg = vegetation.array(mfi);
+        auto soiltype = soil.array(mfi);
+        amrex::ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+            const int category = i == 0 ? 1 : i == 1 ? 4 : i == 2 ? 9 : 16;
+            veg(i,j,k) = category;
+            soiltype(i,j,k) = category;
+        });
+    }
+}
+
+amrex::Real category_error (const amrex::MultiFab& actual, const bool mask)
+{
+    amrex::ReduceOps<amrex::ReduceOpMax> op;
+    amrex::ReduceData<amrex::Real> data(op);
+    using Tuple = typename decltype(data)::Type;
+    for (amrex::MFIter mfi(actual, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto values = actual.const_array(mfi);
+        op.eval(mfi.validbox(), data,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) -> Tuple {
+            const int parent = i / 2;
+            const int expected_category = parent == 0 ? 1 : parent == 1 ? 4 : parent == 2 ? 9 : 16;
+            const int expected_mask = i < 2 ? ((i+j)%2 == 0) : ((i/2+j/2)%2 == 0);
+            return amrex::Math::abs(values(i,j,k) - (mask ? expected_mask : expected_category));
+        });
+    }
+    auto error = amrex::get<0>(data.value());
+    amrex::ParallelDescriptor::ReduceRealMax(error);
+    return error;
+}
+}
+
+TEST_F(SLMInterfaceTest, CategoryPreservationCheckpointControl)
+{
+    install_checkerboard_terrain(land_surface, 0, 1, *state);
+    land_surface.Advance(0, amrex::Real(0.005), amrex::Real(0.005), amrex::Real(0));
+    const auto before = write_preservation_checkpoint(land_surface, 0, "mask_roundtrip_before");
+    ASSERT_EQ(checkpoint_sum(before, 0, "landmask"), amrex::Real(2));
+    land_surface.ReadCheckpoint(0, before.string());
+    const auto after = write_preservation_checkpoint(land_surface, 0, "mask_roundtrip_after");
+    EXPECT_EQ(checkpoint_sum(after, 0, "landmask"), amrex::Real(2));
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, CategoryPreservationProcessedTransfer)
+{
+    initialize_multilevel(2);
+    install_checkerboard_terrain(land_surface, 0, 2, *multilevel_states[0]);
+    const auto before = write_preservation_checkpoint(land_surface, 0, "mask_transfer_before");
+    ASSERT_EQ(checkpoint_sum(before, 0, "landmask"), amrex::Real(2));
+    land_surface.Initialize_From_Source(1, 0, amrex::IntVect(2), LSMTransferMode::ProcessedState);
+    const auto after = write_preservation_checkpoint(land_surface, 1, "mask_transfer_after");
+    EXPECT_EQ(checkpoint_sum(after, 1, "landmask"), amrex::Real(8));
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, CategoryPreservationBeforeFirstStepRemake)
+{
+    install_checkerboard_terrain(land_surface, 0, 1, *state);
+    const auto before = write_preservation_checkpoint(land_surface, 0, "mask_remake_before");
+    ASSERT_EQ(checkpoint_sum(before, 0, "landmask"), amrex::Real(2));
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(1);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Remake_Level(0, state->cons, state->uvel, state->vvel,
+                              state->geom, state->geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1.0), z_phys_nd, nc_init_file);
+    const auto after = write_preservation_checkpoint(land_surface, 0, "mask_remake_after");
+    EXPECT_EQ(checkpoint_sum(after, 0, "landmask"), amrex::Real(2));
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, CategoryPreservationEvolvedRemake)
+{
+    install_checkerboard_terrain(land_surface, 0, 1, *state);
+    land_surface.Advance(0, amrex::Real(0.005), amrex::Real(0.005), amrex::Real(0));
+    const auto before = write_preservation_checkpoint(land_surface, 0, "mask_evolved_before");
+    ASSERT_EQ(checkpoint_sum(before, 0, "landmask"), amrex::Real(2));
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(1);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Remake_Level(0, state->cons, state->uvel, state->vvel,
+                              state->geom, state->geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1.0), z_phys_nd, nc_init_file);
+    const auto after = write_preservation_checkpoint(land_surface, 0, "mask_evolved_after");
+    EXPECT_EQ(checkpoint_sum(after, 0, "landmask"), amrex::Real(2));
+    std::filesystem::remove_all(before);
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, CategoryPreservationUsesDiscreteParentCategories)
+{
+    initialize_multilevel(3, InitType::WRFInput);
+    seed_transfer_state(1, amrex::Real(299), amrex::Real(300), amrex::Real(0.4), amrex::Real(0));
+    seed_discrete_categories(land_surface, 1);
+    auto& source = *multilevel_states[1];
+    seed_evolved_atmosphere(source);
+    land_surface.Update_Lsm_Vars_Lev(1, source.cons, source.uvel, source.vvel);
+    land_surface.Initialize_From_Source(2, 1, amrex::IntVect(2), LSMTransferMode::ProcessedState);
+    EXPECT_EQ(category_error(*get_slm_data(land_surface, 2, "vegtype"), false), amrex::Real(0));
+    EXPECT_EQ(category_error(*get_slm_data(land_surface, 2, "soiltype"), false), amrex::Real(0));
+    const auto after = write_preservation_checkpoint(land_surface, 2, "discrete_categories");
+    amrex::MultiFab actual;
+    amrex::VisMF::Read(actual, (after / "Level_2" / "SLM_landtype").string());
+    EXPECT_EQ(category_error(actual, false), amrex::Real(0));
+    std::filesystem::remove_all(after);
+}
+
+TEST_F(SLMInterfaceTest, CategoryPreservationRemakeKeepsOldMaskAndSeedsNewCells)
+{
+    initialize_multilevel(2);
+    auto& coarse = *multilevel_states[0];
+    auto& fine = *multilevel_states[1];
+    install_checkerboard_terrain(land_surface, 0, 2, coarse);
+    SLMTestState partial(amrex::Box(amrex::IntVect(0,0,0), amrex::IntVect(1,3,7)));
+    partial.geom = fine.geom;
+    std::unique_ptr<amrex::MultiFab> z_phys_nd;
+    auto domain_bcs_type = make_domain_bcs_type();
+    amrex::IntVect ref_ratio(2);
+    amrex::Vector<amrex::Vector<std::string>> nc_init_file;
+    land_surface.Init(1, partial.cons, partial.uvel, partial.vvel,
+                      fine.geom, coarse.geom, domain_bcs_type, ref_ratio,
+                      amrex::Real(1), z_phys_nd, nc_init_file);
+    install_checkerboard_terrain(land_surface, 1, 2, partial);
+    land_surface.Remake_Level(1, fine.cons, fine.uvel, fine.vvel,
+                              fine.geom, coarse.geom, domain_bcs_type,
+                              ref_ratio, amrex::Real(1), z_phys_nd, nc_init_file,
+                              0, amrex::IntVect(2));
+    const auto after = write_preservation_checkpoint(land_surface, 1, "mask_newcells_after");
+    amrex::MultiFab actual;
+    amrex::VisMF::Read(actual, (after / "Level_1" / "SLM_landmask").string());
+    EXPECT_EQ(category_error(actual, true), amrex::Real(0));
+    std::filesystem::remove_all(after);
+}

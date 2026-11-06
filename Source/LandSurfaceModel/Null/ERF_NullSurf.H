@@ -192,6 +192,12 @@ class NullSurf {
                                   amrex::MultiFab* /*source_data_ptr*/)
     {}
 
+    // Categorical state is transferred separately from real-valued fields.
+    virtual int Lsm_Category_Size () { return 0; }
+    virtual amrex::iMultiFab* Lsm_Category_Ptr (const int& /*varIdx*/) { return nullptr; }
+    virtual void Lsm_Set_Source_Category_Ptr (const int& /*varIdx*/,
+                                             amrex::iMultiFab* /*source*/) {}
+
     /**
      * Returns the atmospheric geometry used by coupling fields.
      */
