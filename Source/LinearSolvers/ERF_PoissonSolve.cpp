@@ -3,6 +3,7 @@
  */
 #include "ERF.H"
 #include "ERF_Utils.H"
+#include "ERF_SolverUtils.H"
 
 using namespace amrex;
 
@@ -345,6 +346,12 @@ void ERF::project_momenta (int lev, double l_time, double l_dt_d, Vector<MultiFa
         }
 #endif
     } // No terrain or grid stretching
+
+    // Each bin has its own solve and solvability mean, including the MLMG
+    // path. A periodic fine-fine face between bins requires a coupled solve.
+    if (has_periodic_subdomain_connections(geom[lev], subdomains[lev])) {
+        amrex::Abort("Projection subdomains connected across a periodic boundary are not supported");
+    }
 
     for (int isub = 0; isub < subdomains[lev].size(); ++isub)
     {

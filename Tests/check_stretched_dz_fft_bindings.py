@@ -52,6 +52,10 @@ RECTANGLES = 'bool all_boxes_ok = true; '+LOOP+REGION+'''
     if (!boxes_make_rectangle) { all_boxes_ok = false; }
 } if (all_boxes_ok) { will_solve_with_mlmg = false; }'''
 BUILD_PLAN = 'bool will_solve_with_mlmg = (solverChoice.mesh_type == MeshType::ConstantDz); '+RECTANGLES
+BUILD_TOPOLOGY = '''if (has_periodic_subdomain_connections(geom[lev], subdomains[lev])) {
+    amrex::Abort("Projection subdomains connected across a periodic boundary are not supported");
+}'''
+PROJECT_TOPOLOGY = BUILD_TOPOLOGY
 GEOMETRY = '''Box subdomain(subdomains[lev][isub].minimalBox());
     auto const dom_lo = lbound(Geom(lev).Domain());
     auto const dom_hi = ubound(Geom(lev).Domain());
@@ -195,7 +199,7 @@ def builder(texts):
     fft_member(class_body, declaration.start()-cls.end())
     reject_uses(texts[CLASS], ['build_fft_solvers'], [declaration.span()], 'FFT builder declarations')
     source = Source(body)
-    literal(source, 'BL_PROFILE("ERF::build_fft_solvers()"); '+RESET+MESH+BUILD_PLAN)
+    literal(source, 'BL_PROFILE("ERF::build_fft_solvers()"); '+RESET+MESH+BUILD_PLAN+BUILD_TOPOLOGY)
     print('  ok   direct builder interface, same-level reset and supported-mesh planner')
     literal(source, LOOP+GEOMETRY+SLOTS+'} }')
     source.done()
@@ -227,6 +231,10 @@ def callers(text):
         loop_start = plan.end()+loop.start()
         direct(body, loop_start, 'projection subdomain loop')
         require(plan.end() < loop_start < gate.start(), 'projection planning must precede the loop')
+        topology = Source(body[plan.end():loop_start])
+        literal(topology, configured(PROJECT_TOPOLOGY,fft))
+        topology.done()
+        topology_span = (plan.end(), loop_start)
         branch = brace_block(body,gate.end()-1)
         source = Source(branch)
         literal(source,configured(DISPATCH,fft))
@@ -238,8 +246,10 @@ def callers(text):
         calls = list(re.finditer(pattern(CALL), no_literals(body)))
         require(len(calls) == (2 if fft else 0), 'configured FFT call inventory changed')
         dispatch_span = (gate.end(),gate.end()+dispatch_end)
-        reject_uses(body, ['solve_with_fft','will_solve_with_mlmg'], [plan.span(),dispatch_span],
+        reject_uses(body, ['solve_with_fft','will_solve_with_mlmg'], [plan.span(),topology_span,dispatch_span],
                     'projection planner/FFT uses')
+        reject_uses(body, ['has_periodic_subdomain_connections'], [topology_span],
+                    'projection topology uses')
         for call in calls:
             require(dispatch_span[0] <= call.start() < call.end() <= dispatch_span[1],
                     'FFT call outside checked dispatch')

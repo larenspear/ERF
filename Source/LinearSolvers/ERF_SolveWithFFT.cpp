@@ -44,6 +44,11 @@ void ERF::build_fft_solvers (int lev)
             will_solve_with_mlmg = false;
         }
 
+        // All projection backends currently solve each bin independently.
+        if (has_periodic_subdomain_connections(geom[lev], subdomains[lev])) {
+            amrex::Abort("Projection subdomains connected across a periodic boundary are not supported");
+        }
+
         for (int isub = 0; isub < subdomains[lev].size(); ++isub)
         {
             Box subdomain(subdomains[lev][isub].minimalBox());

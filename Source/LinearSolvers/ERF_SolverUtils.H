@@ -5,6 +5,8 @@
 #define ERF_SOLVER_UTILS_H_
 
 #include "AMReX_LO_BCTYPES.H"
+#include "AMReX_BoxArray.H"
+#include "AMReX_Geometry.H"
 
 using namespace amrex;
 
@@ -65,10 +67,45 @@ get_hi_projection_bc (Geometry const& lev_geom,
     return r;
 }
 
+/**
+ * Whether different solve bins share a fine-fine face through a periodic seam.
+ *
+ * A rectangular bin that spans a periodic axis handles its own seam. Separate
+ * bins cannot exchange the pressure unknowns or the solvability mean required
+ * by a connected region. Until wrapped bins can be solved together, callers
+ * must reject such partitions before using independent projection solves.
+ */
+inline bool
+has_periodic_subdomain_connections (Geometry const& lev_geom,
+                                    Vector<BoxArray> const& bins)
+{
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        if (!lev_geom.isPeriodic(dir)) { continue; }
+        for (int low = 0; low < bins.size(); ++low) {
+            for (int n = 0; n < bins[low].size(); ++n) {
+                Box const& box = bins[low][n];
+                if (box.smallEnd(dir) != lev_geom.Domain().smallEnd(dir)) { continue; }
+                Box neighbor = adjCellLo(box, dir, 1);
+                neighbor.shift(dir, lev_geom.Domain().length(dir));
+                for (int high = 0; high < bins.size(); ++high) {
+                    if (high != low && bins[high].intersects(neighbor)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 #ifdef ERF_USE_FFT
 
 /**
  * Define FFT boundary conditions on the specified solve box.
+ * A periodic transform needs both ends of the level domain. For an isolated
+ * partial box in a periodic direction, both ends are coarse-fine boundaries
+ * with homogeneous Neumann conditions, even when one end lies on the seam.
+ * Callers must first exclude connections to other bins across that seam.
  *
  * @param lev_geom Geometry for the full level domain
  * @param l_domain_bc_type Domain boundary-condition names
@@ -89,13 +126,15 @@ get_fft_bc (Geometry const& lev_geom,
     {
         auto bc_type_lo = l_domain_bc_type[Orientation(dir,Orientation::low)];
         if ( lev_geom.isPeriodic(dir) &&
-            (lev_geom.Domain().smallEnd(dir) == bounding_box.smallEnd(dir)) )
+            (lev_geom.Domain().smallEnd(dir) == bounding_box.smallEnd(dir)) &&
+            (lev_geom.Domain().bigEnd(dir) == bounding_box.bigEnd(dir)) )
         {
             first = FFT::Boundary::periodic;
              // amrex::Print() << "SETTING FIRST OF " << dir << " TO PERIODIC " << std::endl;
         }
 
-        else if ( (lev_geom.Domain().smallEnd(dir) == bounding_box.smallEnd(dir)) &&
+        else if ( !lev_geom.isPeriodic(dir) &&
+                  (lev_geom.Domain().smallEnd(dir) == bounding_box.smallEnd(dir)) &&
                   (bc_type_lo == "Outflow" || bc_type_lo == "Open") && (dir == 2 || !use_real_bcs) )
         {
             first = FFT::Boundary::odd;
@@ -110,13 +149,15 @@ get_fft_bc (Geometry const& lev_geom,
 
         auto bc_type_hi = l_domain_bc_type[Orientation(dir,Orientation::high)];
         if ( lev_geom.isPeriodic(dir) &&
-            (lev_geom.Domain().bigEnd(dir) == bounding_box.bigEnd(dir)) )
+            (lev_geom.Domain().bigEnd(dir) == bounding_box.bigEnd(dir)) &&
+            (lev_geom.Domain().smallEnd(dir) == bounding_box.smallEnd(dir)) )
         {
             second = FFT::Boundary::periodic;
              // amrex::Print() << "SETTING SECOND OF " << dir << " TO PERIODIC " << std::endl;
         }
 
-        else if ( (lev_geom.Domain().bigEnd(dir) == bounding_box.bigEnd(dir)) &&
+        else if ( !lev_geom.isPeriodic(dir) &&
+                  (lev_geom.Domain().bigEnd(dir) == bounding_box.bigEnd(dir)) &&
                   (bc_type_hi == "Outflow" || bc_type_hi == "Open") && (dir == 2 || !use_real_bcs) )
         {
             second = FFT::Boundary::odd;

@@ -8,11 +8,12 @@ real lateral BCs and every string literal compared by the source plus an other
 class. Compare outputs with an independent per-face specification. Preserve
 the previous full builder contract and inventory its explicit helper call.
 
-The specification gives periodic precedence at touching periodic faces; odd at
-touching Open/Outflow faces when vertical or not using real BCs; even otherwise.
+The specification uses a periodic pair only when the box spans a periodic axis;
+partial periodic boxes receive even/even coarse-fine conditions. Nonperiodic
+touching Open/Outflow faces are odd when vertical or not using real BCs.
 For a lateral axis of length > 1, the inspected hybrid constructor requires
-both faces periodic or neither. The table establishes compatibility iff the
-axis is nonperiodic or both ends have the same contact status. The vertical
+both faces periodic or neither. The table establishes that property for all
+input classes. The vertical
 constructor restriction requires neither face periodic. These restrictions
 are conditional properties, not claims that every ERF subdomain satisfies them.
 
@@ -45,6 +46,25 @@ SIGNATURE = '''inline '''+TYPE+''' get_fft_bc(Geometry const& lev_geom,
     Box const& bounding_box, bool use_real_bcs) noexcept {'''
 LOOP = 'for (int dir = 0; dir <= 2; dir++) {'
 CALL = 'auto bc_fft = get_fft_bc(geom[lev],domain_bc_type,subdomain,solverChoice.use_real_bcs);'
+TOPOLOGY_SIGNATURE = '''inline bool has_periodic_subdomain_connections(
+    Geometry const& lev_geom, Vector<BoxArray> const& bins) {'''
+TOPOLOGY_BODY = '''
+    for (int dir = 0; dir < AMREX_SPACEDIM; ++dir) {
+        if (!lev_geom.isPeriodic(dir)) { continue; }
+        for (int low = 0; low < bins.size(); ++low) {
+            for (int n = 0; n < bins[low].size(); ++n) {
+                Box const& box = bins[low][n];
+                if (box.smallEnd(dir) != lev_geom.Domain().smallEnd(dir)) { continue; }
+                Box neighbor = adjCellLo(box, dir, 1);
+                neighbor.shift(dir, lev_geom.Domain().length(dir));
+                for (int high = 0; high < bins.size(); ++high) {
+                    if (high != low && bins[high].intersects(neighbor)) { return true; }
+                }
+            }
+        }
+    }
+    return false;
+'''
 
 
 def take(source, code):
@@ -198,6 +218,20 @@ def helper(text):
     return branches, strings, (first,second)
 
 
+def topology_helper(text):
+    definition = unique(pattern(TOPOLOGY_SIGNATURE),text,'periodic topology helper signature')
+    require(not scopes(text,definition.start()),'topology helper must be global')
+    require(pp_stack(text[:definition.start()]) == [('ifndef','ERF_SOLVER_UTILS_H_')],
+            'topology helper must be available without FFT')
+    body = brace_block(text,definition.end()-1)
+    source = Source(body)
+    take(source,TOPOLOGY_BODY)
+    source.done()
+    reject_uses(text,['has_periodic_subdomain_connections'],
+                [(definition.start(),definition.end()+len(body)+1)],'topology helper inventory')
+    print('  ok   complete periodic-neighbor traversal source guard (semantics covered by compiled tests)')
+
+
 def table(model):
     branches, strings, order = model
     classes = set(strings) | {'Outflow', 'Open'}
@@ -214,15 +248,16 @@ def table(model):
         expected = []
         for touches, name in ((low,lo),(high,hi)):
             value = 'even'
-            if touches:
-                if periodic: value = 'periodic'
-                elif name in ('Open','Outflow') and (direction == 2 or not real): value = 'odd'
+            if periodic:
+                if low and high: value = 'periodic'
+            elif touches and name in ('Open','Outflow') and (direction == 2 or not real):
+                value = 'odd'
             expected.append(value)
         require(result == tuple(expected), 'FFT boundary classification mismatch: '+str(inputs)+' -> '+str(result)+' expected '+str(expected))
         pair_ok = (result[0] == 'periodic') == (result[1] == 'periodic')
-        require(pair_ok == (not periodic or low == high), 'lateral periodic compatibility relation changed')
+        require(pair_ok, 'mixed-periodic FFT pair is inadmissible')
         vertical_ok = all(value != 'periodic' for value in result)
-        require(vertical_ok == (not periodic or not (low or high)), 'vertical periodic compatibility relation changed')
+        require(vertical_ok == (not periodic or not (low and high)), 'vertical periodic compatibility relation changed')
         mixed += direction < 2 and not pair_ok
         vertical += direction == 2 and not vertical_ok
         count += 1
@@ -239,7 +274,8 @@ def construction(texts):
     call = unique(pattern(CALL), body, 'builder boundary call')
     offset = definition.end()
     reject_uses(texts[SOURCE], ['get_fft_bc'], [(offset+call.start(), offset+call.end())], 'builder-file helper inventory')
-    reject_uses(texts[CLASS], ['get_fft_bc'], [], 'ERF member shadowing of boundary helper')
+    reject_uses(texts[CLASS], ['get_fft_bc','has_periodic_subdomain_connections'], [],
+                'ERF member shadowing of boundary/topology helpers')
     print('  ok   same-level Geometry/BC names/solve box/real flag reach both FFT constructors')
 
 
@@ -247,12 +283,13 @@ def main():
     root = Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).resolve().parent.parent
     try:
         texts = load(root)
+        topology_helper(texts[UTILS])
         table(helper(texts[UTILS]))
         construction(texts)
     except (ValueError, OSError) as error:
         print('FAIL source contract: '+str(error))
         return 1
-    print('3 FFT boundary source/model contracts passed; periodic admissibility and lifetime remain conditional.')
+    print('4 FFT boundary source/model contracts passed; periodic topology semantics and lifetime remain conditional.')
     return 0
 
 

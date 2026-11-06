@@ -9,12 +9,13 @@ from pathlib import Path
 from advection_source import mutation_outcome
 from check_mapfactor_storage import strip_comments
 from check_stretched_dz_bindings import STRING, brace_block
-from check_stretched_dz_fft_bc import CALL, CLASS, FILES, LOOP, SIGNATURE, SOURCE, TYPE, UTILS, pattern
+from check_stretched_dz_fft_bc import (CALL, CLASS, FILES, LOOP, SIGNATURE, SOURCE,
+    TOPOLOGY_BODY, TOPOLOGY_SIGNATURE, TYPE, UTILS, pattern)
 from momentum_geometry import unique
 
 ROOT = Path(__file__).resolve().parent.parent
 VERIFY = ROOT/'Tests/check_stretched_dz_fft_bc.py'
-SUCCESS = '3 FFT boundary source/model contracts passed;'
+SUCCESS = '4 FFT boundary source/model contracts passed;'
 
 
 def cases(original):
@@ -38,6 +39,30 @@ def cases(original):
     def region(name,before,after,fault=True):
         match=unique(pattern(before),body,name)
         return changed_body(name,body[:match.start()]+after+body[match.end():],fault)
+
+    for name,before,after in (
+        ('periodic gate','!lev_geom.isPeriodic(dir)','lev_geom.isPeriodic(dir)'),
+        ('first axis','dir = 0','dir = 1'),
+        ('last axis','dir < AMREX_SPACEDIM','dir < 2'),
+        ('low bin bound','low < bins.size()','low < bins.size()-1'),
+        ('box bound','n < bins[low].size()','n < bins[low].size()-1'),
+        ('low endpoint','box.smallEnd(dir)','box.bigEnd(dir)'),
+        ('domain endpoint','Domain().smallEnd(dir)','Domain().bigEnd(dir)'),
+        ('face width','adjCellLo(box, dir, 1)','adjCellLo(box, dir, 0)'),
+        ('wrong face','adjCellLo(box, dir, 1)','adjCellHi(box, dir, 1)'),
+        ('shift sign','neighbor.shift(dir, lev_geom.Domain().length(dir))',
+         'neighbor.shift(dir, -lev_geom.Domain().length(dir))'),
+        ('shift axis','neighbor.shift(dir,','neighbor.shift(0,'),
+        ('self seam','high != low','high == low'),
+        ('intersection bin','bins[high].intersects','bins[low].intersects'),
+        ('connected return','return true','return false'),
+        ('disconnected return','return false','return true'),
+    ):
+        yield replace('topology '+name,UTILS,TOPOLOGY_BODY,TOPOLOGY_BODY.replace(before,after))
+    yield replace('topology mutable bins',UTILS,TOPOLOGY_SIGNATURE,
+                  TOPOLOGY_SIGNATURE.replace('const& bins','& bins'))
+    yield replace('topology requires FFT',UTILS,TOPOLOGY_SIGNATURE+TOPOLOGY_BODY+'}',
+                  '#ifdef ERF_USE_FFT\n'+TOPOLOGY_SIGNATURE+TOPOLOGY_BODY+'}\n#endif')
 
     for name,before,after in (
         ('result reference',TYPE+' get_fft_bc',TYPE+'& get_fft_bc'),
@@ -91,8 +116,9 @@ def cases(original):
         ):
             yield region(side+' '+name,read,read.replace(before,after))
         touch='lev_geom.Domain().'+endpoint+'(dir) == bounding_box.'+endpoint+'(dir)'
-        periodic='lev_geom.isPeriodic(dir) && ('+touch+')'
-        odd='('+touch+') && (bc_type_'+side+' == "Outflow" || bc_type_'+side+' == "Open") && (dir == 2 || !use_real_bcs)'
+        opposite='lev_geom.Domain().'+other+'(dir) == bounding_box.'+other+'(dir)'
+        periodic='lev_geom.isPeriodic(dir) && ('+touch+') && ('+opposite+')'
+        odd='!lev_geom.isPeriodic(dir) && ('+touch+') && (bc_type_'+side+' == "Outflow" || bc_type_'+side+' == "Open") && (dir == 2 || !use_real_bcs)'
         for name,before,after in (
             ('periodic disabled',periodic,'false'),
             ('periodic unconditional',periodic,'true'),
@@ -101,10 +127,12 @@ def cases(original):
             ('periodic wrong end',endpoint,other),
             ('periodic wrong contact','==','!='),
             ('periodic without contact',periodic,'lev_geom.isPeriodic(dir)'),
+            ('periodic missing opposite end',' && ('+opposite+')',''),
             ('periodic wrong axis','isPeriodic(dir)','isPeriodic(0)'),
         ):
             yield region(side+' '+name,periodic,periodic.replace(before,after))
         for name,before,after in (
+            ('odd ignores periodicity','!lev_geom.isPeriodic(dir) && ',''),
             ('odd disabled',odd,'false'),('odd unconditional',odd,'true'),
             ('odd wrong end',endpoint,other),('odd contact union',') && (bc_type_',') || (bc_type_'),
             ('odd contact sense',touch,touch.replace('==','!=')),
@@ -135,7 +163,7 @@ def cases(original):
             yield region(side+' '+name,periodic,code)
         # Equivalent source conditions must pass semantic comparison.
         for name,old,new in (
-            ('periodic commuted',periodic,'('+touch+') && lev_geom.isPeriodic(dir)'),
+            ('periodic commuted',periodic,'('+opposite+') && ('+touch+') && lev_geom.isPeriodic(dir)'),
             ('periodic double negation',periodic,'!!('+periodic+')'),
             ('odd flag commuted',odd,odd.replace('dir == 2 || !use_real_bcs','!use_real_bcs || dir == 2')),
             ('parenthesized integer comparison',odd,odd.replace('dir == 2','!(dir != 2)')),
@@ -163,6 +191,8 @@ def cases(original):
     yield fixture('extra helper call',SOURCE,texts[SOURCE]+'\nauto extra = get_fft_bc(other);')
     yield replace('ERF member shadows helper',CLASS,'void build_fft_solvers(int lev);',
                   'void get_fft_bc(); void build_fft_solvers(int lev);')
+    yield replace('ERF member shadows topology helper',CLASS,'void build_fft_solvers(int lev);',
+                  'void has_periodic_subdomain_connections(); void build_fft_solvers(int lev);')
     for member,kind in (('m_3D_poisson','Poisson'),('m_2D_poisson','PoissonHybrid')):
         before=member+'[lev][isub] = std::make_unique<FFT::'+kind+'<MultiFab>>(my_geom,bc_fft);'
         yield replace(member+' boundary argument',SOURCE,before,before.replace('bc_fft','other_bc'))

@@ -9,9 +9,9 @@ from pathlib import Path
 from advection_source import mutation_outcome
 from check_mapfactor_storage import strip_comments
 from check_stretched_dz_bindings import STRING, brace_block, signature
-from check_stretched_dz_fft_bindings import (BUILD, BUILD_PLAN, CALL, CLASS,
+from check_stretched_dz_fft_bindings import (BUILD, BUILD_PLAN, BUILD_TOPOLOGY, CALL, CLASS,
     CONTROLS, DISPATCH, FILES, GEOMETRY, LOOP, MESH, NON_EB, PLAN, PROJECTION,
-    RESET, SLOTS, SOURCE, VARIABLE, pattern)
+    PROJECT_TOPOLOGY, RESET, SLOTS, SOURCE, VARIABLE, pattern)
 from momentum_geometry import unique
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -98,6 +98,22 @@ def cases(original):
         ('constant flag','will_solve_with_mlmg = true','will_solve_with_mlmg = false'),
     ):
         yield alter(name,PROJECTION,PLAN,before,after)
+
+    for path,block in ((SOURCE,BUILD_TOPOLOGY),(PROJECTION,PROJECT_TOPOLOGY)):
+        for name,before,after in (
+            ('geometry level','geom[lev]','geom[lev+1]'),
+            ('bins level','subdomains[lev]','subdomains[lev+1]'),
+            ('ignored result','if (has_periodic','if (false && has_periodic'),
+            ('reversed result','if (has_periodic','if (!has_periodic'),
+            ('FFT flag bypass','if (has_periodic','if (use_fft && has_periodic'),
+            ('warning only','amrex::Abort','amrex::Warning'),
+        ):
+            yield alter(Path(path).stem+' topology '+name,path,block,before,after)
+        for name,change in (
+            ('omitted',''), ('deferred','auto later = [&] { '+block+' };'),
+            ('conditional','if (ready) { '+block+' }'),
+        ):
+            yield replace(Path(path).stem+' topology '+name,path,block,change)
 
     for name,before,after in (
         ('builder region level','subdomains[lev][isub]','subdomains[lev+1][isub]'),
