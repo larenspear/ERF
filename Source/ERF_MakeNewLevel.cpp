@@ -25,15 +25,17 @@ using namespace amrex;
 
 namespace {
 
-// These Eulerian schemes expose their cumulative surface fields through stable
-// qmoist slots. Particle schemes have a separate multilevel state lifecycle.
-bool preserve_surface_precipitation (MoistureType moisture)
+// These schemes expose cumulative surface fields through stable qmoist slots.
+// SuperDroplets fine levels use InitLevel; base-level Init also replaces the
+// particle container and needs a separate lifecycle policy.
+bool preserve_surface_precipitation (MoistureType moisture, int lev)
 {
     return moisture == MoistureType::Kessler || moisture == MoistureType::Kessler_NoRain ||
            moisture == MoistureType::SAM || moisture == MoistureType::SAM_NoIce ||
            moisture == MoistureType::SAM_NoPrecip_NoIce ||
            moisture == MoistureType::Morrison || moisture == MoistureType::Morrison_NoIce ||
-           moisture == MoistureType::WSM6 || moisture == MoistureType::WDM6;
+           moisture == MoistureType::WSM6 || moisture == MoistureType::WDM6 ||
+           (moisture == MoistureType::SuperDroplets && lev > 0);
 }
 
 } // namespace
@@ -615,7 +617,7 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
     }
 
     const bool preserve_surface_accumulation =
-        preserve_surface_precipitation(solverChoice.moisture_type);
+        preserve_surface_precipitation(solverChoice.moisture_type, lev);
     if (preserve_surface_accumulation) {
         const auto sources = micro->Get_Surface_Precip_Accumulation_Ptrs(lev);
         const auto coarse_sources = micro->Get_Surface_Precip_Accumulation_Ptrs(lev-1);
@@ -1319,7 +1321,7 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
     // Define/Init replaces the native cumulative fields. Preserve their valid
     // surface history before either call can destroy the old allocation.
     const bool preserve_surface_accumulation =
-        preserve_surface_precipitation(solverChoice.moisture_type);
+        preserve_surface_precipitation(solverChoice.moisture_type, lev);
     Vector<std::unique_ptr<MultiFab>> old_surface_accumulation(qmoist[lev].size());
     if (preserve_surface_accumulation) {
         const auto sources = micro->Get_Surface_Precip_Accumulation_Ptrs(lev);

@@ -2388,6 +2388,14 @@ if(Python3_Interpreter_FOUND)
             ${PROJECT_SOURCE_DIR}/Tests/check_noahmp_level_lifecycle.py)
     set_tests_properties(NoahMP_LevelLifecycle PROPERTIES
         TIMEOUT 30 PROCESSORS 1 LABELS "lsm;unit")
+    add_test(NAME ParticlePrecipitation_Lifecycle
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_particle_precipitation_lifecycle.py)
+    add_test(NAME ParticlePrecipitation_Restriction
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_particle_precipitation_restriction.py)
+    set_tests_properties(ParticlePrecipitation_Lifecycle ParticlePrecipitation_Restriction
+        PROPERTIES TIMEOUT 30 PROCESSORS 1 LABELS "microphysics;unit")
 endif()
 
 # The linear advection stencils in Source/Utils/ERF_Interpolation_UPW.H, checked

@@ -4,6 +4,7 @@
 #include <AMReX_BCUtil.H>
 #include <AMReX_FillPatchUtil.H>
 #include <AMReX_Interpolater.H>
+#include <AMReX_MultiFabUtil.H>
 
 #include "ERF_SurfacePrecipitation.H"
 
@@ -73,6 +74,39 @@ capture_surface_accumulation (const amrex::MultiFab& source,
     }
     // The iterator completes every used stream before Init can destroy source.
     return std::move(slice.values);
+}
+
+// Restrict a surface depth by its horizontal area, without averaging in empty
+// atmospheric cells above it. Leave uncovered coarse columns and all upper
+// cells unchanged. Fine patches wholly above the ground have nothing to add.
+inline void
+average_down_surface_accumulation (
+    const amrex::MultiFab& fine, amrex::MultiFab& coarse,
+    const amrex::Geometry& fine_geometry, const amrex::Geometry& coarse_geometry,
+    const amrex::IntVect& refinement)
+{
+    using namespace amrex;
+#ifdef AMREX_USE_GPU
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(!Gpu::inNoSyncRegion(),
+        "Surface precipitation restriction requires GPU synchronization");
+#endif
+    auto fine_surface = capture_surface_accumulation(fine, fine_geometry);
+    if (!fine_surface) { return; }
+    auto coarse_surface = capture_surface_accumulation(coarse, coarse_geometry);
+    AMREX_ALWAYS_ASSERT(coarse_surface != nullptr);
+    const IntVect surface_ratio(refinement[0], refinement[1], 1);
+    average_down(*fine_surface, *coarse_surface, 0, 1, surface_ratio);
+    Gpu::streamSynchronizeAll();
+
+    const auto layout = make_surface_slice(coarse, coarse_geometry);
+    const int bottom = coarse_geometry.Domain().smallEnd(2);
+    for (MFIter mfi(*coarse_surface, MFItInfo().SetDeviceSync(true)); mfi.isValid(); ++mfi) {
+        const auto from = coarse_surface->const_array(mfi);
+        const auto to = coarse.array(layout.atmospheric_indices[mfi.index()]);
+        ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE (int i, int j, int) noexcept {
+            to(i,j,bottom) = from(i,j,0);
+        });
+    }
 }
 
 inline bool

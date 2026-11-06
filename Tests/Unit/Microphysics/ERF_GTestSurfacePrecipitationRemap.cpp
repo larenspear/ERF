@@ -243,3 +243,72 @@ TEST(SurfacePrecipitationRemap, SlmSeedUsesNewNativeUnitsAndKeepsOldIntervalHist
     // in SLM units (6*2). Regridding must keep that unconsumed interval history.
     expect_values(baseline, SurfaceContract{0,8,11,Real(11),Real(14),Real(0)});
 }
+
+TEST(SurfacePrecipitationRemap, RestrictionUsesHorizontalSurfaceArea)
+{
+    for (int rz : {1, 2, 3}) {
+        const IntVect ratio(2,2,rz);
+        const Box coarse_domain(IntVect(0,0,3), IntVect(7,3,6));
+        const Box fine_domain = refine(coarse_domain, ratio);
+        const auto coarse_geom = geometry(coarse_domain);
+        const auto fine_geom = geometry(fine_domain);
+        BoxArray coarse_boxes(coarse_domain);
+        coarse_boxes.maxSize(IntVect(4,4,2));
+        Box fine_patch = refine(Box(IntVect(2,0,3),IntVect(5,3,6)),ratio);
+        BoxArray fine_boxes(fine_patch);
+        fine_boxes.maxSize(IntVect(4,4,2*rz));
+        auto coarse = native_field(coarse_boxes, Real(-17));
+        set_surface(coarse,coarse_geom,Real(7));
+        auto fine = native_field(fine_boxes, Real(-999));
+        // Only the physical surface participates; poison every upper cell and halo.
+        set_surface(fine,fine_geom,Real(12),Real(2));
+        erf_precipitation::average_down_surface_accumulation(
+            fine,coarse,fine_geom,coarse_geom,ratio);
+        auto expected = [=] AMREX_GPU_HOST_DEVICE (int i,int,int k) noexcept {
+            if (k!=3) return Real(-17);
+            if (i<2 || i>5) return Real(7);
+            return Real(13+4*i); // Mean of fine indices 2*i and 2*i+1.
+        };
+        expect_values(coarse,expected);
+        // Repeating a synchronization must not further alter the history.
+        erf_precipitation::average_down_surface_accumulation(
+            fine,coarse,fine_geom,coarse_geom,ratio);
+        expect_values(coarse,expected);
+    }
+}
+
+TEST(SurfacePrecipitationRemap, RestrictionSkipsFinePatchesAboveGround)
+{
+    const Box coarse_domain(IntVect(0),IntVect(7,3,3));
+    const IntVect ratio(2);
+    const auto coarse_geom=geometry(coarse_domain);
+    const auto fine_geom=geometry(refine(coarse_domain,ratio));
+    auto coarse=native_field(BoxArray(coarse_domain),Real(7));
+    auto fine=native_field(BoxArray(Box(IntVect(4,0,4),IntVect(11,7,7))),Real(99));
+    erf_precipitation::average_down_surface_accumulation(
+        fine,coarse,fine_geom,coarse_geom,ratio);
+    EXPECT_EQ(coarse.min(0),Real(7));
+    EXPECT_EQ(coarse.max(0),Real(7));
+}
+
+TEST(SurfacePrecipitationRemap, RestrictionPreservesDepthAcrossThreeLevels)
+{
+    const IntVect ratio(2);
+    const Box coarse_domain(IntVect(0),IntVect(3));
+    const Box middle_domain=refine(coarse_domain,ratio);
+    const Box fine_domain=refine(middle_domain,ratio);
+    const auto coarse_geom=geometry(coarse_domain);
+    const auto middle_geom=geometry(middle_domain);
+    const auto fine_geom=geometry(fine_domain);
+    auto coarse=native_field(BoxArray(coarse_domain),Real(0));
+    auto middle=native_field(BoxArray(middle_domain),Real(0));
+    auto fine=native_field(BoxArray(fine_domain),Real(0));
+    set_surface(fine,fine_geom,Real(12));
+    erf_precipitation::average_down_surface_accumulation(
+        fine,middle,fine_geom,middle_geom,ratio);
+    erf_precipitation::average_down_surface_accumulation(
+        middle,coarse,middle_geom,coarse_geom,ratio);
+    expect_values(coarse,[] AMREX_GPU_HOST_DEVICE (int,int,int k) noexcept {
+        return k==0?Real(12):Real(0);
+    });
+}

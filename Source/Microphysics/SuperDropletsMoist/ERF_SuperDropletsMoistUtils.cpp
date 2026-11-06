@@ -1,6 +1,7 @@
 #include "ERF_SuperDropletsMoist.H"
 #include "ERF_EOS.H"
 #include "ERF_IndexDefines.H"
+#include "ERF_SurfacePrecipitationRemap.H"
 
 #ifdef ERF_USE_PARTICLES
 
@@ -363,11 +364,21 @@ void SuperDropletsMoist::AverageDownMicroVars (const int finest_level)
                                     static_cast<int>(m_mic_fab_vars[lev-1].size()));
         for (int v = 0; v < n; ++v) {
             if (!m_mic_fab_vars[lev][v] || !m_mic_fab_vars[lev-1][v]) continue;
-            average_down( *m_mic_fab_vars[lev][v],
-                          *m_mic_fab_vars[lev-1][v],
-                          0,
-                          m_mic_fab_vars[lev][v]->nComp(),
-                          rr );
+            const bool surface_depth = v == MicVar_SD::rain_accum ||
+                                       v == MicVar_SD::snow_accum ||
+                                       v == MicVar_SD::graup_accum;
+            if (surface_depth) {
+                AMREX_ALWAYS_ASSERT(m_super_droplets != nullptr);
+                erf_precipitation::average_down_surface_accumulation(
+                    *m_mic_fab_vars[lev][v], *m_mic_fab_vars[lev-1][v],
+                    m_super_droplets->Geom(lev), m_super_droplets->Geom(lev-1), rr);
+            } else {
+                average_down( *m_mic_fab_vars[lev][v],
+                              *m_mic_fab_vars[lev-1][v],
+                              0,
+                              m_mic_fab_vars[lev][v]->nComp(),
+                              rr );
+            }
         }
     }
 }

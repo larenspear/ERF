@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Bind particle precipitation slots to the compiled surface restriction helper.
+
+This bounded source check is not a general C++ control-flow proof. The helper's
+surface coverage, arithmetic, and vertical independence have compiled tests.
+"""
+import argparse
+from pathlib import Path
+from check_noahmp_precipitation_order import body, compact
+
+UTILS="Source/Microphysics/SuperDropletsMoist/ERF_SuperDropletsMoistUtils.cpp"
+
+def verify(source):
+    average=compact(body(source,r"SuperDropletsMoist::AverageDownMicroVars\s*\("))
+    selection=("constboolsurface_depth=v==MicVar_SD::rain_accum||"
+               "v==MicVar_SD::snow_accum||v==MicVar_SD::graup_accum;")
+    dispatch=("if(surface_depth){AMREX_ALWAYS_ASSERT(m_super_droplets!=nullptr);"
+              "erf_precipitation::average_down_surface_accumulation("
+              "*m_mic_fab_vars[lev][v],*m_mic_fab_vars[lev-1][v],"
+              "m_super_droplets->Geom(lev),m_super_droplets->Geom(lev-1),rr);"
+              "}else{average_down(*m_mic_fab_vars[lev][v],*m_mic_fab_vars[lev-1][v],"
+              "0,m_mic_fab_vars[lev][v]->nComp(),rr);}")
+    assert selection+dispatch in average,"surface slots must use horizontal restriction; volume slots retain 3D averaging"
+    assert "if(false)" not in average and "#if0" not in average
+    assert "for(intlev=finest_level;lev>=1;--lev)" in average
+    # The production accumulation methods establish the surface-depth layout.
+    for name in ["rainAccumulation","snowAccumulation"]:
+        method=compact(body(source,r"SuperDropletsMoist::"+name+r"\s*\("))
+        assert "intk_lo=domain.smallEnd(2);" in method
+        assert "if(k==k_lo){" in method
+        assert "*dt/mat_density" in method,"review accumulated quantity units"
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-root",type=Path,default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--utils-file",type=Path,help="isolated candidate override")
+    args=parser.parse_args()
+    source=(args.utils_file or args.source_root/UTILS).read_text()
+    verify(source)
+    faults=[("v == MicVar_SD::rain_accum","v == MicVar_SD::rho"),
+            ("v == MicVar_SD::snow_accum","v == MicVar_SD::q_s"),
+            ("if (surface_depth)","if (!surface_depth)"),
+            ("m_super_droplets->Geom(lev-1), rr","m_super_droplets->Geom(lev), rr"),
+            ("lev >= 1; --lev","lev > 1; --lev"),
+            ("if (k == k_lo)","if (k >= k_lo)")]
+    for old,new in faults:
+        assert old in source,old
+        try: verify(source.replace(old,new))
+        except (AssertionError,ValueError): continue
+        raise AssertionError("accepted source fault: "+old)
+    verify("// harmless { }\n"+source)
+    print(f"Particle precipitation restriction source contract passed; {len(faults)} faults rejected")
+
+if __name__=="__main__": main()
