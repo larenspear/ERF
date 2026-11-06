@@ -2376,6 +2376,13 @@ if(Python3_Interpreter_FOUND)
         PROCESSORS 1
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/Exec/CanonicalTests/Canonical_RANS"
         LABELS "rans;unit")
+    # Source binding for the separately compiled NoahMP precipitation helpers.
+    # This bounded contract runs even when external NoahMP physics is disabled.
+    add_test(NAME NoahMP_PrecipitationOrder
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_noahmp_precipitation_order.py)
+    set_tests_properties(NoahMP_PrecipitationOrder PROPERTIES
+        TIMEOUT 30 PROCESSORS 1 LABELS "lsm;unit")
 endif()
 
 # The linear advection stencils in Source/Utils/ERF_Interpolation_UPW.H, checked

@@ -59,12 +59,14 @@ NOAHMP::Write_Lsm_Restart (const std::string& dir) const
 
     // Also save the precip snapshots so the next land call after restart differences
     // against the same baseline (no precip dropped or double-counted).
-    if (m_lev < int(m_precip_accum_prev.size())) {
-        for (int s(0); s < NoahmpPrecipSlot::NumSlots; ++s) {
-            if (m_precip_accum_prev[m_lev][s]) {
-                amrex::VisMF::Write(*m_precip_accum_prev[m_lev][s],
-                                    m_precip_snapshot_name(dir, m_lev, s));
-            }
+    for (int s(0); s < NoahmpPrecipSlot::NumSlots; ++s) {
+        const MultiFab* snapshot = (m_lev < int(m_precip_accum_prev.size()))
+            ? m_precip_accum_prev[m_lev][s].get() : nullptr;
+        // A restart can be checkpointed again before the first Advance moves
+        // the saved baseline into the live snapshots. Preserve that staging too.
+        if (snapshot == nullptr) { snapshot = m_precip_accum_restored[s].get(); }
+        if (snapshot != nullptr) {
+            amrex::VisMF::Write(*snapshot, m_precip_snapshot_name(dir, m_lev, s));
         }
     }
 }

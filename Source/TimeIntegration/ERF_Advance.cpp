@@ -23,6 +23,15 @@ ERF::Advance (int lev, double time, double dt_lev, int iteration, int /*ncycle*/
 {
     BL_PROFILE("ERF::Advance()");
 
+    // Noah-MP consumes differences of cumulative precipitation after atmospheric
+    // advancement. Establish its first baseline before both tightly coupled
+    // microphysics in the dycore and the later standalone microphysics call.
+    if (solverChoice.lsm_type == LandSurfaceType::NOAHMP) {
+        lsm.Prepare_Precipitation(lev,
+            micro ? micro->Get_Surface_Precip_Accumulation_Ptrs(lev)
+                  : SurfacePrecipAccumulationSources{});
+    }
+
     // We must swap the pointers so the previous step's "new" is now this step's "old"
     std::swap(vars_old[lev], vars_new[lev]);
 

@@ -55,6 +55,11 @@ class NullSurf {
 
     virtual void Advance (const amrex::Real&, const amrex::Real&, const amrex::Real&) { }
 
+    // Called before atmospheric physics can update cumulative precipitation.
+    virtual void Prepare_Precipitation (
+        const int& /*lev*/,
+        const SurfacePrecipAccumulationSources& /*precip_sources*/) { }
+
     virtual
     void
     Advance_With_State (const int& /*lev*/,

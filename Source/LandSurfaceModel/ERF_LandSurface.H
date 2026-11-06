@@ -78,6 +78,13 @@ public:
              z_phys_nd, nc_init_file);
     }
 
+    void Prepare_Precipitation (
+        const int& lev,
+        const SurfacePrecipAccumulationSources& precip_sources)
+    {
+        m_lsm_model[lev]->Prepare_Precipitation(lev, precip_sources);
+    }
+
     void
     Advance (const int& lev,
              amrex::MultiFab& cons_in,

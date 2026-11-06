@@ -100,6 +100,18 @@ public:
           const amrex::Real& dt,
           amrex::Vector<amrex::Vector<std::string>>& nc_init_file) override;
 
+    // Seed only missing snapshots, before microphysics changes the native
+    // accumulators. Repeated calls preserve the last consumed land interval;
+    // restored snapshots take precedence over the current cumulative history.
+    void Prepare_Precipitation (
+        const int& lev,
+        const SurfacePrecipAccumulationSources& precip_sources) override
+    {
+        if (m_has_nc_file) {
+            prepare_precip_snapshots(lev, collect_precip_sources(precip_sources));
+        }
+    }
+
     // Wrapper to do all the updating
     void
     Advance_With_State (const int& lev,
@@ -286,7 +298,7 @@ public:
     collect_precip_sources (const SurfacePrecipAccumulationSources& precip_sources);
 
     // Lazily allocate + seed the per-level "previous cumulative accum" snapshots
-    // (cold start seeds from current; restart consumes m_precip_accum_restored).
+    // (pre-step cold start seeds current; restart consumes m_precip_accum_restored).
     void
     prepare_precip_snapshots (const int& lev,
                               const erf_noahmp::PrecipSlots& precip);
