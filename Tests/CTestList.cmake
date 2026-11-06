@@ -2901,6 +2901,18 @@ if(ERF_TEST_PYTHON)
         PROCESSORS 1
         LABELS "unit;advection")
 
+    # Check FFT face classification and conditional periodic admissibility.
+    add_test(NAME AdvectionStretchedDzFFTBoundary
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_fft_bc.py
+                ${PROJECT_SOURCE_DIR})
+    add_test(NAME AdvectionStretchedDzFFTBoundary_SelfTest
+        COMMAND ${ERF_TEST_PYTHON} ${PROJECT_SOURCE_DIR}/Tests/check_stretched_dz_fft_bc_selftest.py)
+    set_tests_properties(AdvectionStretchedDzFFTBoundary AdvectionStretchedDzFFTBoundary_SelfTest
+        PROPERTIES
+        TIMEOUT 180
+        PROCESSORS 1
+        LABELS "unit;advection")
+
     # Prove neighboring normal-grid momentum cells use a common reconstructed
     # face flux and give it opposite volume-weighted tendency contributions.
     add_test(NAME AdvectionMomentumNormalBalance_Z3
