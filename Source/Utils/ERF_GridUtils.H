@@ -174,15 +174,33 @@ struct GeometricStretch
     bool converged{false};               //!< tolerance met or storage-limited ratio selected
 };
 
-// Horner's rule avoids cancellation in (r^nz-1)/(r-1) near r=1. Overflow is
-// permitted while bracketing: an infinite positive depth is an upper bound.
+// Horner's rule avoids cancellation in (r^nz-1)/(r-1) near r=1. For positive
+// dz0 and ratio >= 1, return infinity for an unrepresentable depth without
+// executing overflowing arithmetic: bracketing also runs with traps enabled.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real
 geometric_depth (amrex::Real dz0, amrex::Real ratio, int nz) noexcept
 {
+    const amrex::Real largest = std::numeric_limits<amrex::Real>::max();
+    const amrex::Real quarter_max = largest/amrex::Real(4.0);
+    const amrex::Real half_max = largest/amrex::Real(2.0);
     amrex::Real depth = dz0;
     for (int k = 1; k < nz; ++k) {
-        depth = depth * ratio + dz0;
+        if (depth > quarter_max/ratio || dz0 > quarter_max) {
+            // Leave room for rounding in the comparison and for the addition.
+            // Scaling by four is exact for the large terms that need this path.
+            const amrex::Real scaled_depth = depth/amrex::Real(4.0);
+            if (scaled_depth > half_max/ratio) {
+                return std::numeric_limits<amrex::Real>::infinity();
+            }
+            const amrex::Real scaled_sum = scaled_depth*ratio + dz0/amrex::Real(4.0);
+            if (scaled_sum > quarter_max) {
+                return std::numeric_limits<amrex::Real>::infinity();
+            }
+            depth = scaled_sum*amrex::Real(4.0);
+        } else {
+            depth = depth * ratio + dz0;
+        }
     }
     return depth;
 }
@@ -253,7 +271,7 @@ geometric_stretch (amrex::Real dz0,
     for (int iter = 0; upper_residual < amrex::Real(0.0) && iter < bracket_limit; ++iter) {
         lower = upper;
         lower_residual = upper_residual;
-        upper = (upper <= largest/amrex::Real(2.0)) ? upper*amrex::Real(2.0) : largest;
+        upper = amrex::min(upper, largest/amrex::Real(2.0))*amrex::Real(2.0);
         upper_residual = geometric_depth(dz0, upper, nz) - z_top;
     }
     if (!(lower_residual <= amrex::Real(0.0)) || !(upper_residual >= amrex::Real(0.0))) {

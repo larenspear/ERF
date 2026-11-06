@@ -5,7 +5,9 @@ The complete supported source region is consumed. SMT checks connect the Horner
 polynomial, bracket midpoint, capped tolerance and nodal recurrence. Finite input
 checks, bounded loops, adjacency selection and the stored-node guard are checked
 structurally. IEEE rounding, closest-ratio selection accuracy and convergence are
-covered by compiled tests, not by these exact-real obligations.
+covered by compiled tests, not by these exact-real obligations. The scaled
+Horner branch has exact-real equivalence and intermediate-bound obligations;
+these do not establish IEEE rounding, exception semantics or compiler behavior.
 
 An accepted tolerance-based return has a positive real last-layer margin. An
 adjacent-ratio return may exceed the requested tolerance and makes no such claim;
@@ -171,6 +173,25 @@ def check_solver(p, m):
     p.prove(n >= 2, 'nonuniform branch has at least two layers', [*positive, n != 1, d < top/n])
     p.equal(m['depth_seed'], d, env, 'depth seed')
     step = p.equal(m['depth_step'], depth*r+d, dict(env, depth=depth, ratio=r), 'Horner recurrence')
+    bound_env = dict(env, depth=depth, ratio=r, largest=largest)
+    quarter = p.equal(m['quarter_max'], largest/4, bound_env, 'quarter maximum')
+    half = p.equal(m['half_max'], largest/2, bound_env, 'half maximum')
+    scaled = p.equal(m['scaled_depth'], depth/4, bound_env, 'scaled depth')
+    scaled_sum = p.equal(m['scaled_sum'], (depth*r+d)/4,
+                         dict(bound_env, scaled_depth=scaled), 'scaled sum')
+    scaled_step = p.equal(m['scaled_step'], step,
+                          dict(bound_env, scaled_sum=scaled_sum), 'scaled recurrence')
+    bounds = [largest > 0, depth > 0, d > 0, d <= largest, r >= 1]
+    p.prove(z3.And(step > 0, step <= largest/2), 'ordinary recurrence has headroom',
+            [*bounds, depth <= quarter/r, d <= quarter])
+    p.prove(step > largest, 'scaled product early return is above maximum',
+            [*bounds, scaled > half/r])
+    p.prove(scaled_sum <= 3*largest/4, 'scaled multiply-add has headroom',
+            [*bounds, scaled <= half/r])
+    p.prove(step > largest, 'scaled sum early return is above maximum',
+            [*bounds, scaled_sum > quarter])
+    p.prove(z3.And(scaled_step > 0, scaled_step <= largest), 'scaled recurrence stays bounded',
+            [*bounds, scaled_sum <= quarter])
     p.prove(step > 0, 'depth recurrence stays positive', [d > 0, depth > 0, r >= 1])
     p.prove(step >= depth+d, 'depth recurrence at least uniform', [d > 0, depth > 0, r >= 1])
     other = z3.Real('other_ratio')

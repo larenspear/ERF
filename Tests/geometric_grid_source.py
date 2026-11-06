@@ -41,10 +41,22 @@ def read_program(text):
         model['defaults'][name] = source.take(r'([^;{}]+)\}\s*;')[1]
     literal(source, '}; AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE amrex::Real '
                     'geometric_depth(amrex::Real dz0, amrex::Real ratio, int nz) noexcept {')
+    literal(source, 'const amrex::Real largest = std::numeric_limits<amrex::Real>::max();')
+    model['quarter_max'] = expression(source, 'const amrex::Real quarter_max =')
+    model['half_max'] = expression(source, 'const amrex::Real half_max =')
     model['depth_seed'] = expression(source, 'amrex::Real depth =')
-    literal(source, 'for (int k = 1; k < nz; ++k) {')
+    literal(source, 'for (int k = 1; k < nz; ++k) { '
+                    'if (depth > quarter_max/ratio || dz0 > quarter_max) {')
+    model['scaled_depth'] = expression(source, 'const amrex::Real scaled_depth =')
+    literal(source, 'if (scaled_depth > half_max/ratio) { '
+                    'return std::numeric_limits<amrex::Real>::infinity(); }')
+    model['scaled_sum'] = expression(source, 'const amrex::Real scaled_sum =')
+    literal(source, 'if (scaled_sum > quarter_max) { '
+                    'return std::numeric_limits<amrex::Real>::infinity(); }')
+    model['scaled_step'] = expression(source, 'depth =')
+    literal(source, '} else {')
     model['depth_step'] = expression(source, 'depth =')
-    literal(source, '} return depth; } AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE GeometricStretch '
+    literal(source, '} } return depth; } AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE GeometricStretch '
                     'geometric_stretch(amrex::Real dz0, amrex::Real z_top, int nz, amrex::Real tol) noexcept { '
                     'GeometricStretch gs; const amrex::Real largest = std::numeric_limits<amrex::Real>::max(); '
                     'const amrex::Real Nz = static_cast<amrex::Real>(nz); '
@@ -65,7 +77,7 @@ def read_program(text):
                     'const int bracket_limit = std::numeric_limits<amrex::Real>::max_exponent; '
                     'for (int iter = 0; upper_residual < amrex::Real(0.0) && iter < bracket_limit; ++iter) { '
                     'lower = upper; lower_residual = upper_residual; '
-                    'upper = (upper <= largest/amrex::Real(2.0)) ? upper*amrex::Real(2.0) : largest; '
+                    'upper = amrex::min(upper, largest/amrex::Real(2.0))*amrex::Real(2.0); '
                     'upper_residual = geometric_depth(dz0, upper, nz) - z_top; } '
                     'if (!(lower_residual <= amrex::Real(0.0)) || !(upper_residual >= amrex::Real(0.0))) { '
                     'return gs; } '

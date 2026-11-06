@@ -536,3 +536,40 @@ TEST(GeometricStretch, DoesNotOverflowAfterTheFinalLayer)
     EXPECT_EQ(nodes[1], first);
     EXPECT_EQ(nodes[2], top);
 }
+
+// Bracketing tries ratios much larger than the solution. Such trial columns
+// must produce an upper bound without raising overflow on otherwise valid grids.
+TEST(GeometricStretch, BracketingDoesNotRaiseOverflow)
+{
+    using amrex::Real;
+    const Real largest = std::numeric_limits<Real>::max();
+    struct Case { Real first, top; int layers; bool expected; };
+    const Case cases[] = {
+        {Real(19.57), Real(16500), 176, true},
+        {Real(1), Real(16500), 1100, true},
+        {largest/Real(8), (largest/Real(4))*Real(3), 2, true},
+        {largest/Real(4), std::nextafter(largest, Real(0)), 2, true},
+        {largest/Real(4), largest, 2, true},
+        {std::numeric_limits<Real>::min(), largest/Real(2), 2, false}
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(::testing::Message() << c.first << " " << c.top << " " << c.layers);
+        amrex::Vector<Real> nodes(c.layers+1);
+        std::fenv_t environment;
+        ASSERT_EQ(std::feholdexcept(&environment), 0);
+        const auto gs = erf_grid_utils::build_geometric_zlevels(nodes, c.first, c.top, stretch_tol);
+        const int flags = std::fetestexcept(FE_OVERFLOW | FE_INVALID | FE_DIVBYZERO);
+        ASSERT_EQ(std::fesetenv(&environment), 0);
+        EXPECT_EQ(flags, 0);
+        ASSERT_EQ(gs.converged, c.expected);
+        if (c.expected) {
+            EXPECT_TRUE(std::isfinite(gs.residual));
+            EXPECT_EQ(nodes.front(), Real(0));
+            EXPECT_EQ(nodes.back(), c.top);
+            for (int k = 1; k <= c.layers; ++k) {
+                ASSERT_GT(nodes[k], nodes[k-1]);
+                ASSERT_TRUE(std::isfinite(nodes[k]));
+            }
+        }
+    }
+}
