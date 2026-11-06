@@ -1127,6 +1127,26 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
             const auto domain_f = geom_f.Domain();
             Long n_injected = 0;
 
+            // Empty-cell decisions use every particle tile in the grid. A
+            // per-tile bin contains no records from neighboring tiles, even
+            // when those cells are already occupied.
+            iMultiFab cell_count(ParticleBoxArray(flev),
+                                 ParticleDistributionMap(flev), 1, 0);
+            cell_count.setVal(0);
+            for (ParConstIterType pti(*this, flev); pti.isValid(); ++pti) {
+                const auto& ptile = ParticlesAt(flev, pti);
+                const auto& aos = ptile.GetArrayOfStructs();
+                const auto* particles = aos().data();
+                const auto count = cell_count.array(pti);
+                amrex::ParallelFor(aos.numParticles(), [=] AMREX_GPU_DEVICE (int i) {
+                    if (particles[i].id() > 0) {
+                        const auto cell = amrex::getParticleCell(particles[i], plo_f, dxi_f, domain_f);
+                        Gpu::Atomic::AddNoRet(&count(cell), 1);
+                    }
+                });
+            }
+            Gpu::synchronize();
+
             for (ParIterType pti(*this, flev); pti.isValid(); ++pti) {
                 auto& ptile = ParticlesAt(flev, pti);
                 auto& aos = ptile.GetArrayOfStructs();
@@ -1145,24 +1165,20 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                 auto* d_offsets = bins.offsetsPtr();
                 auto* d_inds    = bins.permutationPtr();
 
-                Gpu::DeviceVector<int> active_count_d(num_bins, 0);
                 Gpu::DeviceVector<int> first_active_d(num_bins, -1);
-                auto* active_count = active_count_d.data();
+                const auto global_count = cell_count.const_array(pti);
                 auto* first_active = first_active_d.data();
 
                 amrex::ParallelFor(num_bins, [=] AMREX_GPU_DEVICE (int b) {
                     auto bstart = d_offsets[b];
                     auto bstop  = d_offsets[b+1];
-                    int count = 0;
                     int first = -1;
                     for (auto k = bstart; k < bstop; k++) {
                         unsigned int idx = d_inds[k];
                         if (pstruct[idx].id() > 0) {
-                            count++;
                             if (first < 0) { first = static_cast<int>(idx); }
                         }
                     }
-                    active_count[b] = count;
                     first_active[b] = first;
                 });
 
@@ -1173,7 +1189,6 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                 const auto rr   = ref_ratio;
 
                 amrex::ParallelFor(num_bins, [=] AMREX_GPU_DEVICE (int b) {
-                    if (active_count[b] > 0) { return; }
                     int bx = b % blen[0];
                     int by = (b / blen[0]) % blen[1];
                     int bz = b / (blen[0] * blen[1]);
@@ -1188,6 +1203,7 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                     const int gi = blo[0] + bx;
                     const int gj = blo[1] + by;
                     const int gk = blo[2] + bz;
+                    if (global_count(gi,gj,gk) > 0) { return; }
                     const int pi = gi / rr[0];
                     const int pj = gj / rr[1];
                     const int pk = gk / rr[2];
@@ -1195,7 +1211,10 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                     const int nbr_off[6][3] = {
                         {-1,0,0},{1,0,0},{0,-1,0},{0,1,0},{0,0,-1},{0,0,1}
                     };
-                    // Prefer neighbors with >=2 active particles (steal one)
+                    // Select the same donor cell on every tile. Only the tile
+                    // holding that cell has a nonnegative first_active index;
+                    // other tiles return without choosing another donor.
+                    // Prefer neighbors with at least two particles.
                     for (int n = 0; n < 6; n++) {
                         int nx = bx + nbr_off[n][0];
                         int ny = by + nbr_off[n][1];
@@ -1207,12 +1226,12 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                         const int ngk = blo[2] + nz;
                         if (ngi/rr[0] != pi || ngj/rr[1] != pj || ngk/rr[2] != pk) { continue; }
                         int nb = nx + blen[0] * (ny + blen[1] * nz);
-                        if (active_count[nb] >= 2 && first_active[nb] >= 0) {
+                        if (global_count(ngi,ngj,ngk) >= 2) {
                             donor_pidx[b] = first_active[nb];
                             return;
                         }
                     }
-                    // Fall back: clone from any same-parent neighbor with >=1 active
+                    // Fall back to the first occupied same-parent neighbor.
                     for (int n = 0; n < 6; n++) {
                         int nx = bx + nbr_off[n][0];
                         int ny = by + nbr_off[n][1];
@@ -1224,7 +1243,7 @@ void SuperDropletPC::SplitMergeAtLevelBoundary ()
                         const int ngk = blo[2] + nz;
                         if (ngi/rr[0] != pi || ngj/rr[1] != pj || ngk/rr[2] != pk) { continue; }
                         int nb = nx + blen[0] * (ny + blen[1] * nz);
-                        if (first_active[nb] >= 0) {
+                        if (global_count(ngi,ngj,ngk) >= 1) {
                             donor_pidx[b] = first_active[nb];
                             return;
                         }
