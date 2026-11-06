@@ -3,6 +3,7 @@
 #include <ERF_ReadFromWRFBdy.H>
 #include <ERF_ReadFromERFBdy.H>
 #include <ERF_LagrangianMicrophysics.H>
+#include <ERF_GroundMassRemap.H>
 
 using namespace amrex;
 
@@ -174,6 +175,25 @@ ERF::timeStep (int lev, double time, int /*iteration*/)
                 // regrid could add newly refine levels (if finest_level < max_level)
                 // so we save the previous finest level index
                 int old_finest = finest_level;
+
+                // Particle ground deposits are a persistent mass ledger, not
+                // prognostic atmospheric feedback. Preserve them before a fine
+                // footprint can disappear even when coupling is OneWay.
+                if (solverChoice.coupling_type == CouplingType::OneWay &&
+                    Microphysics::modelType(solverChoice.moisture_type) == MoistureModelType::Lagrangian) {
+                    for (int flev = finest_level; flev > lev; --flev) {
+                        const auto fine = micro->Get_Ground_Mass_Accumulation_Ptrs(flev);
+                        const auto coarse = micro->Get_Ground_Mass_Accumulation_Ptrs(flev-1);
+                        AMREX_ALWAYS_ASSERT(fine.size() == coarse.size());
+                        for (int n = 0; n < fine.size(); ++n) {
+                            AMREX_ALWAYS_ASSERT(fine[n].name == coarse[n].name);
+                            AMREX_ALWAYS_ASSERT(fine[n].mass && coarse[n].mass);
+                            erf_precipitation::sum_down_surface_mass(
+                                *fine[n].mass, *coarse[n].mass,
+                                geom[flev], geom[flev-1], refRatio(flev-1));
+                        }
+                    }
+                }
 
                 if (solverChoice.coupling_type == CouplingType::TwoWay &&
                     solverChoice.moisture_type != MoistureType::None &&

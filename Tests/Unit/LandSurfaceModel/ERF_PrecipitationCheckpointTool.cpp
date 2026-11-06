@@ -2,6 +2,7 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_VisMF.H>
 #include "ERF_IndexDefines.H"
+#include <cmath>
 #include <iomanip>
 #include <stdexcept>
 #include <string>
@@ -58,6 +59,24 @@ int main(int argc, char** argv)
             VisMF::Write(baseline, prefix + "SlmPrecip");
             Print().SetPrecision(17) << "{\"action\":\"seed\",\"history\":" << history
                     << ",\"rain_mixing_ratio\":" << mixing << "}\n";
+        } else if (action == "add-bottom-history") {
+            if (argc != 4) { throw std::runtime_error("add-bottom-history requires a MultiFab prefix and finite offset"); }
+            const Real offset = std::stod(argv[3]);
+            if (!std::isfinite(offset)) { throw std::runtime_error("History offset must be finite"); }
+            MultiFab field;
+            VisMF::Read(field, argv[2]);
+            require_finite(field);
+            AMREX_ALWAYS_ASSERT(field.nComp() == 1);
+            for (MFIter mfi(field); mfi.isValid(); ++mfi) {
+                const auto values = field.array(mfi);
+                ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE (int i,int j,int k) noexcept {
+                    if (k == 0) { values(i,j,k) += offset; }
+                });
+            }
+            Gpu::streamSynchronize();
+            require_finite(field);
+            VisMF::Write(field, argv[2]);
+            Print().SetPrecision(17) << "{\"action\":\"add-bottom-history\",\"offset\":" << offset << "}\n";
         } else if (action == "stats") {
             if (argc != 3) { throw std::runtime_error("stats requires a MultiFab prefix"); }
             MultiFab field;

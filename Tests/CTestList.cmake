@@ -2406,9 +2406,12 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME ParticleGroundMass_Lifecycle
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/Tests/check_particle_ground_mass_lifecycle.py)
+    add_test(NAME ParticleGroundMass_OneWay
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_particle_ground_mass_oneway.py)
     set_tests_properties(ParticlePrecipitation_Lifecycle ParticlePrecipitation_Restriction
         ParticlePrecipitation_Restart ParticlePrecipitation_Frozen ParticleRestart_Initialization
-        ParticleGroundMass_Lifecycle
+        ParticleGroundMass_Lifecycle ParticleGroundMass_OneWay
         PROPERTIES TIMEOUT 30 PROCESSORS 1 LABELS "microphysics;unit")
 endif()
 
@@ -3646,6 +3649,14 @@ if(TARGET erf_precipitation_checkpoint_tool)
                 --work-dir "${CMAKE_CURRENT_BINARY_DIR}/particle_initialization")
         set_tests_properties(ParticleInitialization_Runtime PROPERTIES
             TIMEOUT 300 PROCESSORS 1 LABELS "regression;microphysics;amr")
+        add_test(NAME ParticleGroundMassOneWay_Runtime
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/Tests/check_particle_ground_mass_oneway_runtime.py
+                --erf "${_precip_history_exe}"
+                --tool $<TARGET_FILE:erf_precipitation_checkpoint_tool>
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/particle_ground_oneway")
+        set_tests_properties(ParticleGroundMassOneWay_Runtime PROPERTIES
+            TIMEOUT 180 PROCESSORS 1 LABELS "regression;microphysics;amr")
     endif()
     add_test(NAME SLM_PrecipitationRestart_Runtime
         COMMAND ${Python3_EXECUTABLE}
