@@ -6,7 +6,35 @@
 #include <AMReX_MultiFab.H>
 #include <ERF_IndexDefines.H>
 #include <cmath>
+#include <limits>
 #include <ERF_NumericalConstants.H>
+
+// Average finite positive stored edge lengths without an overflowing sum.
+// Scale the inputs before addition only when needed, preserving subnormal
+// edges on the ordinary path. Both conditional expressions select constants;
+// an optimized build cannot speculate an unused unscaled overflowing sum.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real Compute_AverageVerticalEdges(amrex::Real a, amrex::Real b)
+{
+    using amrex::Real;
+    const bool large = amrex::max(a,b) > Real(.5)*std::numeric_limits<Real>::max();
+    const Real input_scale = large ? Real(.5) : Real(1);
+    const Real output_scale = large ? Real(1) : Real(.5);
+    return output_scale * (input_scale*a + input_scale*b);
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real Compute_AverageVerticalEdges(amrex::Real a, amrex::Real b,
+                                        amrex::Real c, amrex::Real d)
+{
+    using amrex::Real;
+    const bool large = amrex::max(amrex::max(a,b),amrex::max(c,d)) >
+                       Real(.25)*std::numeric_limits<Real>::max();
+    const Real input_scale = large ? Real(.25) : Real(1);
+    const Real output_scale = large ? Real(1) : Real(.25);
+    return output_scale * ((input_scale*a + input_scale*b) +
+                           (input_scale*c + input_scale*d));
+}
 
 /**
  * Routine to define default z_phys_nd and z_phys_cc
@@ -198,11 +226,9 @@ Compute_h_zeta_AtCellCenter (const int &i, const int &j, const int &k,
                              const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>& cellSizeInv,
                              const amrex::Array4<const amrex::Real>& z_nd)
 {
-    amrex::Real dzInv = cellSizeInv[2];
-    amrex::Real met_h_zeta = fourth * dzInv *
-      ( z_nd(i+1,j,k+1) + z_nd(i+1,j+1,k+1) + z_nd(i,j,k+1) + z_nd(i,j+1,k+1)
-      - z_nd(i+1,j,k  ) - z_nd(i+1,j+1,k  ) - z_nd(i,j,k  ) - z_nd(i,j+1,k  ) );
-    return met_h_zeta;
+    return cellSizeInv[2] * Compute_AverageVerticalEdges(
+        z_nd(i,j,k+1) - z_nd(i,j,k), z_nd(i+1,j,k+1) - z_nd(i+1,j,k),
+        z_nd(i,j+1,k+1) - z_nd(i,j+1,k), z_nd(i+1,j+1,k+1) - z_nd(i+1,j+1,k));
 }
 
 // Metric is at cell center
@@ -277,9 +303,8 @@ Compute_h_zeta_AtIface (const int &i, const int &j, const int &k,
                         const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>& cellSizeInv,
                         const amrex::Array4<const amrex::Real>& z_nd)
 {
-    amrex::Real met_h_zeta = myhalf * cellSizeInv[2] * ( (z_nd(i,j  ,k+1) - z_nd(i,j  ,k))
-                                                       + (z_nd(i,j+1,k+1) - z_nd(i,j+1,k)) );
-    return met_h_zeta;
+    return cellSizeInv[2] * Compute_AverageVerticalEdges(
+        z_nd(i,j,k+1) - z_nd(i,j,k), z_nd(i,j+1,k+1) - z_nd(i,j+1,k));
 }
 
 // Metric coincides with U location
@@ -347,9 +372,8 @@ Compute_h_zeta_AtJface (const int &i, const int &j, const int &k,
                         const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>& cellSizeInv,
                         const amrex::Array4<const amrex::Real>& z_nd)
 {
-    amrex::Real met_h_zeta = myhalf * cellSizeInv[2] * ( (z_nd(i  ,j,k+1) - z_nd(i  ,j,k  ))
-                                                       + (z_nd(i+1,j,k+1) - z_nd(i+1,j,k  )) );
-    return met_h_zeta;
+    return cellSizeInv[2] * Compute_AverageVerticalEdges(
+        z_nd(i,j,k+1) - z_nd(i,j,k), z_nd(i+1,j,k+1) - z_nd(i+1,j,k));
 }
 
 // Metric coincides with V location
@@ -417,10 +441,9 @@ Compute_h_zeta_AtKface (const int &i, const int &j, const int &k,
                         const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>& cellSizeInv,
                         const amrex::Array4<const amrex::Real>& z_nd)
 {
-    amrex::Real met_h_zeta = amrex::Real(0.125) * cellSizeInv[2] *
-      ( (z_nd(i  ,j  ,k+1) - z_nd(i  ,j  ,k-1)) + (z_nd(i+1,j  ,k+1) - z_nd(i+1,j  ,k-1)) +
-        (z_nd(i  ,j+1,k+1) - z_nd(i  ,j+1,k-1)) + (z_nd(i+1,j+1,k+1) - z_nd(i+1,j+1,k-1)) );
-    return met_h_zeta;
+    return cellSizeInv[2] * (amrex::Real(.5) * Compute_AverageVerticalEdges(
+        z_nd(i,j,k+1) - z_nd(i,j,k-1), z_nd(i+1,j,k+1) - z_nd(i+1,j,k-1),
+        z_nd(i,j+1,k+1) - z_nd(i,j+1,k-1), z_nd(i+1,j+1,k+1) - z_nd(i+1,j+1,k-1)));
 }
 
 // Metric coincides with K location
@@ -568,10 +591,8 @@ Compute_h_zeta_AtEdgeCenterJ (const int &i, const int &j, const int &k,
                               const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>& cellSizeInv,
                               const amrex::Array4<const amrex::Real>& z_nd)
 {
-    amrex::Real dzInv = cellSizeInv[2];
-    amrex::Real met_h_zeta = fourth * dzInv * ( z_nd(i,j,k+1) + z_nd(i,j+1,k+1)
-                                              - z_nd(i,j,k-1) - z_nd(i,j+1,k-1) );
-    return met_h_zeta;
+    return cellSizeInv[2] * (amrex::Real(.5) * Compute_AverageVerticalEdges(
+        z_nd(i,j,k+1) - z_nd(i,j,k-1), z_nd(i,j+1,k+1) - z_nd(i,j+1,k-1)));
 }
 
 // Metric is at edge and center Y (magenta cross)
@@ -642,10 +663,8 @@ Compute_h_zeta_AtEdgeCenterI (const int &i, const int &j, const int &k,
                               const amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>& cellSizeInv,
                               const amrex::Array4<const amrex::Real>& z_nd)
 {
-    amrex::Real dzInv = cellSizeInv[2];
-    amrex::Real met_h_zeta = fourth * dzInv * ( z_nd(i,j,k+1) + z_nd(i+1,j,k+1)
-                                              - z_nd(i,j,k-1) - z_nd(i+1,j,k-1) );
-    return met_h_zeta;
+    return cellSizeInv[2] * (amrex::Real(.5) * Compute_AverageVerticalEdges(
+        z_nd(i,j,k+1) - z_nd(i,j,k-1), z_nd(i+1,j,k+1) - z_nd(i+1,j,k-1)));
 }
 
 // Metric is at edge and center X (purple hexagon)

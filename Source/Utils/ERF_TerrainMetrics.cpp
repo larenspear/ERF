@@ -1117,9 +1117,13 @@ make_J (const Geometry& geom,
         {
             if (k < domlo_z) { return {0}; }
             auto const z_nd = za[box_no];
-            const Real metric = Real(.25) * dzInv * (
-                   z_nd(i,j,k+1) + z_nd(i+1,j,k+1) + z_nd(i,j+1,k+1) + z_nd(i+1,j+1,k+1)
-                  -z_nd(i,j,k  ) - z_nd(i+1,j,k  ) - z_nd(i,j+1,k  ) - z_nd(i+1,j+1,k  ) );
+            // Difference each stored edge before averaging: summing absolute
+            // heights first can lose a substantial fraction of a thin layer.
+            const Real metric = dzInv * Compute_AverageVerticalEdges(
+                    z_nd(i,j,k+1)     - z_nd(i,j,k),
+                    z_nd(i+1,j,k+1)   - z_nd(i+1,j,k),
+                    z_nd(i,j+1,k+1)   - z_nd(i,j+1,k),
+                    z_nd(i+1,j+1,k+1) - z_nd(i+1,j+1,k));
             ja[box_no](i,j,k) = metric;
             const bool valid = valid_physical_cell(z_nd, i, j, k) &&
                                amrex::Math::isfinite(metric) && metric > Real(0);
@@ -1150,7 +1154,8 @@ make_areas (const Geometry& geom,
     az.setVal(1.0);
 
     //
-    // x-areas
+    // x-areas: difference each vertical edge before averaging so large
+    // absolute terrain heights do not erase thin, representable layers.
     //
 #ifdef _OPENMP
 #pragma omp parallel if (Gpu::notInLaunchRegion())
@@ -1165,8 +1170,8 @@ make_areas (const Geometry& geom,
         Array4<Real const> z_nd = z_phys_nd.const_array(mfi);
         Array4<Real      > ax_arr = ax.array(mfi);
         ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-               ax_arr(i, j, k) = Real(.5) * dzInv * (
-                       z_nd(i,j,k+1) + z_nd(i,j+1,k+1) - z_nd(i,j,k) - z_nd(i,j+1,k));
+               ax_arr(i, j, k) = dzInv * Compute_AverageVerticalEdges(
+                       (z_nd(i,j,k+1) - z_nd(i,j,k)), (z_nd(i,j+1,k+1) - z_nd(i,j+1,k)));
         });
     }
 
@@ -1186,8 +1191,8 @@ make_areas (const Geometry& geom,
         Array4<Real const> z_nd = z_phys_nd.const_array(mfi);
         Array4<Real      > ay_arr = ay.array(mfi);
         ParallelFor(gbx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-               ay_arr(i, j, k) = Real(.5) * dzInv * (
-                       z_nd(i,j,k+1) + z_nd(i+1,j,k+1) - z_nd(i,j,k) - z_nd(i+1,j,k));
+               ay_arr(i, j, k) = dzInv * Compute_AverageVerticalEdges(
+                       (z_nd(i,j,k+1) - z_nd(i,j,k)), (z_nd(i+1,j,k+1) - z_nd(i+1,j,k)));
         });
     }
 
@@ -1235,8 +1240,13 @@ get_dzmin_terrain (MultiFab& z_phys_nd)
                                    -> GpuTuple<Real, int>
                                    {
                                        auto const z = ma_z_nd_arr[box_no];
-                                       const Real dz = Compute_Z_AtWFace(i,j,k+1,z) -
-                                                       Compute_Z_AtWFace(i,j,k  ,z);
+                                       // Average edge differences rather than
+                                       // subtracting rounded absolute face heights.
+                                       const Real dz = Compute_AverageVerticalEdges(
+                                           z(i,j,k+1)     - z(i,j,k),
+                                           z(i+1,j,k+1)   - z(i+1,j,k),
+                                           z(i,j+1,k+1)   - z(i,j+1,k),
+                                           z(i+1,j+1,k+1) - z(i+1,j+1,k));
                                        const bool valid = valid_physical_cell(z, i, j, k) &&
                                            amrex::Math::isfinite(dz) && dz > Real(0);
                                        // The separate integer flag cannot lose a NaN
