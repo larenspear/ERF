@@ -6,6 +6,7 @@
 
 #ifdef ERF_USE_PARTICLES
 
+#include "ERF_GroundMass.H"
 #include <AMReX_AmrParGDB.H>
 #include "ERF_IndexDefines.H"
 #include "ERF_NullMoist.H"
@@ -19,6 +20,11 @@ class ERFPC;
 class NullMoistLagrangian : public NullMoist {
 
 public:
+
+    /*! Cumulative ground species/aerosol mass in kg per horizontal cell. */
+    virtual GroundMassAccumulationFields
+    Get_Ground_Mass_Accumulation_Ptrs (const int&) const { return {}; }
+
 
     /*! \brief Null constructor */
     NullMoistLagrangian () {}

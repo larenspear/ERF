@@ -7,6 +7,7 @@
  * The routines here call common routines in ERF_MakeNewArrays.cpp
 */
 
+#include "ERF_GroundMassRemap.H"
 #include <memory>
 #include "ERF_Constants.H"
 
@@ -633,6 +634,9 @@ ERF::MakeNewLevelFromCoarse (int lev, Real time, const BoxArray& ba,
             }
         }
     }
+
+    erf_ground_mass::restore(micro->Get_Ground_Mass_Accumulation_Ptrs(lev), {}, geom[lev],
+        micro->Get_Ground_Mass_Accumulation_Ptrs(lev-1), &geom[lev-1], refRatio(lev-1));
 
     // ********************************************************************************************
     // Build the data structures for calculating diffusive/turbulent terms
@@ -1332,6 +1336,8 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
             }
         }
     }
+    auto old_ground_mass = erf_ground_mass::capture(
+        micro->Get_Ground_Mass_Accumulation_Ptrs(lev), geom[lev]);
     int q_size = micro->Get_Qmoist_Size(lev);
     qmoist[lev].resize(q_size);
     micro->Define(lev, solverChoice);
@@ -1371,6 +1377,10 @@ ERF::RemakeLevel (int lev, Real time, const BoxArray& ba, const DistributionMapp
             }
         }
     }
+
+    erf_ground_mass::restore(micro->Get_Ground_Mass_Accumulation_Ptrs(lev), old_ground_mass, geom[lev],
+        lev > 0 ? micro->Get_Ground_Mass_Accumulation_Ptrs(lev-1) : GroundMassAccumulationFields{},
+        lev > 0 ? &geom[lev-1] : nullptr, lev > 0 ? refRatio(lev-1) : IntVect(1));
 
     //********************************************************************************************
     // Radiation

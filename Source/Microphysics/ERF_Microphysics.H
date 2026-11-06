@@ -5,6 +5,7 @@
 #ifndef ERF_MICROPHYSICS_H
 #define ERF_MICROPHYSICS_H
 
+#include "ERF_GroundMass.H"
 #include <vector>
 #include <string>
 #include <AMReX_MultiFab.H>
@@ -17,6 +18,11 @@
 class Microphysics {
 
 public:
+
+    /*! Cumulative ground species/aerosol mass in kg per horizontal cell. */
+    virtual GroundMassAccumulationFields
+    Get_Ground_Mass_Accumulation_Ptrs (const int&) const { return {}; }
+
 
     /*! \brief Null constructor */
     Microphysics () { }

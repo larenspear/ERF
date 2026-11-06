@@ -307,6 +307,25 @@ class SuperDropletsMoist : public NullMoistLagrangian {
             return m_qstate_nonmoist_size;
         }
 
+        GroundMassAccumulationFields
+        Get_Ground_Mass_Accumulation_Ptrs (const int& lev) const override
+        {
+            AMREX_ALWAYS_ASSERT(lev >= 0 && lev < m_mic_fab_vars.size());
+            GroundMassAccumulationFields fields;
+            for (int is = m_istart_sp; is < m_num_species; ++is) {
+                fields.push_back({"GroundSpecies_" + amrex::getEnumNameString(m_species[is]),
+                    m_mic_fab_vars[lev][s_accum_idx(is,m_istart_sp)].get()});
+            }
+            for (int ia = 0; ia < m_num_aerosols; ++ia) {
+                // Repeated aerosol materials are allowed by readInputs. Preserve
+                // their distinct components and validate their configured order.
+                fields.push_back({"GroundAerosol_" + std::to_string(ia) + "_" +
+                    amrex::getEnumNameString(m_aerosols[ia]),
+                    m_mic_fab_vars[lev][a_accum_idx(m_num_nonmoist_sp,ia)].get()});
+            }
+            return fields;
+        }
+
         /*! \brief returns pointer to super-droplets particle container */
         inline virtual ERFPC* getParticleContainer () override
         {

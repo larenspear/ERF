@@ -157,6 +157,12 @@ public:
         return m_moist_model->Get_Surface_Precip_Accumulation_Ptrs(lev);
     }
 
+    GroundMassAccumulationFields
+    Get_Ground_Mass_Accumulation_Ptrs (const int& lev) const override
+    {
+        return m_moist_model->Get_Ground_Mass_Accumulation_Ptrs(lev);
+    }
+
     /*! \brief initialize particles in particle container at level a_lev */
     inline void initParticles ( const int a_lev, /*!< AMR level */
                                 std::unique_ptr<amrex::MultiFab>& z_phys_nd /*!< Nodal z heights at level a_lev */ )

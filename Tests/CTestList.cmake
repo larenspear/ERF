@@ -2403,8 +2403,12 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME ParticleRestart_Initialization
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/Tests/check_particle_restart_initialization.py)
+    add_test(NAME ParticleGroundMass_Lifecycle
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/Tests/check_particle_ground_mass_lifecycle.py)
     set_tests_properties(ParticlePrecipitation_Lifecycle ParticlePrecipitation_Restriction
         ParticlePrecipitation_Restart ParticlePrecipitation_Frozen ParticleRestart_Initialization
+        ParticleGroundMass_Lifecycle
         PROPERTIES TIMEOUT 30 PROCESSORS 1 LABELS "microphysics;unit")
 endif()
 
@@ -3627,6 +3631,14 @@ if(TARGET erf_precipitation_checkpoint_tool)
                 --work-dir "${CMAKE_CURRENT_BINARY_DIR}/particle_restart")
         set_tests_properties(ParticleRestart_Runtime PROPERTIES
             TIMEOUT 300 PROCESSORS 1 LABELS "regression;microphysics;checkpoint")
+        add_test(NAME ParticleGroundMassRestart_Runtime
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/Tests/check_particle_ground_mass_restart_runtime.py
+                --erf "${_precip_history_exe}"
+                --tool $<TARGET_FILE:erf_precipitation_checkpoint_tool>
+                --work-dir "${CMAKE_CURRENT_BINARY_DIR}/particle_ground_restart")
+        set_tests_properties(ParticleGroundMassRestart_Runtime PROPERTIES
+            TIMEOUT 180 PROCESSORS 1 LABELS "regression;microphysics;checkpoint")
     endif()
     add_test(NAME SLM_PrecipitationRestart_Runtime
         COMMAND ${Python3_EXECUTABLE}

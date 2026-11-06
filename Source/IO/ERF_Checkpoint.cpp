@@ -2,6 +2,7 @@
  * \file ERF_Checkpoint.cpp
  */
 
+#include "ERF_GroundMassCheckpoint.H"
 #include <iostream>
 #include "ERF_Constants.H"
 #include <fstream>
@@ -506,6 +507,16 @@ ERF::WriteCheckpointFile () const
             MultiFab moist_vars(grids[lev],dmap[lev],ncomp,ng_moist);
             MultiFab::Copy(moist_vars,*(qmoist[lev][qmoist_indices[var]]),0,0,ncomp,ng_moist);
             VisMF::Write(moist_vars, amrex::MultiFabFileFullPrefix(lev, checkpointname, "Level_", qmoist_names[var]));
+        }
+
+        if (solverChoice.moisture_type == MoistureType::SuperDroplets) {
+            const auto ground_mass = micro->Get_Ground_Mass_Accumulation_Ptrs(lev);
+            erf_ground_mass::write_manifest(
+                MultiFabFileFullPrefix(lev, checkpointname, "Level_", "GroundMassFields"), ground_mass);
+            for (const auto& field : ground_mass) {
+                VisMF::Write(*field.mass,
+                    MultiFabFileFullPrefix(lev, checkpointname, "Level_", field.name));
+            }
         }
 
 #if defined(ERF_USE_WINDFARM)
@@ -1655,6 +1666,31 @@ ERF::ReadCheckpointFile ()
             }
             read_checkpoint_mf(*(qmoist[lev][qmoist_indices[var]]), moist_file,
                                lev, 0, 0, ncomp, ng_moist, /*src_ghosts=*/true);
+        }
+
+        if (solverChoice.moisture_type == MoistureType::SuperDroplets) {
+            const auto ground_mass = micro->Get_Ground_Mass_Accumulation_Ptrs(lev);
+            const auto manifest_path = MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", "GroundMassFields");
+            bool verified_legacy_empty = false;
+#ifdef ERF_USE_PARTICLES
+            if (ground_mass.empty() && !FileExists(manifest_path)) {
+                const auto& particle_model = dynamic_cast<LagrangianMicrophysics&>(*micro);
+                const auto* particles = particle_model.getParticleContainer();
+                AMREX_ALWAYS_ASSERT(particles != nullptr);
+                verified_legacy_empty = erf_ground_mass::legacy_empty_is_compatible(
+                    restart_chkfile + "/" + particle_model.getName() + "/Header", particles->varNames());
+            }
+#endif
+            erf_ground_mass::validate_manifest(manifest_path, ground_mass, verified_legacy_empty);
+            for (const auto& field : ground_mass) {
+                const auto path = MultiFabFileFullPrefix(lev, restart_chkfile, "Level_", field.name);
+                if (!FileExists(path + "_H")) {
+                    Abort("SuperDroplets checkpoint is missing ground mass field '" + path +
+                          "'. The particle state cannot recover this cumulative history.");
+                }
+                read_checkpoint_mf(*field.mass, path, lev, 0, 0, 1,
+                                   field.mass->nGrowVect(), /*src_ghosts=*/true);
+            }
         }
 
 #if defined(ERF_USE_WINDFARM)
