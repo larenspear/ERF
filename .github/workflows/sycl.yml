@@ -104,6 +104,11 @@ jobs:
 
     - name: Build & Install
       shell: bash
+      env:
+        # Pull requests build the solver and the main unit-test executable; nothing
+        # here can run on this runner. Development pushes and manual runs build every
+        # target.
+        BUILD_TARGETS: ${{ github.event_name == 'pull_request' && 'erf_exec erf_unit_tests' || '' }}
       run: |
         export CCACHE_COMPRESS=1
         export CCACHE_COMPRESSLEVEL=10
@@ -146,7 +151,7 @@ jobs:
         cat "$warning_report"
         test ! -s "$warning_report"
 
-        make -j 4 2>&1 | tee -a ${{runner.workspace}}/build-output.txt;
+        make -j 4 $BUILD_TARGETS 2>&1 | tee -a ${{runner.workspace}}/build-output.txt;
 
         echo '```' >> "$GITHUB_STEP_SUMMARY"
         # Keep only what this build used: ccache touches an object on every hit, so

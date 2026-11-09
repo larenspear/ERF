@@ -100,6 +100,11 @@ jobs:
         run: df -h
       - name: Configure and build
         shell: bash
+        env:
+          # Pull requests build the solver and the main unit-test executable; nothing
+          # here can run on this runner. Development pushes and manual runs build every
+          # target.
+          BUILD_TARGETS: ${{ github.event_name == 'pull_request' && '--target erf_exec erf_unit_tests' || '' }}
         run: |
           export CCACHE_COMPRESS=1
           export CCACHE_COMPRESSLEVEL=10
@@ -127,7 +132,7 @@ jobs:
             -DERF_TEST_NRANKS:STRING=2 \
             -DERF_ENABLE_UNIT_TESTS:BOOL=ON .
           echo "Building with $(nproc) processes"
-          cmake --build build-${{matrix.cuda_pkg}} --parallel "$(nproc)" \
+          cmake --build build-${{matrix.cuda_pkg}} --parallel "$(nproc)" $BUILD_TARGETS \
           2>&1 | tee -a ${{runner.workspace}}/build-${{matrix.cuda_pkg}}-output.txt;
 
           echo '```' >> "$GITHUB_STEP_SUMMARY"
