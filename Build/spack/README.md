@@ -112,8 +112,16 @@ embedded boundaries are off, matching ERF's CMake settings. ERF 23.10 through
 `.github/workflows/spack-containers.yml` publishes runnable images built
 from this recipe: `ghcr.io/erf-model/erf:development` and the latest
 release, each with a dated copy that never moves. They carry MPICH, NetCDF
-and HDF5, Noah-MP, RRTMGP, FFT and particles for `x86_64_v3`; `erf_exec`
-is on `PATH` and the examples are under `share/erf/examples`.
+and HDF5, Noah-MP, RRTMGP, FFT and particles for `x86_64_v3` on an Ubuntu 24.04
+base; `erf_exec` is on `PATH` and the examples are under `share/erf/examples`.
+The `development` images build the commit that triggered the run, named by the
+`org.opencontainers.image.revision` label. Each job checks its plan before
+building (the toolkit is the runner's external, ERF compiles with the intended
+GCC) and the image before tagging (no entrypoint or banner, the CUDA release of
+its base, the features the spec asked for, a size budget).
+`ghcr.io/erf-model/erf-cuda` is the same stack built for CUDA sm80 on
+NVIDIA's runtime image (tags `development-sm80`, `<release>-sm80`); run it
+with the host driver exposed and `amrex.use_gpu_aware_mpi=0`.
 
 ## License
 
