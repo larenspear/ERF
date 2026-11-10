@@ -14,7 +14,7 @@ on:
       - '.github/actions/**'
 
   pull_request:
-    branches: [development]
+    branches: [development, ci-base-upstream]
     types: [opened, synchronize, reopened]
     paths:
       - '**'
