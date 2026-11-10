@@ -11,6 +11,7 @@ on:
   schedule:
     - cron: '0 8 * * 1'   # Mondays 08:00 UTC
   push:
+    branches: [ci-spack-containers-test]
     tags: ['2[0-9].[0-9][0-9]']
   workflow_dispatch:
     inputs:
@@ -112,7 +113,7 @@ jobs:
           persist-credentials: false
 
       - name: Image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/erf" >> "$GITHUB_ENV"
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/erf-test" >> "$GITHUB_ENV"
 
       - name: Free up disk space
         uses: ./.github/actions/free-space-ubuntu
