@@ -1,13 +1,11 @@
 name: Spack containers
 
-# Runnable ERF images on GHCR from the Spack recipe in Build/spack: Spack installs ERF
-# with MPICH, NetCDF and HDF5, Noah-MP, RRTMGP, FFT and particles for x86_64_v3 and pushes
-# the runtime closure as image layers on a base image. erf is the CPU image on
-# ubuntu:22.04; erf-cuda is the same stack built for one CUDA architecture on NVIDIA's
-# runtime image, which supplies the CUDA libraries. Tags: development and the latest
-# release, rebuilt weekly, plus <tag>-<build date>, which never moves. A release tag
-# builds that release. The first push creates a package private; make
-# ghcr.io/<owner>/erf and erf-cuda public once in the package settings.
+# Runnable ERF images on GHCR from the Spack recipe in Build/spack.
+# erf is the CPU image on ubuntu:22.04; erf-cuda is the same stack for CUDA sm80
+# on NVIDIA's runtime image, which supplies the CUDA libraries. Tags: development
+# and the latest release, plus a dated tag that never moves. A release tag builds
+# that release. The first push creates a private package; make
+# ghcr.io/<owner>/erf and erf-cuda public once.
 
 on:
   schedule:
@@ -17,10 +15,10 @@ on:
   workflow_dispatch:
     inputs:
       spec:
-        description: build this one spec instead of the image list (+cuda selects erf-cuda)
+        description: one spec instead of the image list (root +cuda selects erf-cuda; cuda_arch=80 and ^mpich~cuda required)
         default: ""
       tag:
-        description: image tag for that spec (empty = the version the spec names)
+        description: image tag for that spec (empty = the version the spec names, with -sm80 for CUDA)
         default: ""
       base_image:
         description: base image for the CPU Spack layers (may be pinned by digest)
@@ -38,13 +36,13 @@ env:
   # The Spack and spack-packages refs of gcc-rrtmgp.yml, which fills the build cache read here.
   SPACK_REF: cd657f2c90770f5722715f6a0f95d7a5a359359b
   PACKAGES_REF: fa11df3be41f58bac19b73346422e06b103ee5b5
-  IMAGE_OPTIONS: "+netcdf +noahmp +rrtmgp +fft +particles ^mpich"
+  # ^mpich~cuda: the image MPI is not CUDA-aware. The plan check rejects +cuda.
+  IMAGE_OPTIONS: "+netcdf +noahmp +rrtmgp +fft +particles ^mpich~cuda"
   # The toolkit installed on the runner and the base image must carry the same CUDA release.
   CUDA_VERSION: "12.8"
   CUDA_BASE: nvidia/cuda:12.8.1-runtime-ubuntu22.04
   CUDA_ARCH: "80"
-  # ERF and AMReX compile with this GCC (nvcc 12.8 accepts up to GCC 13); the plan check
-  # fails if the concretizer picked another toolchain.
+  # The plan check fails if erf, amrex, or kokkos is not this GCC.
   GCC_VERSION: "12"
 
 jobs:
@@ -80,36 +78,52 @@ jobs:
           sha = os.environ["SHA"]
           def tag_of(version):
               return "development" if version == "develop" else version
-          # The development images build the commit that triggered the run, not whatever the
-          # branch holds when Spack clones it; a release builds its checksummed tarball.
+          # Development images build the commit that triggered the run, not the branch tip
+          # at the moment Spack clones it. A release builds its checksummed tarball.
           def erf_version(version):
               return f"git.{sha}=develop" if version == "develop" else version
-          # max_gb bounds the image on disk; an unwanted layer shows up here first.
           def cpu(version):
               return {"spec": f"erf@{erf_version(version)} {options}", "tag": tag_of(version),
                       "image": "erf", "base": cpu_base, "cuda": "", "max_gb": 2}
-          # ^cuda@<release> keeps the toolkit at the release the base image carries.
+          # 8 GB on disk. The checked image was 7.1 GB; a cached toolkit layer made 10.2 GB.
           def gpu(version):
               return {"spec": f"erf@{erf_version(version)} +cuda cuda_arch={arch} {options} ^cuda@{cuda}",
                       "tag": f"{tag_of(version)}-sm{arch}", "image": "erf-cuda", "base": cuda_base,
-                      "cuda": cuda, "max_gb": 10}
+                      "cuda": cuda, "max_gb": 8}
+          def root_section(spec):
+              return spec.split("^", 1)[0]
+          def root_has_cuda(spec):
+              return any(re.search(r"(?:^|\+)cuda(?:$|[+~])", token) for token in root_section(spec).split())
+          def mpich_tilde_cuda(spec):
+              return re.search(r"\^mpich(?:@[^\s^]+)?~cuda(?:\s|$|[+~])", spec) or \
+                  re.search(r"\^mpich(?:@[^\s^]+)?\s+~cuda(?:\s|$)", spec)
 
           if os.environ["ONE_SPEC"]:
-              spec = os.environ["ONE_SPEC"]
+              spec = os.environ["ONE_SPEC"].strip()
+              if re.match(r"erf@develop\b", spec):
+                  spec = re.sub(r"^erf@develop\b", f"erf@git.{sha}=develop", spec, count=1)
               version = re.match(r"erf@([^\s+~^%]+)", spec)
-              tag = os.environ["ONE_TAG"] or (tag_of(version.group(1).split("=")[-1]) if version else "")
+              inferred = tag_of(version.group(1).split("=")[-1]) if version else ""
+              named = os.environ["ONE_TAG"]
+              if not mpich_tilde_cuda(spec):
+                  raise SystemExit("pin ^mpich~cuda; this image's MPI is not CUDA-aware")
+              if root_has_cuda(spec):
+                  archs = [token.split("=", 1)[1] for token in root_section(spec).split() if token.startswith("cuda_arch=")]
+                  if archs != [arch]:
+                      raise SystemExit(f"a CUDA image must set cuda_arch={arch} on the root spec, not {archs or 'an implicit arch'}")
+                  if not re.search(r"(?:^|\s)\^cuda(?:@|\s|$)", spec):
+                      spec += f" ^cuda@{cuda}"
+                  tag = named or (f"{inferred}-sm{arch}" if inferred else "")
+                  image, base, cuda_field, max_gb = "erf-cuda", cuda_base, cuda, 8
+              else:
+                  tag = named or inferred
+                  image, base, cuda_field, max_gb = "erf", cpu_base, "", 2
               if not tag:
                   raise SystemExit("the spec names no version; pass a tag")
-              if "+cuda" in spec:
-                  if "^cuda" not in spec:
-                      spec += f" ^cuda@{cuda}"
-                  images = [{"spec": spec, "tag": tag, "image": "erf-cuda", "base": cuda_base, "cuda": cuda, "max_gb": 10}]
-              else:
-                  images = [{"spec": spec, "tag": tag, "image": "erf", "base": cpu_base, "cuda": "", "max_gb": 2}]
+              images = [{"spec": spec, "tag": tag, "image": image, "base": base, "cuda": cuda_field, "max_gb": max_gb}]
           elif os.environ["REF_TYPE"] == "tag":
               images = [cpu(os.environ["REF_NAME"]), gpu(os.environ["REF_NAME"])]
           else:
-              # The newest release in the recipe's checksum table.
               recipe = Path("Build/spack/spack_repo/erf/packages/erf/package.py").read_text()
               releases = re.findall(r'\(\s*"(\d{2}\.\d{2})",\s*"[0-9a-f]{64}"', recipe)
               latest = max(releases, key=lambda v: tuple(int(x) for x in v.split(".")))
@@ -134,12 +148,16 @@ jobs:
       SPEC: ${{ matrix.image.spec }}
       TAG: ${{ matrix.image.tag }}
       DATED_TAG: ${{ matrix.image.tag }}-${{ needs.plan.outputs.date }}
+      # Not a published tag. Deleted before the job ends. The dated tag is pushed
+      # only after the contract check, from the labeled local image.
+      SCRATCH_TAG: unchecked-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.image.tag }}
+      CHECKED_IMAGE: erf-contract
       BASE_IMAGE: ${{ matrix.image.base }}
       CUDA: ${{ matrix.image.cuda }}
       GHCR_USER: ${{ github.actor }}
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      # AMReX's CUDA install script lives in the submodule.
+      # dependencies_nvcc.sh lives in the AMReX submodule.
       - uses: actions/checkout@v7
         with:
           submodules: ${{ matrix.image.cuda != '' }}
@@ -174,10 +192,8 @@ jobs:
           spack_ref: ${{ env.SPACK_REF }}
           packages_ref: ${{ env.PACKAGES_REF }}
 
-      # Only build tools and the CUDA toolkit are externals: everything else the executable
-      # needs at run time must be a Spack package, since only those become image layers.
-      # The build cache may never supply cuda, since a cached toolkit would become a layer
-      # too. ERF's git URL is this repository, so erf@git.<sha> resolves on a fork as well.
+      # The build cache must not supply cuda: a cached toolkit becomes an image layer.
+      # ERF's git URL is this repository, so erf@git.<sha> resolves on a fork as well.
       - name: Register the recipe, the build tools, the build cache and the image registry
         env:
           REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}.git
@@ -219,16 +235,13 @@ jobs:
             --oci-username-variable GHCR_USER --oci-password-variable GHCR_TOKEN \
             erf-images "oci://$IMAGE"
 
-      # Two minutes here instead of two hours of building the wrong thing: the toolkit must
-      # be the runner's external (a built or cached cuda would become an image layer),
-      # amrex must carry the GPU variants, and ERF and AMReX must compile with the GCC above.
       - name: Concretize and check the plan
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           spack spec -I -l "$SPEC" | tee concretized.txt
           spack spec --json "$SPEC" > concretized.json
           python3 - <<'PY'
-          import json, os
+          import json, os, re
           nodes = json.load(open("concretized.json"))["spec"]["nodes"]
           by_hash = {n.get("hash"): n for n in nodes}
           by_name = {}
@@ -237,16 +250,37 @@ jobs:
           cuda, toolkit, arch, gcc = (os.environ[k] for k in ("CUDA", "CUDA_VERSION", "CUDA_ARCH", "GCC_VERSION"))
           problems = []
           def compiler_of(node):
+              found = None
               for edge in node.get("dependencies", []):
                   virtuals = edge.get("virtuals") or edge.get("parameters", {}).get("virtuals") or []
                   if "cxx" in virtuals or "c" in virtuals:
                       dep = by_hash.get(edge["hash"], {})
-                      return f"{edge['name']}@{dep.get('version', '?')}"
-              return "none"
-          for name in ("erf", "amrex"):
-              compiler = compiler_of(by_name[name][0])
-              if compiler != f"gcc@{gcc}" and not compiler.startswith(f"gcc@{gcc}."):
-                  problems.append(f"{name} would compile with {compiler}, not gcc {gcc}")
+                      found = f"{edge['name']}@{dep.get('version', '?')}"
+                      if "cxx" in virtuals:
+                          return found
+              return found or "none"
+          def accepts_gcc(compiler):
+              return compiler == f"gcc@{gcc}" or compiler.startswith(f"gcc@{gcc}.")
+          for name in ("erf", "amrex", "kokkos"):
+              found = by_name.get(name, [])
+              if not found:
+                  problems.append(f"{name} is not in the plan")
+                  continue
+              for node in found:
+                  compiler = compiler_of(node)
+                  if not accepts_gcc(compiler):
+                      problems.append(f"{name} would compile with {compiler}, not gcc {gcc}")
+          for node in by_name.get("ekat", []):
+              compiler = compiler_of(node)
+              if not accepts_gcc(compiler):
+                  problems.append(f"ekat would compile with {compiler}, not gcc {gcc}")
+          mpich_tokens = re.findall(r"mpich@[^\s\]]+", open("concretized.txt").read())
+          if not mpich_tokens:
+              problems.append("mpich is not in the concretized spec")
+          for token in mpich_tokens:
+              pinned_off = "~cuda" in token or "cuda=False" in token or "cuda=false" in token
+              if "+cuda" in token or not pinned_off:
+                  problems.append(f"mpich is not ~cuda: {token}")
           if cuda:
               found = by_name.get("cuda", [])
               if len(found) != 1:
@@ -273,12 +307,13 @@ jobs:
           spack install --verbose --fail-fast "$SPEC"
 
       # GHCR sometimes answers a manifest upload with 403; a repeat push only redoes the manifests.
-      - name: Push the dated image
+      - name: Push an unchecked image
+        id: scratch
         run: |
           . spack_install_dir/share/spack/setup-env.sh
           for attempt in 1 2 3; do
             if spack buildcache push --unsigned --without-build-dependencies \
-                 --base-image "$BASE_IMAGE" --tag "$DATED_TAG" erf-images "$SPEC"; then
+                 --base-image "$BASE_IMAGE" --tag "$SCRATCH_TAG" erf-images "$SPEC"; then
               exit 0
             fi
             echo "push attempt $attempt failed; retrying in 30 s"
@@ -286,34 +321,34 @@ jobs:
           done
           exit 1
 
-      # The source label links the package to this repository. NVIDIA's base image has an
-      # entrypoint that prints a banner before every command; without it, erf_exec's
-      # stdout is its own.
-      - name: Label the image
+      - name: Log in and pull the unchecked image
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker pull --quiet "$IMAGE:$SCRATCH_TAG"
+
+      # NVIDIA's base image prints a banner before every command unless the entrypoint is cleared.
+      - name: Label the local image
         env:
           BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
           SOURCE: ${{ github.server_url }}/${{ github.repository }}
           REVISION: ${{ github.sha }}
           TITLE: ${{ matrix.image.image }}
         run: |
-          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-          docker pull --quiet "$IMAGE:$DATED_TAG"
-          printf 'FROM %s\nENTRYPOINT []\nCMD ["/bin/bash"]\n' "$IMAGE:$DATED_TAG" | docker build --provenance=false \
+          printf 'FROM %s\nENTRYPOINT []\nCMD ["/bin/bash"]\n' "$IMAGE:$SCRATCH_TAG" | docker build --provenance=false \
             --label "org.opencontainers.image.source=$SOURCE" \
             --label "org.opencontainers.image.revision=$REVISION" \
             --label "org.opencontainers.image.version=$TAG" \
             --label "org.opencontainers.image.title=$TITLE" \
             --label "org.opencontainers.image.description=ERF: $SPEC" \
-            -t "$IMAGE:$DATED_TAG" -
-          docker push --quiet "$IMAGE:$DATED_TAG"
+            -t "$CHECKED_IMAGE" -
 
-      # No GPU here: a CUDA executable is loaded against the toolkit's driver stub instead
-      # of run, which still proves every other library resolves inside the image.
+      # No GPU here. A CUDA executable is loaded against the toolkit's driver stub,
+      # which proves every other library resolves. It does not run the solver.
       - name: Run the image
         run: |
           if [ -z "$CUDA" ]; then
-            docker run --rm "$IMAGE:$DATED_TAG" erf_exec --help
-            docker run --rm "$IMAGE:$DATED_TAG" bash -c '
+            docker run --rm "$CHECKED_IMAGE" erf_exec --help
+            docker run --rm "$CHECKED_IMAGE" bash -c '
               set -e
               prefix=$(dirname "$(dirname "$(command -v erf_exec)")")
               mkdir -p /tmp/run && cd /tmp/run
@@ -321,34 +356,45 @@ jobs:
               mpiexec -n 2 erf_exec inputs_advect_uniformU max_step=2 erf.plot_int_1=-1 erf.check_int=-1'
           else
             mkdir -p stub && cp /usr/local/cuda/lib64/stubs/libcuda.so stub/libcuda.so.1
-            docker run --rm -v "$PWD/stub:/stub:ro" -e LD_LIBRARY_PATH=/stub "$IMAGE:$DATED_TAG" bash -c '
+            docker run --rm -v "$PWD/stub:/stub:ro" -e LD_LIBRARY_PATH=/stub "$CHECKED_IMAGE" bash -c '
               set -e
               missing=$(ldd "$(command -v erf_exec)" | grep "not found" || true)
               if [ -n "$missing" ]; then echo "$missing"; exit 1; fi
               erf_exec --help'
           fi
 
-      # The image must answer with ERF's own output (no entrypoint, no banner), carry the
-      # CUDA release it was built for, report the features the spec asked for, and stay
-      # within its size budget. The first fork run showed all of this only in its artifacts.
       - name: Check the image contract
         env:
           MAX_GB: ${{ matrix.image.max_gb }}
+          REVISION: ${{ github.sha }}
         run: |
           mkdir -p image-record
           stub=()
           if [ -n "$CUDA" ]; then stub=(-v "$PWD/stub:/stub:ro" -e LD_LIBRARY_PATH=/stub); fi
-          if ! docker run --rm "${stub[@]}" "$IMAGE:$DATED_TAG" erf_exec --describe-json > image-record/description.json 2>/dev/null; then
-            rm -f image-record/description.json
+          develop=0
+          case "$SPEC" in
+            *"=develop"*) develop=1 ;;
+          esac
+          if ! docker run --rm "${stub[@]}" "$CHECKED_IMAGE" erf_exec --describe-json > image-record/description.json 2> image-record/describe-stderr.txt; then
+            if [ "$develop" -eq 1 ]; then
+              echo "::error::development image did not write --describe-json"
+              cat image-record/describe-stderr.txt
+              exit 1
+            fi
             echo "::notice::erf_exec --describe-json is not available in $SPEC"
+            cat image-record/describe-stderr.txt
+            rm -f image-record/description.json
           fi
-          docker image inspect "$IMAGE:$DATED_TAG" --format '{{json .Config.Entrypoint}}' > entrypoint.txt
-          docker run --rm "$IMAGE:$DATED_TAG" true > no-op-output.txt
-          docker run --rm "$IMAGE:$DATED_TAG" sh -c 'echo "${CUDA_VERSION:-}"' > cuda-in-image.txt
-          docker image inspect "$IMAGE:$DATED_TAG" --format '{{.Size}}' > size-bytes.txt
+          docker image inspect "$CHECKED_IMAGE" --format '{{json .Config.Entrypoint}}' > entrypoint.txt
+          docker run --rm "$CHECKED_IMAGE" true > no-op-output.txt
+          docker run --rm "$CHECKED_IMAGE" sh -c 'echo "${CUDA_VERSION:-}"' > cuda-in-image.txt
+          docker image inspect "$CHECKED_IMAGE" --format '{{.Size}}' > size-bytes.txt
+          docker image inspect "$CHECKED_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' > revision-label.txt
+          docker image inspect "$CHECKED_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' > version-label.txt
           python3 - <<'PY'
-          import json, os, pathlib
-          cuda, toolkit, spec, max_gb = (os.environ[k] for k in ("CUDA", "CUDA_VERSION", "SPEC", "MAX_GB"))
+          import json, os, pathlib, re
+          cuda, toolkit, spec, max_gb, revision, tag = (
+              os.environ[k] for k in ("CUDA", "CUDA_VERSION", "SPEC", "MAX_GB", "REVISION", "TAG"))
           problems = []
           entrypoint = pathlib.Path("entrypoint.txt").read_text().strip()
           if entrypoint not in ("null", "[]"):
@@ -362,21 +408,37 @@ jobs:
           size_gb = int(pathlib.Path("size-bytes.txt").read_text()) / 1e9
           if size_gb > float(max_gb):
               problems.append(f"the image is {size_gb:.1f} GB on disk, over its {max_gb} GB budget")
+          labeled = pathlib.Path("revision-label.txt").read_text().strip()
+          if labeled != revision:
+              problems.append(f"revision label is {labeled or 'empty'}, not the commit that triggered the run")
+          if pathlib.Path("version-label.txt").read_text().strip() != tag:
+              problems.append("version label is not the published tag")
           description = pathlib.Path("image-record/description.json")
+          if "=develop" in spec and not description.exists():
+              problems.append("a development image did not write --describe-json")
           if description.exists():
               d = json.loads(description.read_text())
               if d.get("gpu_backend") != ("cuda" if cuda else "none"):
                   problems.append(f"the executable reports gpu_backend {d.get('gpu_backend')}")
               features = d.get("features", {})
+              if features.get("mpi") is not True:
+                  problems.append("the executable does not report mpi")
               missing = [t[1:] for t in spec.split() if t.startswith("+") and t[1:] in features and not features[t[1:]]]
-              if not features.get("mpi", True):
-                  missing.append("mpi")
               if missing:
                   problems.append("the executable was built without " + ", ".join(missing))
+              if "=develop" in spec:
+                  source = d.get("source_describe") or ""
+                  if not re.fullmatch(r"[0-9a-f]{12,40}", source) or not revision.startswith(source):
+                      problems.append(f"source_describe {source!r} is not the commit that triggered the run")
           for problem in problems:
               print(f"::error::{problem}")
           raise SystemExit(1 if problems else 0)
           PY
+
+      - name: Publish the dated tag
+        run: |
+          docker tag "$CHECKED_IMAGE" "$IMAGE:$DATED_TAG"
+          docker push --quiet "$IMAGE:$DATED_TAG"
 
       - name: Record the image
         run: |
@@ -391,11 +453,72 @@ jobs:
           path: image-record
           if-no-files-found: error
 
-      # The moving tag advances only after the image has run.
+      # The moving tag advances only after the dated tag has been published.
       - name: Move the ${{ matrix.image.tag }} tag
         run: |
           docker tag "$IMAGE:$DATED_TAG" "$IMAGE:$TAG"
           docker push --quiet "$IMAGE:$TAG"
+
+      - name: Delete the unchecked tag
+        if: always() && steps.scratch.outcome == 'success'
+        env:
+          IMAGE_NAME: ${{ matrix.image.image }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.error, urllib.request
+          token = os.environ["GHCR_TOKEN"]
+          package = os.environ["IMAGE_NAME"]
+          tag = os.environ["SCRATCH_TAG"]
+          owner = os.environ["GITHUB_REPOSITORY_OWNER"]
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+          def request(method, url):
+              req = urllib.request.Request(url, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return resp.status, resp.read()
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read()
+          bases = [
+              f"https://api.github.com/orgs/{owner}/packages/container/{package}/versions",
+              f"https://api.github.com/users/{owner}/packages/container/{package}/versions",
+              f"https://api.github.com/user/packages/container/{package}/versions",
+          ]
+          base = None
+          for candidate in bases:
+              status, body = request("GET", candidate + "?per_page=100")
+              if status == 200:
+                  base = candidate
+                  break
+          if base is None:
+              raise SystemExit(f"cannot list versions of {package}: {status} {body[:300]!r}")
+          version_id = None
+          for attempt in range(5):
+              status, body = request("GET", base + "?per_page=100")
+              if status != 200:
+                  raise SystemExit(f"cannot list versions of {package}: {status} {body[:300]!r}")
+              versions = json.loads(body)
+              for version in versions:
+                  tags = (version.get("metadata") or {}).get("container", {}).get("tags") or []
+                  if tag in tags:
+                      version_id = version["id"]
+                      break
+              if version_id is not None:
+                  break
+              time.sleep(5)
+          if version_id is None:
+              raise SystemExit(f"unchecked tag {tag} was not found to delete")
+          for attempt in range(3):
+              status, body = request("DELETE", f"{base}/{version_id}")
+              if status in (200, 204):
+                  print(f"deleted unchecked tag {tag}")
+                  raise SystemExit(0)
+              time.sleep(5)
+          raise SystemExit(f"failed to delete unchecked tag {tag}: {status} {body[:300]!r}")
+          PY
 
       - name: Push dependencies to the build cache
         if: always()
