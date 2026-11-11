@@ -1,0 +1,118 @@
+#!/bin/bash
+# Run one ERF case from the prebuilt CUDA image on Polaris (ALCF) with Apptainer:
+# one rank per A100, any number of nodes.
+#
+#   qsub -A <project> polaris-a100.pbs                                       # smoke test on 4 GPUs
+#   qsub -A <project> -v ERF_CASE=/eagle/<project>/mycase,ERF_INPUTS=inputs polaris-a100.pbs
+#   qsub -A <project> -l select=2:system=polaris -l walltime=02:00:00 -q prod polaris-a100.pbs
+#
+# Apptainer runs only on compute nodes, behind the ALCF proxy, with --fakeroot. The image
+# is pulled on the first use into ERF_SIF (set it to a project directory on eagle to share
+# it). cray-mpich-abi replaces the image's MPICH, so ranks reach the Slingshot network.
+# PBS passes environment variables only through -v.
+#
+# ERF_IMAGE, ERF_CASE, ERF_INPUTS, ERF_ARGS, ERF_WORK, ERF_BIND as in cpu-anywhere.sh.
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=00:20:00
+#PBS -l filesystems=home:eagle
+#PBS -q debug
+#PBS -N erf-image
+#PBS -j oe
+set -euo pipefail
+cd "$PBS_O_WORKDIR"
+
+IMAGE=${ERF_IMAGE:-ghcr.io/erf-model/erf-cuda:development-sm80}
+SIF=${ERF_SIF:-$HOME/erf-sif/$(echo "$IMAGE" | tr '/:' '__').sif}
+WORK=${ERF_WORK:-$PBS_O_WORKDIR/erf-run-${PBS_JOBID%%.*}}
+INPUTS=${ERF_INPUTS:-inputs_advect_uniformU}
+ARGS=${ERF_ARGS:-}
+PPN=${ERF_RANKS_PER_NODE:-4}
+
+module use /soft/modulefiles
+module load spack-pe-base apptainer
+export APPTAINER_TMPDIR=/local/scratch/apptainer-tmpdir APPTAINER_CACHEDIR=/local/scratch/apptainer-cachedir
+mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR" "$(dirname "$SIF")" "$WORK"
+export HTTP_PROXY=http://proxy.alcf.anl.gov:3128 HTTPS_PROXY=http://proxy.alcf.anl.gov:3128
+export http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY
+[ -s "$SIF" ] || apptainer pull "$SIF" "docker://$IMAGE"
+
+# The host's Cray MPICH, found through the ABI-compatible library path inside the container.
+module load cray-mpich-abi
+# The Cray environment makes every non-interactive bash source Lmod, which the image cannot run.
+unset BASH_ENV
+# libmpi needs libpals from the host's PALS installation, whose version moves.
+pals_lib=$( (ls -d /opt/cray/pals/*/lib /opt/cray/pe/pals/*/lib 2> /dev/null || true) | sort -V | tail -n 1)
+fabric_lib=$( (ls -d /opt/cray/libfabric/*/lib64 2> /dev/null || true) | sort -V | tail -n 1)
+export APPTAINERENV_LD_LIBRARY_PATH="$CRAY_LD_LIBRARY_PATH:$fabric_lib:${LD_LIBRARY_PATH:-}:${pals_lib:-/opt/cray/pals/1.8/lib}:/hostlib64"
+export APPTAINERENV_FI_LOG_LEVEL=warn
+# Each rank runs in its own container, so Cray MPICH's single-copy path between ranks on a
+# node (process_vm_readv) is denied; it copies through shared memory instead.
+export MPICH_SMP_SINGLE_COPY_MODE=NONE
+NODES=$(wc -l < "$PBS_NODEFILE")
+RANKS=$((NODES * PPN))
+
+# Bind /opt/cray, not /opt: the host's /opt would hide the image's own /opt/software.
+# Spack links erf_exec with an RPATH that names the image's MPICH and libfabric directories,
+# and an RPATH beats LD_LIBRARY_PATH for every library in the chain, so Cray's ABI-compatible
+# MPICH and its Slingshot libfabric are bound over those two directories instead.
+image_lib () {   # directory of the library erf_exec resolves $1 to, inside the image
+    apptainer exec --fakeroot "$SIF" bash -c 'dirname "$(ldd "$(command -v erf_exec)" | awk -v l="$1" "\$1 == l {print \$3}")"' _ "$1"
+}
+image_mpich=$(image_lib libmpi.so.12)
+image_fabric=$(image_lib libfabric.so.1)
+cray_mpich=$CRAY_MPICH_DIR/lib-abi-mpich
+# Cray's libfabric and its Slingshot provider need host libraries outside /opt/cray (libcxi,
+# libjson-c, libcurl and their dependencies, whose versions must match each other), so the
+# whole set except glibc is copied into /hostlib64, last on the library path.
+mkdir -p "$WORK/hostlib64"
+ldd "$fabric_lib/libfabric.so.1" | awk '$3 ~ "^/(usr/)?lib64/" {print $3}' \
+    | grep -v -E '/(libc|libm|libpthread|libdl|librt|libresolv|ld-linux)[.-]' \
+    | xargs -r -I{} cp -L {} "$WORK/hostlib64/"
+echo "host libraries copied in: $(ls "$WORK/hostlib64" | wc -l) ($(ls "$WORK/hostlib64" | tr '\n' ' ' | cut -c1-120)...)"
+export FABRIC_LIB=$fabric_lib
+binds=(-B /opt/cray -B /var/run/palsd/ --bind "$cray_mpich:$image_mpich" --bind "$fabric_lib:$image_fabric"
+       --bind "$WORK:/work" --bind "$WORK/hostlib64:/hostlib64")
+in_image () {
+    apptainer exec --fakeroot --nv "${binds[@]}" --pwd /work ${ERF_BIND:+--bind "$ERF_BIND"} "$SIF" "$@"
+}
+
+if [ -n "${ERF_CASE:-}" ]; then
+    cp -a "$ERF_CASE/." "$WORK/"
+else
+    in_image bash -c 'cp -a "$(dirname "$(dirname "$(command -v erf_exec)")")/share/erf/examples/ScalarAdvDiff/." /work/'
+    ARGS=${ERF_ARGS:-"max_step=10 erf.check_int=-1 erf.plot_int_1=10"}
+fi
+
+in_image erf_exec --describe-json > "$WORK/erf_build.json" 2> /dev/null || rm -f "$WORK/erf_build.json"
+help=$(in_image erf_exec --help 2>&1 || true)
+case $help in *--validate-input*) in_image erf_exec --validate-input "$INPUTS" ;; esac
+
+# Prove the ranks span the nodes and that the host's MPI, not the image's, is what loads.
+mpiexec --no-transfer -hostfile "$PBS_NODEFILE" -n "$RANKS" -ppn "$PPN" hostname | sort | uniq -c | sed 's/^ */ranks on node: /'
+in_image bash -c 'lib=$(ldd "$(command -v erf_exec)" | awk "/libmpi.so.12 =>/ {print \$3}")
+    if grep -a -q "CRAY MPICH" "$lib"; then echo "libmpi: $lib is Cray MPICH"; else echo "libmpi: $lib is the image MPICH"; exit 1; fi'
+in_image bash -c 'lib=$(ldd "$(command -v erf_exec)" | awk "/libfabric.so.1 =>/ {print \$3}")
+    if cmp -s "$lib" "$FABRIC_LIB/libfabric.so.1"; then echo "fabric: $lib is Cray libfabric"; else echo "fabric: $lib is the image libfabric"; exit 1; fi
+    ldd "$(command -v erf_exec)" | grep -E "libcxi|libjson-c|libcurl|libssl"' | sed 's/^ */fabric: /'
+missing=$(in_image bash -c 'ldd "$(command -v erf_exec)" | grep "not found" || true')
+if [ -n "$missing" ]; then echo "libraries missing inside the container:"; echo "$missing"; exit 1; fi
+
+# Cray MPICH names its settings, provider and NIC per rank: the ranks must talk over
+# Slingshot (provider cxi), since a silent fall-back to TCP runs correctly and slowly.
+export MPICH_ENV_DISPLAY=1 MPICH_OFI_NIC_VERBOSE=1 MPICH_OFI_VERBOSE=1
+
+# One container per rank, launched by the host's mpiexec (--no-transfer: PALS would otherwise
+# copy the apptainer binary to the nodes, away from its configuration); the image's MPICH is
+# not CUDA-aware.
+# shellcheck disable=SC2086  # ERF_ARGS is a list of inputs
+mpiexec --no-transfer -hostfile "$PBS_NODEFILE" -n "$RANKS" -ppn "$PPN" \
+    apptainer exec --fakeroot --nv "${binds[@]}" --pwd /work \
+        ${ERF_BIND:+--bind "$ERF_BIND"} "$SIF" erf_exec "$INPUTS" $ARGS amrex.use_gpu_aware_mpi=0 \
+    2>&1 | tee "$WORK/run.log"
+grep -i -E 'provider|nic|cxi' "$WORK/run.log" | sort | uniq -c | sort -rn | head -n 8 | sed 's/^ */mpi: /'
+if grep -q -i -E 'provider[^a-z]*(tcp|sockets)' "$WORK/run.log"; then
+    echo "MPI fell back to a TCP provider instead of Slingshot"; exit 1
+fi
+[ -f "$WORK/erf_run.json" ] && cat "$WORK/erf_run.json"
+echo "run directory: $WORK"

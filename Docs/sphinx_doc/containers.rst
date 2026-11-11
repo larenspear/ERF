@@ -3,14 +3,121 @@
 
 .. _containers:
 
-ERF containers on Perlmutter
-============================
+Containers
+==========
 
-The following is a brief introduction to ERF and containers on the NERSC Perlmutter platform.
+ERF publishes runnable images. This page shows which images exist, how to run a
+case from them on Deception, Perlmutter, Polaris and any machine with a
+container engine, and how to build an image of your own on Perlmutter.
 
-For more details, please see `NERSC's detailed containers documentation <https://docs.nersc.gov/development/containers>`_, which also includes containers tutorials.
+Prebuilt images
+---------------
 
-Container images can be built on one's desktop/laptop using a standard container framework such as Docker, Podman (Pod Manager), etc. or directly on a Perlmutter login node using ``podman-hpc``.  ``podman-hpc`` is a NERSC-developed wrapper that extends the capabilities of Podman for HPC.  Containers are run on Perlmutter using either ``podman-hpc`` or ``shifter`` (also developed at NERSC).  NERSC has a good `podman-hpc tutorial <https://docs.nersc.gov/development/containers/podman-hpc/podman-beginner-tutorial>`_.
+``.github/workflows/spack-containers.yml`` builds images from the Spack recipe in
+``Build/spack`` every Monday and at every release:
+
+* ``ghcr.io/erf-model/erf:development`` and ``ghcr.io/erf-model/erf:<release>``:
+  the CPU image, for ``x86_64_v3`` (AVX2) processors, on Ubuntu 24.04.
+* ``ghcr.io/erf-model/erf-cuda:development-sm80`` and
+  ``ghcr.io/erf-model/erf-cuda:<release>-sm80``: the same stack compiled for CUDA
+  on A100 GPUs (compute capability 8.0), on NVIDIA's CUDA 12.8 runtime image for
+  Ubuntu 24.04. It does not run on V100 or H100 GPUs.
+
+The Ubuntu 24.04 bases carry glibc 2.39, which matters on Cray systems: the
+site's Cray MPICH, bound into the container for multi-node runs, needs glibc
+2.38, so images on older bases cannot use it.
+
+Both carry MPI (MPICH), NetCDF and HDF5, Noah-MP, RRTMGP, FFT and particles, so
+every capability an inputs file can select is available. ``erf_exec`` is on
+``PATH`` and the examples are under ``share/erf/examples``. Every tag has a
+dated copy that never moves, ``development-20261110`` for example: use the dated
+tag for anything that must be reproducible, and ``erf_exec --describe-json`` to
+record what an image contains.
+
+Running a case from an image
+----------------------------
+
+The scripts in ``Build/containers`` run one case from an image on each machine.
+They read the same environment variables:
+
+* ``ERF_IMAGE``: the image; the default is the development image for the machine.
+* ``ERF_CASE``: a directory holding the inputs file and the data it names, copied
+  into the run directory. Without it the script runs the ``ScalarAdvDiff`` example
+  from the image for ten steps, which is the smoke test for a new machine.
+* ``ERF_INPUTS``: the inputs file name inside the case.
+* ``ERF_ARGS``: extra inputs for the command line, ``max_step=100 erf.plot_int_1=10`` for example.
+* ``ERF_RANKS``: MPI ranks; on the GPU machines one per GPU.
+* ``ERF_WORK``: the run directory; the default is a new directory beside the job.
+* ``ERF_BIND``: an extra directory to make visible inside the container, for data
+  the inputs name by absolute path.
+
+Each script validates the inputs with ``erf_exec --validate-input`` when the
+image has it, records ``erf_exec --describe-json`` as ``erf_build.json`` in the
+run directory, passes ``amrex.use_gpu_aware_mpi=0`` because the image's MPICH is
+not CUDA-aware, and prints ``erf_run.json`` when the image writes one.
+
+Deception (PNNL)
+~~~~~~~~~~~~~~~~
+
+Slurm and Apptainer. Submit from a directory on ``/rcfs``. The image is pulled
+once into ``/rcfs/scratch/$USER/erf-sif`` on a login node, as the script's
+header shows; compute nodes cannot mount a SIF, so each job unpacks it onto the
+node's local disk on first use.
+Use an A100 partition, ``a100_80_shared`` or ``a100_shared``, which bill only the
+GPUs and cores requested. MPI runs inside the container, so this script is for
+one node.
+
+.. literalinclude:: ../../Build/containers/deception-a100.sbatch
+   :language: bash
+
+Perlmutter (NERSC)
+~~~~~~~~~~~~~~~~~~
+
+Slurm and ``podman-hpc``. Pull the image once on a login node, which also
+migrates it to ``$SCRATCH``. ``--mpi`` swaps the image's MPICH for Cray MPICH, so
+runs span nodes, and ``--gpu`` exposes the A100s. Submit with the project's GPU
+account, ``sbatch -A m1234_g`` for example.
+
+.. literalinclude:: ../../Build/containers/perlmutter-a100.sbatch
+   :language: bash
+
+Polaris (ALCF)
+~~~~~~~~~~~~~~
+
+PBS and Apptainer, which on Polaris runs only on compute nodes, behind the ALCF
+proxy and with ``--fakeroot``. The image is pulled on first use. Cray MPICH and
+Cray's libfabric are bound over the image's own MPICH and libfabric directories,
+together with the host libraries they need, because Spack links ``erf_exec``
+with an RPATH that would otherwise keep the image's copies; the script checks
+that the libraries it then loads are Cray's and that the Slingshot provider is
+in use. It binds ``/opt/cray`` rather than ALCF's example ``/opt``, which would
+hide the image's own ``/opt/software``. Verified with eight ranks on two nodes.
+
+.. literalinclude:: ../../Build/containers/polaris-a100.pbs
+   :language: bash
+
+Any machine with a CPU
+~~~~~~~~~~~~~~~~~~~~~~
+
+Docker, Podman or Apptainer, from a laptop to a cluster node. On Apple Silicon
+the image runs under x86_64 emulation. For Perlmutter's CPU nodes use the
+Perlmutter script with ``ERF_IMAGE=ghcr.io/erf-model/erf:development`` and
+``sbatch -C cpu --ntasks-per-node=128 -c 1``, without ``--gpu``.
+
+.. literalinclude:: ../../Build/containers/cpu-anywhere.sh
+   :language: bash
+
+Building your own image on Perlmutter
+-------------------------------------
+
+The following is a brief introduction to building ERF containers on the NERSC
+Perlmutter platform. For more details, please see `NERSC's detailed containers
+documentation <https://docs.nersc.gov/development/containers>`_, which also
+includes containers tutorials.
+
+Container images can be built on one's desktop/laptop using a standard container
+framework such as Docker, Podman (Pod Manager), etc. or directly on a Perlmutter
+login node using ``podman-hpc``.
 
 Example ERF containerfile
 ~~~~~~~~~~~~~~~~~~~~~~~~~
