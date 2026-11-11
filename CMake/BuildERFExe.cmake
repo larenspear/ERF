@@ -563,6 +563,7 @@ function(build_erf_lib erf_lib_name)
        ${SRC_DIR}/IO/ERF_WriteJobInfo.cpp
        ${SRC_DIR}/IO/ERF_BuildDescription.cpp
        ${SRC_DIR}/IO/ERF_InputPreflight.cpp
+       ${SRC_DIR}/IO/ERF_RunRecord.cpp
        ${SRC_DIR}/IO/ERF_NoahMPGitHash.cpp
        ${SRC_DIR}/IO/ERF_ConsoleIO.cpp
        ${SRC_DIR}/IO/ERF_ReadFromERFBdy.cpp

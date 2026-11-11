@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <ERF_RunRecord.H>
 
 namespace {
 
@@ -371,6 +372,7 @@ ERF::ERF_shared ()
     // Create one invocation identity after inputs are available and before
     // InitData can read restart metadata or write an output on restart.
     execution_provenance = erf_provenance::initialize_execution_provenance();
+    erf_run_record::begin(execution_provenance);
     initializeMicrophysics(nlevs_max);
     initializeFire(nlevs_max);
 

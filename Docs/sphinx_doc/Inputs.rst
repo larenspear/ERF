@@ -1288,6 +1288,40 @@ Notes
 - These are in addition to the main checkpoint controls described in
   :ref:`sec:Checkpoint`.
 
+.. _inputs-run-record:
+
+Run Record
+==========
+
+Every run writes one small JSON file in the run directory that says how the run
+is going and how it ended, for scripts and workflow tools that would otherwise
+have to read the console output.
+
++--------------------+----------------------------------------------+---------------------+------------------+
+| Parameter          | Definition                                   | Acceptable Values   | Default          |
++====================+==============================================+=====================+==================+
+| **erf.run_record** | Path of the run record; ``none`` disables it | String              | ``erf_run.json`` |
++--------------------+----------------------------------------------+---------------------+------------------+
+
+The file is written when the run starts, when initialization finishes, after
+every checkpoint and when the run ends. Its ``status`` is ``running``,
+``completed`` (``reason`` is ``max_step`` or ``stop_time``), ``aborted`` or
+``exited``. An aborted record has ``reason`` ``abort`` with the text AMReX
+printed in ``message``, or ``reason`` ``signal`` when a fatal signal ended the
+process, ``SIGTERM`` from the scheduler's walltime limit or ``SIGSEGV`` and
+``SIGFPE`` from a crash, named in ``message``. An exited record left through
+``exit()`` before the run finished, for example a Fortran ``STOP`` in a coupled
+library. The record also carries the last completed ``step`` and ``time`` (null
+until initialization finishes), the ``last_checkpoint`` directory, the
+``execution_uuid`` and ``simulation_uuid`` that the ``job_info`` files of this
+run's outputs share, the inputs file and command-line overrides, UTC timestamps
+and ``exit_code`` where ERF controls it. A record still at ``running`` after the
+process is gone means the process was killed outright, by ``SIGKILL``, an
+out-of-memory kill or a node failure, before it could say why. The file is
+replaced atomically, so a reader never sees a partial record; a restart in the
+same directory replaces the previous run's record, and the directory named by
+``erf.run_record`` must exist.
+
 .. _inputs-plotfiles:
 
 PlotFiles

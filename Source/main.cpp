@@ -12,6 +12,7 @@
 #include "ERF.H"
 #include "ERF_InputsName.H"
 #include "ERF_InputPreflight.H"
+#include "ERF_RunRecord.H"
 
 #ifdef ERF_USE_WW3_COUPLING
 #include <mpi.h>
@@ -202,6 +203,7 @@ void install_exit_trap ()
 {
     std::atexit([]() {
         if (amrex::Initialized()) {
+            erf_run_record::exited();
             std::cout.flush();
             std::clog.flush();
             std::cerr.flush();
@@ -318,6 +320,9 @@ auto finalize_mpi_and_return = [](int code) {
 #endif
 
     install_exit_trap();
+    erf_run_record::set_command_line(argc, argv);
+    amrex::SetErrorHandler(erf_run_record::abort);
+    erf_run_record::install_signal_handlers();
 
     // Only when argv[1] is actually an inputs file (same test the surrounding code uses).
     if (argc > 1 && std::string(argv[1]).find('=') == std::string::npos) {

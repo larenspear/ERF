@@ -7,6 +7,7 @@
 */
 
 #include <algorithm>
+#include <ERF_RunRecord.H>
 #include <filesystem>
 #include <memory>
 #include "ERF_Constants.H"
@@ -253,6 +254,8 @@ ERF::Evolve ()
     WriteAtFinalTime();
 
     flush_stations();
+
+    erf_run_record::finish(istep[0] >= max_step ? "max_step" : "stop_time", istep[0], t_new[0]);
 
     BL_PROFILE_VAR_STOP(evolve);
 }
@@ -938,6 +941,7 @@ ERF::InitData ()
     InitData_pre();
     InitData_post();
     if (!m_seb_surface_layer_checked) { check_seb_surface_layer(); }
+    erf_run_record::initialized(execution_provenance, istep[0], t_new[0]);
     BL_PROFILE_VAR_STOP(InitData);
 }
 // This is called from main.cpp and handles all initialization, whether from start or restart

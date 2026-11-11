@@ -3,6 +3,7 @@
  */
 
 #include <iostream>
+#include <ERF_RunRecord.H>
 #include "ERF_Constants.H"
 #include <fstream>
 #include <cmath>
@@ -906,6 +907,7 @@ ERF::WriteCheckpointFile () const
     // the completed output attempt and can seed a later restart lineage.
     writeJobInfo(checkpointname, erf_provenance::ArtifactType::Checkpoint,
                  istep[0], t_new[0]);
+    erf_run_record::checkpoint_written(checkpointname, istep[0], t_new[0]);
 
     if (verbose > 0)
     {

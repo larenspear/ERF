@@ -3,8 +3,12 @@
 
 #include <AMReX_BLassert.H>
 
+#include <cmath>
 #include <cstddef>
+#include <iomanip>
+#include <locale>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -57,6 +61,20 @@ public:
     void value (const char* name, int v)
     {
         key(name); os << std::to_string(v); end_value();
+    }
+
+    void value (const char* name, double v)
+    {
+        key(name);
+        if (std::isfinite(v)) {
+            std::ostringstream text;
+            text.imbue(std::locale::classic());
+            text << std::setprecision(17) << v;
+            os << text.str();
+        } else {
+            os << "null";
+        }
+        end_value();
     }
 
     void value (const char* name, const char* v)
