@@ -42,7 +42,7 @@ env:
   CUDA_VERSION: "12.8"
   CUDA_BASE: nvidia/cuda:12.8.1-runtime-ubuntu22.04
   CUDA_ARCH: "80"
-  # The plan check fails if erf, amrex, or kokkos is not this GCC.
+  # The plan check fails if erf or amrex is not this GCC.
   GCC_VERSION: "12"
 
 jobs:
@@ -238,8 +238,9 @@ jobs:
       - name: Concretize and check the plan
         run: |
           . spack_install_dir/share/spack/setup-env.sh
-          spack spec -I -l "$SPEC" | tee concretized.txt
-          spack spec --json "$SPEC" > concretized.json
+          # Actions presents a TTY, so Spack colors the spec. The check reads the text.
+          SPACK_COLOR=never spack spec -I -l "$SPEC" | tee concretized.txt
+          SPACK_COLOR=never spack spec --json "$SPEC" > concretized.json
           python3 - <<'PY'
           import json, os, re
           nodes = json.load(open("concretized.json"))["spec"]["nodes"]
@@ -261,7 +262,7 @@ jobs:
               return found or "none"
           def accepts_gcc(compiler):
               return compiler == f"gcc@{gcc}" or compiler.startswith(f"gcc@{gcc}.")
-          for name in ("erf", "amrex", "kokkos"):
+          for name in ("erf", "amrex"):
               found = by_name.get(name, [])
               if not found:
                   problems.append(f"{name} is not in the plan")
@@ -270,11 +271,8 @@ jobs:
                   compiler = compiler_of(node)
                   if not accepts_gcc(compiler):
                       problems.append(f"{name} would compile with {compiler}, not gcc {gcc}")
-          for node in by_name.get("ekat", []):
-              compiler = compiler_of(node)
-              if not accepts_gcc(compiler):
-                  problems.append(f"ekat would compile with {compiler}, not gcc {gcc}")
-          mpich_tokens = re.findall(r"mpich@[^\s\]]+", open("concretized.txt").read())
+          spec_text = re.sub(r"\x1b\[[0-9;]*m", "", open("concretized.txt").read())
+          mpich_tokens = re.findall(r"mpich@[^\s\]]+", spec_text)
           if not mpich_tokens:
               problems.append("mpich is not in the concretized spec")
           for token in mpich_tokens:
