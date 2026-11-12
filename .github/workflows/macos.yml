@@ -187,7 +187,7 @@ jobs:
     - name: CMake Regression Tests # see file ERF/Tests/CTestList.cmake
       if: matrix.particles_precision == 'DOUBLE' && matrix.mesh_precision == 'DOUBLE'
       run: |
-        ctest -L regression -VV
+        ctest -L regression -VV --no-tests=error
       working-directory: ${{runner.workspace}}/ERF/build
 
     # A test that dies on a signal (for example SIGILL from amrex.fpe_trap_invalid)
