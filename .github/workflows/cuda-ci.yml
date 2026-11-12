@@ -129,7 +129,8 @@ jobs:
             -DERF_PRECISION:STRING=${{matrix.mesh_precision}} \
             -DERF_PARTICLES_PRECISION:STRING=${{matrix.particles_precision}} \
             -DERF_TEST_NRANKS:STRING=2 \
-            -DERF_ENABLE_UNIT_TESTS:BOOL=ON .
+            -DERF_ENABLE_UNIT_TESTS:BOOL=ON . \
+            2>&1 | tee "${{runner.workspace}}/configure-${{matrix.cuda_pkg}}-output.txt"
           echo "Building with $(nproc) processes"
           cmake --build build-${{matrix.cuda_pkg}} --parallel "$(nproc)" \
           2>&1 | tee -a ${{runner.workspace}}/build-${{matrix.cuda_pkg}}-output.txt;
@@ -175,3 +176,21 @@ jobs:
           if [ "${warning_count:-0}" -ne 0 ] || [ "${error_count:-0}" -ne 0 ]; then
             exit 1
           fi
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: diagnostics-cuda-${{ matrix.cuda_pkg }}-${{ matrix.mesh_precision }}-particles-${{ matrix.particles }}-${{ matrix.particles_precision }}
+          path: |
+            ${{ runner.workspace }}/configure-${{ matrix.cuda_pkg }}-output.txt
+            ${{ runner.workspace }}/build-${{ matrix.cuda_pkg }}-output.txt
+            ${{ runner.workspace }}/build-${{ matrix.cuda_pkg }}-diagnostics.txt
+            ${{ github.workspace }}/build-${{ matrix.cuda_pkg }}/CMakeCache.txt
+            ${{ github.workspace }}/build-${{ matrix.cuda_pkg }}/CMakeFiles/CMakeConfigureLog.yaml
+            ${{ github.workspace }}/build-${{ matrix.cuda_pkg }}/CMakeFiles/CMakeOutput.log
+            ${{ github.workspace }}/build-${{ matrix.cuda_pkg }}/CMakeFiles/CMakeError.log
+            ${{ github.workspace }}/build-${{ matrix.cuda_pkg }}/Testing/Temporary/*.log
+            ${{ github.workspace }}/build-${{ matrix.cuda_pkg }}/Testing/Temporary/LastTestsFailed*.txt
+          if-no-files-found: ignore
+          retention-days: 7
