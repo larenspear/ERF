@@ -70,13 +70,46 @@ class WorkflowTests(unittest.TestCase):
     def test_repository_contracts(self):
         counts, tags = self.check()
         # Inventory assertions, not limits imposed by the checker.
-        self.assertEqual(counts, {"push": 21, "pull_request": 9, "workflow_dispatch": 21})
-        self.assertEqual(len(tags), 23)
+        # The contract checker includes job-level skips (GNU Make is merge/manual only).
+        self.assertEqual(counts, {"push": 22, "pull_request": 10, "workflow_dispatch": 22})
+        self.assertEqual(len(tags), 24)
         self.assertIn("ubuntu-22.04-x64-gcc-mpich-double-particles-off", tags)
         for arch in ("x64", "arm64"):
             self.assertIn(f"macos-latest-{arch}-appleclang-openmpi-double-particles-on", tags)
         for mpi in ("msmpi", "mpi-off"):
             self.assertIn(f"windows-latest-x64-msvc-{mpi}-double-particles-on", tags)
+
+    def test_gnumake_cache_covers_all_three_builds(self):
+        job = self.workflows["gcc.yml"]["jobs"]["gnumake"]
+        self.assertEqual(job["if"], "github.event_name != 'pull_request'")
+        self.assertEqual(job["env"]["CCACHE_COMPILERCHECK"], "%compiler% --version")
+        steps = job["steps"]
+        calls = contracts.cache_steps(self.workflows["gcc.yml"], job)
+        builds = [(i, s) for i, s in enumerate(steps)
+                  if s.get("name", "").startswith("GNUmake Compile and Link")]
+        self.assertEqual(len(builds), 3)
+        for _, step in builds:
+            self.assertIn("USE_CCACHE=TRUE", step["run"])
+        initialize = next(i for i, s in enumerate(steps)
+                          if s.get("name") == "Initialize compiler cache statistics")
+        prune = next(i for i, s in enumerate(steps)
+                     if s.get("name") == "Prune and report compiler cache")
+        self.assertLess(calls[0][0], initialize)
+        self.assertLess(initialize, builds[0][0])
+        self.assertLess(builds[-1][0], prune)
+        self.assertLess(prune, calls[1][0])
+        self.assertIn("GNUMAKE_BUILD_START", steps[initialize]["run"])
+        self.assertIn("GNUMAKE_BUILD_START", steps[prune]["run"])
+        # Preserve both out-of-tree runtime checks, not just compilation coverage.
+        for (_, step), marker in zip(builds[1:], ("fire_phi", "structure_example_fx")):
+            self.assertIn("mpiexec -n 2", step["run"])
+            self.assertIn(f'grep -q "{marker}"', step["run"])
+
+    def test_gnumake_cache_pair_cannot_disappear(self):
+        steps = self.workflows["gcc.yml"]["jobs"]["gnumake"]["steps"]
+        steps[:] = [s for s in steps if not contracts.is_cache(s)]
+        with self.assertRaisesRegex(ValueError, "gcc.yml:gnumake:.*exactly one restore"):
+            self.check()
 
     def test_lost_key_dimension(self):
         self.job()["env"]["CCACHE_TRUNK_KEY"] = "ubuntu-22.04-x64-gcc-mpich-double"
@@ -153,8 +186,8 @@ class WorkflowTests(unittest.TestCase):
             self.check()
         duplicate["jobs"]["Build-And-Test"]["env"]["CCACHE_TRUNK_KEY"] += "-new"
         counts, tags = self.check()
-        self.assertEqual(counts["push"], 23)
-        self.assertEqual(len(tags), 25)
+        self.assertEqual(counts["push"], 24)
+        self.assertEqual(len(tags), 26)
 
     def test_restore_save_settings_match(self):
         for field, value in (("key", "different"), ("path", "~/different"), ("transport", "oras")):

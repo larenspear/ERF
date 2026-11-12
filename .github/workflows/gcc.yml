@@ -252,8 +252,17 @@ jobs:
     if: github.event_name != 'pull_request'
     permissions:
       contents: read
+      packages: write
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    env:
+      CCACHE_TRUNK_KEY: ubuntu-22.04-x64-gcc-openmpi-gnumake-double-base-fire-structure
+      CCACHE_DIR: /home/runner/.cache/ccache-gnumake
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      # mpicxx is a wrapper: fingerprint the compiler it invokes, not just the wrapper file.
+      CCACHE_COMPILERCHECK: '%compiler% --version'
+      CCACHE_COMPRESS: '1'
+      CCACHE_COMPRESSLEVEL: '10'
     steps:
 
     - uses: actions/checkout@v7
@@ -264,9 +273,25 @@ jobs:
     - name: Install Dependencies
       run: Submodules/AMReX/.github/workflows/dependencies/dependencies.sh
 
+    - name: Install CCache
+      run: Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
+
+    - name: Restore Cache
+      uses: ./.github/actions/ccache-trunk
+      with:
+        mode: restore
+        key: ${{ env.CCACHE_TRUNK_KEY }}
+        path: ${{ env.CCACHE_DIR }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Initialize compiler cache statistics
+      run: |
+        ccache -z
+        echo "GNUMAKE_BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+
     - name: GNUmake Compile and Link
       run: |
-        make -C Exec -j2 USE_NETCDF=FALSE USE_PARTICLES=FALSE
+        make -C Exec -j2 USE_CCACHE=TRUE USE_NETCDF=FALSE USE_PARTICLES=FALSE
 
     - name: GNUmake Compile and Link with an out-of-tree fire engine
       run: |
@@ -275,7 +300,7 @@ jobs:
         printf 'ERF_HOME = %s\nFIRE_HOME = %s/Tests/FireEngineExample\nUSE_FIRE = TRUE\nUSE_MPI = TRUE\nUSE_NETCDF = FALSE\nCOMP = gnu\nDIM = 3\ninclude $(ERF_HOME)/Exec/Make.ERF\n' \
           "${{github.workspace}}" "${{github.workspace}}" > GNUmakefile
         cp ${{github.workspace}}/Exec/ERF_Prob.cpp ${{github.workspace}}/Exec/ERF_Prob.H ${{github.workspace}}/Exec/Make.package .
-        make -j2
+        make -j2 USE_CCACHE=TRUE
         cp ${{github.workspace}}/Tests/FireEngineExample/inputs_fire_example ${{github.workspace}}/Tests/FireEngineExample/input_sounding .
         mpiexec -n 2 ./ERF3d.gnu*.ex inputs_fire_example max_step=4 erf.check_int=-1 | tee run.log
         grep -q "fire_phi" plt00004/Header
@@ -287,10 +312,28 @@ jobs:
         printf 'ERF_HOME = %s\nSTRUCTURE_HOME = %s/Tests/StructureModelExample\nUSE_MOVING_BODIES = TRUE\nUSE_MPI = TRUE\nUSE_NETCDF = FALSE\nCOMP = gnu\nDIM = 3\ninclude $(ERF_HOME)/Exec/Make.ERF\n' \
           "${{github.workspace}}" "${{github.workspace}}" > GNUmakefile
         cp ${{github.workspace}}/Exec/ERF_Prob.cpp ${{github.workspace}}/Exec/ERF_Prob.H ${{github.workspace}}/Exec/Make.package .
-        make -j2
+        make -j2 USE_CCACHE=TRUE
         cp ${{github.workspace}}/Tests/StructureModelExample/inputs_structure_example .
         mpiexec -n 2 ./ERF3d.gnu*.ex inputs_structure_example max_step=8 erf.check_int=-1 | tee run.log
         grep -q "structure_example_fx" plt00008/Header
+
+    - name: Prune and report compiler cache
+      if: always() && env.GNUMAKE_BUILD_START != ''
+      run: |
+        # Retain entries used by ANY of the three configurations, not only the last build.
+        ccache --evict-older-than "$(( $(date +%s) - GNUMAKE_BUILD_START + 120 ))s"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        ccache -s | tee -a "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Save Cache
+      if: always() && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+      uses: ./.github/actions/ccache-trunk
+      with:
+        mode: save
+        key: ${{ env.CCACHE_TRUNK_KEY }}
+        path: ${{ env.CCACHE_DIR }}
+        token: ${{ secrets.GITHUB_TOKEN }}
 
   # Single stable required status check. Branch protection previously pinned the
   # individual matrix job names ("GNU@9.3 C++17 Release - Particles OFF"), which silently
