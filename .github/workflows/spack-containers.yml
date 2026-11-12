@@ -14,6 +14,7 @@ on:
   schedule:
     - cron: '0 8 * * 1'   # Mondays 08:00 UTC
   push:
+    branches: [ci-spack-containers-cuda-test]
     tags: ['2[0-9].[0-9][0-9]']
   workflow_dispatch:
     inputs:
@@ -88,11 +89,11 @@ jobs:
           # max_gb bounds the image on disk; an unwanted layer shows up here first.
           def cpu(version):
               return {"spec": f"erf@{erf_version(version)} {options}", "tag": tag_of(version),
-                      "image": "erf", "base": cpu_base, "cuda": "", "max_gb": 2}
+                      "image": "erf-test", "base": cpu_base, "cuda": "", "max_gb": 2}
           # ^cuda@<release> keeps the toolkit at the release the base image carries.
           def gpu(version):
               return {"spec": f"erf@{erf_version(version)} +cuda cuda_arch={arch} {options} ^cuda@{cuda}",
-                      "tag": f"{tag_of(version)}-sm{arch}", "image": "erf-cuda", "base": cuda_base,
+                      "tag": f"{tag_of(version)}-sm{arch}", "image": "erf-cuda-test", "base": cuda_base,
                       "cuda": cuda, "max_gb": 10}
 
           if os.environ["ONE_SPEC"]:
@@ -104,9 +105,9 @@ jobs:
               if "+cuda" in spec:
                   if "^cuda" not in spec:
                       spec += f" ^cuda@{cuda}"
-                  images = [{"spec": spec, "tag": tag, "image": "erf-cuda", "base": cuda_base, "cuda": cuda, "max_gb": 10}]
+                  images = [{"spec": spec, "tag": tag, "image": "erf-cuda-test", "base": cuda_base, "cuda": cuda, "max_gb": 10}]
               else:
-                  images = [{"spec": spec, "tag": tag, "image": "erf", "base": cpu_base, "cuda": "", "max_gb": 2}]
+                  images = [{"spec": spec, "tag": tag, "image": "erf-test", "base": cpu_base, "cuda": "", "max_gb": 2}]
           elif os.environ["REF_TYPE"] == "tag":
               images = [cpu(os.environ["REF_NAME"]), gpu(os.environ["REF_NAME"])]
           else:
