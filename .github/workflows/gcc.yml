@@ -3,30 +3,8 @@ name: Linux GCC
 on:
   push:
     branches: [development]
-    paths:
-      - '**'
-      - '!Build/spack/**'
-      - '!Docs/**'
-      - '!paper/**'
-      - '!**.md'
-      - '!**.rst'
-      - '!license.txt'
-      - '!.github/workflows/**'
-      - '.github/workflows/gcc.yml'
-      - '.github/actions/**'
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - '**'
-      - '!Build/spack/**'
-      - '!Docs/**'
-      - '!paper/**'
-      - '!**.md'
-      - '!**.rst'
-      - '!license.txt'
-      - '!.github/workflows/**'
-      - '.github/workflows/gcc.yml'
-      - '.github/actions/**'
   workflow_dispatch:
 
 # Development pushes finish the active run and keep only the newest pending commit.
@@ -36,7 +14,56 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/development' }}
 
 jobs:
+  # The workflow must always start so branch protection receives ci-required.
+  # Filter the build jobs instead; this job reads filenames, never PR code.
+  changes:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      build: ${{ steps.paths.outputs.build }}
+    steps:
+      - uses: actions/github-script@v9
+        id: paths
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            let files;
+            let incomplete = false;
+            if (context.eventName === 'pull_request') {
+              files = await github.paginate(github.rest.pulls.listFiles, {
+                owner, repo, pull_number: context.payload.pull_request.number, per_page: 100,
+              });
+              // GitHub returns at most 3,000 PR files. Build if the list may be truncated.
+              incomplete = files.length >= 3000;
+            } else if (context.eventName === 'push' && !context.payload.forced
+                       && !/^0+$/.test(context.payload.before)) {
+              const { data } = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: `${context.payload.before}...${context.payload.after}`,
+              });
+              files = data.files || [];
+              // The compare endpoint returns at most 300 files.
+              incomplete = files.length >= 300;
+            }
+            const needsBuild = path => {
+              if (path === '.github/workflows/gcc.yml' || path.startsWith('.github/actions/')) {
+                return true;
+              }
+              return !['Build/spack/', 'Docs/', 'paper/', '.github/workflows/']
+                .some(prefix => path.startsWith(prefix))
+                && !/\.(md|rst)$/.test(path) && path !== 'license.txt';
+            };
+            // Manual runs, force pushes, new branches and empty/truncated lists build.
+            const build = !files || files.length === 0 || incomplete || files.some(file =>
+              needsBuild(file.filename) || (file.previous_filename && needsBuild(file.previous_filename))
+            );
+            core.setOutput('build', String(build));
+
   library:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     name: GNU@9.3 C++17 - Mesh ${{matrix.mesh_precision}} Particles ${{matrix.particles}} ${{matrix.particles_precision}}
     permissions:
       contents: read
@@ -249,7 +276,8 @@ jobs:
 
   gnumake:
     name: GNU Make - Mesh DOUBLE Particles OFF DOUBLE
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: github.event_name != 'pull_request' && needs.changes.outputs.build == 'true'
     permissions:
       contents: read
     runs-on: ubuntu-22.04
@@ -300,14 +328,20 @@ jobs:
   ci-required:
     name: ci-required
     if: ${{ !cancelled() }}
-    needs: [library]
+    needs: [changes, library]
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
       - name: Check build matrix result
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BUILD: ${{ needs.changes.outputs.build }}
+          MATRIX_RESULT: ${{ needs.library.result }}
         run: |
-          result="${{ needs.library.result }}"
-          echo "Linux GCC matrix result: ${result}"
-          # 'skipped' is legitimate (path filters); anything other than that or
-          # 'success' means the matrix did not pass.
-          [[ "${result}" == "success" || "${result}" == "skipped" ]] || exit 1
+          echo "Change detection: ${CHANGES_RESULT}; build: ${BUILD}; matrix: ${MATRIX_RESULT}"
+          [[ "${CHANGES_RESULT}" == "success" ]] || exit 1
+          if [[ "${BUILD}" == "false" ]]; then
+            [[ "${MATRIX_RESULT}" == "skipped" ]] || exit 1
+          else
+            [[ "${BUILD}" == "true" && "${MATRIX_RESULT}" == "success" ]] || exit 1
+          fi
