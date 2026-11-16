@@ -1,5 +1,7 @@
 name: Spack containers
 
+# Fork-only review: use isolated package names and never write the shared build cache.
+
 # Runnable ERF images on GHCR from the Spack recipe in Build/spack: Spack installs ERF
 # with MPICH, NetCDF and HDF5, Noah-MP, RRTMGP, FFT and particles for x86_64_v3 and pushes
 # the runtime closure as image layers on a base image. erf is the CPU image on
@@ -90,11 +92,11 @@ jobs:
           # max_gb bounds the image on disk; an unwanted layer shows up here first.
           def cpu(version):
               return {"spec": f"erf@{erf_version(version)} {options}", "tag": tag_of(version),
-                      "image": "erf", "base": cpu_base, "cuda": "", "max_gb": 2}
+                      "image": "erf-ci-review-20261116-2025", "base": cpu_base, "cuda": "", "max_gb": 2}
           # ^cuda@<release> keeps the toolkit at the release the base image carries.
           def gpu(version):
               return {"spec": f"erf@{erf_version(version)} +cuda cuda_arch={arch} {options} ^cuda@{cuda}",
-                      "tag": f"{tag_of(version)}-sm{arch}", "image": "erf-cuda", "base": cuda_base,
+                      "tag": f"{tag_of(version)}-sm{arch}", "image": "erf-cuda-ci-review-20261116-2025", "base": cuda_base,
                       "cuda": cuda, "max_gb": 10}
 
           if os.environ["ONE_SPEC"]:
@@ -111,10 +113,10 @@ jobs:
                   if not re.search(r"(?:^|\s)\^cuda(?:@|\s|$)", spec):
                       spec += f" ^cuda@{cuda}"
                   tag = os.environ["ONE_TAG"] or (f"{inferred}-sm{arch}" if inferred else "")
-                  images = [{"spec": spec, "tag": tag, "image": "erf-cuda", "base": cuda_base, "cuda": cuda, "max_gb": 10}]
+                  images = [{"spec": spec, "tag": tag, "image": "erf-cuda-ci-review-20261116-2025", "base": cuda_base, "cuda": cuda, "max_gb": 10}]
               else:
                   tag = os.environ["ONE_TAG"] or inferred
-                  images = [{"spec": spec, "tag": tag, "image": "erf", "base": cpu_base, "cuda": "", "max_gb": 2}]
+                  images = [{"spec": spec, "tag": tag, "image": "erf-ci-review-20261116-2025", "base": cpu_base, "cuda": "", "max_gb": 2}]
               if not tag:
                   raise SystemExit("the spec names no version; pass a tag")
           elif os.environ["REF_TYPE"] == "tag":
@@ -427,10 +429,4 @@ jobs:
           docker tag "$IMAGE:$DATED_TAG" "$IMAGE:$TAG"
           docker push --quiet "$IMAGE:$TAG"
 
-      - name: Push dependencies to the build cache
-        if: always()
-        continue-on-error: true
-        run: |
-          . spack_install_dir/share/spack/setup-env.sh
-          spack buildcache push --unsigned --update-index --only dependencies \
-            --without-build-dependencies erf-buildcache "$SPEC"
+      # Fork review does not publish to the shared dependency build cache.
