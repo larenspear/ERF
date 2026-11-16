@@ -2,6 +2,9 @@ name: CPU development container
 
 # Build and test only; publishing is a separate decision.
 on:
+  # Test-only fork branch: a push starts this workflow without a fork PR.
+  push:
+    branches: [ci-cpu-dev-earl-test-20261116]
   pull_request:
     paths:
       - '.github/workflows/cpu-dev-container.yml'
