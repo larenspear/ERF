@@ -59,7 +59,7 @@ def read_config(env: Mapping[str, str]) -> Config:
         raise ValueError("unexpected CACHE_OWNER_TYPE")
     return Config(
         mode=mode, transport=backend, cache=cache,
-        ref=f"ghcr.io/{owner.lower()}/erf-ccache:{tag}", platform=platform,
+        ref=f"ghcr.io/{owner.lower()}/erf-ccache-gnumake-test-20261116-2300:{tag}", platform=platform,
         timeout=int(timeout), runner_temp=Path(env["RUNNER_TEMP"]),
         output_path=Path(env["GITHUB_OUTPUT"]) if not saving else None,
         token=token, actor=env["GITHUB_ACTOR"] if token else "",
@@ -110,7 +110,7 @@ def prune(config: Config) -> None:
     """A pruning failure must not turn a successful save into a failure."""
     try:
         print(transport.run(
-            [sys.executable, str(Path(__file__).with_name("prune.py")), "erf-ccache:0"],
+            [sys.executable, str(Path(__file__).with_name("prune.py")), "erf-ccache-gnumake-test-20261116-2300:0"],
             env=config.prune_env, timeout=65, attempts=1, label="prune cache versions"), end="")
     except RuntimeError as exc:
         warning(f"could not prune old GHCR ccache versions ({exc}); a later save will retry")
