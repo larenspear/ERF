@@ -15,11 +15,14 @@ COPY CMakeLists.txt CTestConfig.cmake ./
 COPY CMake/ CMake/
 COPY Source/ Source/
 COPY Exec/ Exec/
+COPY .Exec_dev/ .Exec_dev/
 COPY Tests/ Tests/
 COPY Docs/ Docs/
 COPY Build/ Build/
 COPY Submodules/AMReX/ Submodules/AMReX/
 COPY Submodules/googletest/ Submodules/googletest/
+# Submodule .git files from a checkout point outside the copied source tree.
+RUN rm -rf /erf/Submodules/AMReX/.git /erf/Submodules/googletest/.git
 
 FROM source AS build
 ARG BUILD_JOBS=2
