@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+# CPU development environment. The build stage seeds ccache and runs unit tests;
+# the final image contains source and cached objects, but no build tree.
+FROM ubuntu:24.04 AS source
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gfortran git cmake ccache mpich libmpich-dev python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /erf
+# Copy only the directories needed for an ERF build and its tests. In particular,
+# do not copy .git or the caller's untracked root files into the image.
+COPY CMakeLists.txt CTestConfig.cmake ./
+COPY CMake/ CMake/
+COPY Source/ Source/
+COPY Exec/ Exec/
+COPY Tests/ Tests/
+COPY Docs/ Docs/
+COPY Build/ Build/
+COPY Submodules/AMReX/ Submodules/AMReX/
+COPY Submodules/googletest/ Submodules/googletest/
+
+FROM source AS build
+ARG BUILD_JOBS=2
+ENV CCACHE_DIR=/opt/erf-ccache
+RUN /erf/Build/containers/cpu/configure.sh /erf /tmp/erf-build \
+    && cmake --build /tmp/erf-build --parallel "${BUILD_JOBS}" \
+    && ctest --test-dir /tmp/erf-build -L unit -LE parallel \
+       --parallel "${BUILD_JOBS}" --output-on-failure --no-tests=error \
+    && ccache -s
+
+FROM source AS dev
+COPY --from=build /opt/erf-ccache/ /opt/erf-ccache/
+CMD ["/bin/bash"]

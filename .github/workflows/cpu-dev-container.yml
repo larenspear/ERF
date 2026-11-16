@@ -1,0 +1,34 @@
+name: CPU development container
+
+# Build and test only; publishing is a separate decision.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cpu-dev-container.yml'
+      - 'Build/containers/cpu/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpu-dev-container-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Fetch build submodules
+        run: git submodule update --init --depth 1 Submodules/AMReX Submodules/googletest
+      - name: Build development image and test baseline
+        run: docker build --platform linux/amd64 -f Build/containers/cpu/Containerfile --target dev -t erf-cpu-dev:ci .
+      - name: Rebuild modified source and run offline
+        run: |
+          docker run --rm --network=none --user "$(id -u):$(id -g)" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/Build/containers/cpu/smoke.sh,target=/tmp/erf-cpu-dev-smoke.sh,readonly" \
+            erf-cpu-dev:ci bash /tmp/erf-cpu-dev-smoke.sh
