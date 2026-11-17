@@ -5,7 +5,7 @@ FROM ubuntu:24.04 AS source
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gfortran git cmake ccache mpich libmpich-dev python3 libfftw3-dev pkg-config \
+    build-essential gfortran git cmake ccache openmpi-bin libopenmpi-dev python3 libfftw3-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /erf
