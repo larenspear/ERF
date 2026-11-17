@@ -43,6 +43,8 @@ printf '\nstatic_assert(true, "CPU development image rebuild smoke");\n' >> "$sr
 "$src/Build/containers/cpu/configure.sh" "$src" "$build"
 cmake --build "$build" --parallel 2
 ctest --test-dir "$build" -L unit -LE parallel --parallel 2 --output-on-failure --no-tests=error
+# The listener self-test fails unless an MPI rank 1 is present and reports its failure.
+ctest --test-dir "$build" -R '^erf_mpi_gtest_listener_self_test$' --output-on-failure --no-tests=error
 # Run both independent checks even if one fails; neither failure is suppressed.
 test_status=0
 ctest --test-dir "$build" -R '^FFTProjection_StretchedOutflowTop$' --output-on-failure --no-tests=error || test_status=$?
