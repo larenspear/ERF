@@ -2,13 +2,40 @@
 # Run inside the development image with networking disabled.
 set -euo pipefail
 work=$(mktemp -d "${TMPDIR:-/tmp}/erf-cpu-dev.XXXXXX")
-trap 'rm -rf "$work"' EXIT
 src=/erf
 build=/tmp/erf-build
+collect_logs=false
+
+finish() {
+  status=$?
+  trap - EXIT
+  if ! ccache -s; then
+    echo 'Could not report ccache statistics.' >&2
+    if [[ "$status" -eq 0 ]]; then status=1; fi
+  fi
+  if [[ "$status" -ne 0 && "$collect_logs" == true && -n "${ERF_DEV_DIAGNOSTICS:-}" ]]; then
+    for entry in \
+      "$build/Testing/Temporary/LastTest.log:ctest-last.log" \
+      "$build/Tests/test_files/FFTProjection_StretchedOutflowTop/run/simulation.log:fft-simulation.log" \
+      "$build/Tests/test_files/SDM_SpeciesDiffusion_column/implicit/simulation.log:particle-implicit.log" \
+      "$build/Tests/test_files/SDM_SpeciesDiffusion_column/explicit/simulation.log:particle-explicit.log" \
+      "$work/run/simulation.log:scalar-simulation.log"; do
+      source_path=${entry%:*}
+      if [[ -f "$source_path" ]]; then
+        cp "$source_path" "$ERF_DEV_DIAGNOSTICS/${entry##*:}" || echo "Could not copy $source_path" >&2
+      fi
+    done
+  fi
+  rm -rf "$work" || echo "Could not remove $work" >&2
+  exit "$status"
+}
+trap finish EXIT
+
 if [[ -e "$build" ]]; then
   echo "Expected an empty build path: $build" >&2
   exit 1
 fi
+collect_logs=true
 ccache -z
 
 # Change one translation unit in this disposable container.
@@ -16,9 +43,11 @@ printf '\nstatic_assert(true, "CPU development image rebuild smoke");\n' >> "$sr
 "$src/Build/containers/cpu/configure.sh" "$src" "$build"
 cmake --build "$build" --parallel 2
 ctest --test-dir "$build" -L unit -LE parallel --parallel 2 --output-on-failure --no-tests=error
-ctest --test-dir "$build" -R '^FFTProjection_StretchedOutflowTop$' --output-on-failure --no-tests=error
-ctest --test-dir "$build" -R '^SDM_SpeciesDiffusion_column$' --output-on-failure --no-tests=error
-ccache -s
+# Run both independent checks even if one fails; neither failure is suppressed.
+test_status=0
+ctest --test-dir "$build" -R '^FFTProjection_StretchedOutflowTop$' --output-on-failure --no-tests=error || test_status=$?
+ctest --test-dir "$build" -R '^SDM_SpeciesDiffusion_column$' --output-on-failure --no-tests=error || test_status=$?
+if [[ "$test_status" -ne 0 ]]; then exit "$test_status"; fi
 
 exe="$build/Exec/erf_exec"
 "$exe" --describe-json > "$work/description.json"
