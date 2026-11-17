@@ -1,0 +1,225 @@
+name: Nightly checks
+
+# Report-only correctness checks on development. Four builds of the Linux GCC / MPICH
+# double-precision configuration run the whole CTest suite with extra checking:
+#   bound-check:   AMReX_BOUND_CHECK, every Array4(i,j,k) access in a kernel is checked
+#   sanitizers:    AddressSanitizer + UndefinedBehaviorSanitizer, recovering after each report
+#   fpe-snan:      floating-point traps, with MultiFab data initialised to signalling NaN
+#   uninit-stdlib: pattern-initialised stack and heap memory, libstdc++ debug mode
+# Each job writes its findings (failed tests and why, sanitizer reports, unused input
+# parameters, compiler warnings) to the job summary. Findings never fail the job; only
+# a broken build does.
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-checks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    # Forks keep the workflow file but should not run it on a schedule.
+    if: github.repository == 'erf-model/ERF' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300  # keep JOB_TIMEOUT_MIN equal
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: bound-check
+            cc: gcc
+            cxx: g++
+            cmake_extra: -DAMReX_BOUND_CHECK:BOOL=ON
+            cxx_flags: ""
+            rwdi_flags: -O2 -g1 -DNDEBUG
+            amrex_defaults: ""
+            malloc_perturb: ""
+            test_labels: ""
+            jobs: 4
+          # -O1 -g1 keeps file:line in reports and cuts compile memory: ASan
+          # compiles need several GB each, and -j4 ran the 16 GB runner out of memory.
+          - name: sanitizers
+            cc: gcc
+            cxx: g++
+            cmake_extra: ""
+            cxx_flags: -fsanitize=address,undefined -fsanitize-recover=all -fno-omit-frame-pointer
+            rwdi_flags: -O1 -g1 -DNDEBUG
+            # Leave SIGSEGV and friends to ASan, which reports where they happened.
+            amrex_defaults: amrex.signal_handling=0
+            malloc_perturb: ""
+            test_labels: ""
+            jobs: 2
+          # A NaN or Inf stops the run where it is produced. Signalling-NaN
+          # initialisation makes a read of never-written MultiFab data trap too.
+          # Inputs files that set these parameters themselves keep their values.
+          - name: fpe-snan
+            cc: gcc
+            cxx: g++
+            cmake_extra: ""
+            cxx_flags: ""
+            rwdi_flags: -O2 -g1 -DNDEBUG
+            amrex_defaults: amrex.fpe_trap_invalid=1 amrex.fpe_trap_zero=1 amrex.fpe_trap_overflow=1 amrex.init_snan=1
+            malloc_perturb: ""
+            # Unit tests feed NaN and Inf on purpose to check that they are rejected.
+            test_labels: regression|parallel|infrastructure
+            jobs: 4
+          # Stack variables start as a garbage pattern (GCC 12+), the heap likewise
+          # through MALLOC_PERTURB_, and libstdc++ checks iterators and container bounds.
+          - name: uninit-stdlib
+            cc: gcc-12
+            cxx: g++-12
+            cmake_extra: ""
+            cxx_flags: -ftrivial-auto-var-init=pattern -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC
+            rwdi_flags: -O2 -g1 -DNDEBUG
+            amrex_defaults: ""
+            malloc_perturb: "165"
+            test_labels: ""
+            jobs: 4
+    env:
+      BUILD_DIR: ${{ github.workspace }}/build
+      SANITIZER_LOGS: ${{ github.workspace }}/sanitizer-logs
+      JOB_TIMEOUT_MIN: 300
+    steps:
+      - name: Record start time
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Free disk space on Ubuntu
+        uses: ./.github/actions/free-space-ubuntu
+
+      - name: Install dependencies
+        env:
+          CXX_PACKAGE: ${{ matrix.cxx }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mpich libmpich-dev "$CXX_PACKAGE"
+          Submodules/AMReX/.github/workflows/dependencies/dependencies_ccache.sh
+
+      - name: Restore ccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.workflow }}-${{ matrix.name }}-git-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ github.workflow }}-${{ matrix.name }}-git-
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          CXX_FLAGS: ${{ matrix.cxx_flags }}
+          RWDI_FLAGS: ${{ matrix.rwdi_flags }}
+          CMAKE_EXTRA: ${{ matrix.cmake_extra }}
+        run: |
+          # CMAKE_EXTRA holds at most one -D option; leave it unquoted only when set.
+          extra=()
+          if [ -n "$CMAKE_EXTRA" ]; then extra+=("$CMAKE_EXTRA"); fi
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
+            -DCMAKE_C_FLAGS="$CXX_FLAGS" \
+            -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="$RWDI_FLAGS" \
+            -DCMAKE_C_FLAGS_RELWITHDEBINFO="$RWDI_FLAGS" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DAMReX_ASSERTIONS:BOOL=ON \
+            -DERF_DIM:STRING=3 \
+            -DERF_ENABLE_MPI:BOOL=ON \
+            -DMPI_CXX_COMPILE_OPTIONS=-fno-lto \
+            -DMPI_CXX_LINK_FLAGS=-fno-lto \
+            -DERF_PARALLEL_TEST_ALLOW_OVERSUBSCRIBE:BOOL=ON \
+            '-DERF_PARALLEL_TEST_NRANKS:STRING=1;2;4' \
+            -DERF_ENABLE_PARTICLES:BOOL=ON \
+            -DERF_ENABLE_TESTS:BOOL=ON \
+            -DERF_ENABLE_ALL_WARNINGS:BOOL=ON \
+            -DERF_ENABLE_FCOMPARE:BOOL=ON \
+            "${extra[@]}"
+
+      - name: Build
+        env:
+          JOBS: ${{ matrix.jobs }}
+        run: |
+          export CCACHE_COMPRESS=1 CCACHE_COMPRESSLEVEL=10 CCACHE_MAXSIZE=600M
+          ccache -z
+          build_start=$(date +%s)
+          set -o pipefail
+          cmake --build "$BUILD_DIR" --parallel "$JOBS" 2>&1 | tee build-output.txt
+          ccache --evict-older-than "$(( $(date +%s) - build_start + 120 ))s"
+          ccache -s
+
+      - name: Save ccache
+        if: always() && github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.workflow }}-${{ matrix.name }}-git-${{ github.sha }}
+
+      # Every label in one CTest run. Findings make tests fail; that is recorded,
+      # not propagated.
+      - name: Run tests
+        working-directory: ${{ env.BUILD_DIR }}
+        env:
+          AMREX_DEFAULTS: ${{ matrix.amrex_defaults }}
+          MALLOC_PERTURB_: ${{ matrix.malloc_perturb }}
+          TEST_LABELS: ${{ matrix.test_labels }}
+          # MPICH leaks at shutdown by design. Each process writes its reports to
+          # its own log_path.<pid> file, which the summary reads.
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=0:log_path=${{ env.SANITIZER_LOGS }}/asan
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=0:log_path=${{ env.SANITIZER_LOGS }}/ubsan
+        run: |
+          mkdir -p "$SANITIZER_LOGS"
+          # AMReX reads AMREX_DEFAULT_INIT as default inputs, one per line, before
+          # each test's inputs file and command line.
+          if [ -n "$AMREX_DEFAULTS" ]; then
+            # shellcheck disable=SC2086 # split the space-separated defaults on purpose
+            AMREX_DEFAULT_INIT=$(printf '%s\n' $AMREX_DEFAULTS)
+            export AMREX_DEFAULT_INIT
+          fi
+          select=()
+          if [ -n "$TEST_LABELS" ]; then select=(-L "$TEST_LABELS"); fi
+          # Stop 15 minutes before the job limit so CTest still writes its report.
+          # At the stop time CTest ends running tests as timeouts and leaves the
+          # rest out of the report; the summary counts those as not reached.
+          # --stop-time takes a time of day; one already past means tomorrow.
+          stop_epoch=$(( JOB_START + (JOB_TIMEOUT_MIN - 15) * 60 ))
+          stop_time=$(date -u -d "@$stop_epoch" +%H:%M:%S)
+          echo "CTEST_STOP=$stop_time UTC" >> "$GITHUB_ENV"
+          echo "Starting no new tests after $stop_time UTC"
+          expected=$(ctest -N "${select[@]}" | sed -n 's/^Total Tests: //p')
+          echo "CTEST_EXPECTED=$expected" >> "$GITHUB_ENV"
+          status=0
+          ctest --parallel 4 --no-tests=error --timeout 900 --stop-time "$stop_time" \
+            "${select[@]}" \
+            --output-junit "$BUILD_DIR/ctest-junit.xml" \
+            --test-output-size-passed 262144 --test-output-size-failed 1048576 \
+            > ctest-output.txt 2>&1 || status=$?
+          tail -n 40 ctest-output.txt
+          echo "CTEST_STATUS=$status" >> "$GITHUB_ENV"
+
+      - name: Summary
+        if: always()
+        env:
+          VARIANT: ${{ matrix.name }}
+        run: |
+          python3 .github/scripts/nightly_checks_summary.py \
+            --variant "$VARIANT" \
+            --build-log build-output.txt \
+            --junit "$BUILD_DIR/ctest-junit.xml" \
+            --sanitizer-logs "$SANITIZER_LOGS" \
+            --test-dir "$BUILD_DIR/Tests" \
+            --source-root "$GITHUB_WORKSPACE" \
+            ${CTEST_EXPECTED:+--expected-tests "$CTEST_EXPECTED"} \
+            --exit-code "ctest=${CTEST_STATUS:-not run}" \
+            --exit-code "stop-time=${CTEST_STOP:-none}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
