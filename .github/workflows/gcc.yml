@@ -338,7 +338,12 @@ jobs:
 
     # This fork-only branch saves only to its isolated test package.
     - name: Save Cache
-      if: always() && github.event_name == 'workflow_dispatch' && github.repository == 'larenspear/ERF' && github.ref_name == 'ci-gnumake-cache-validation-20261116'
+      if: >-
+        ${{ success() && github.event_name == 'workflow_dispatch' &&
+            github.repository == 'larenspear/ERF' &&
+            github.ref_name == 'ci-gnumake-cache-validation-20261116' &&
+            steps.gnumake-base.outcome == 'success' &&
+            steps.gnumake-structure.outcome == 'success' }}
       uses: ./.github/actions/ccache-trunk
       with:
         mode: save
