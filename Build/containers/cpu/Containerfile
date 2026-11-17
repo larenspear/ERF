@@ -5,7 +5,7 @@ FROM ubuntu:24.04 AS source
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gfortran git cmake ccache mpich libmpich-dev python3 \
+    build-essential gfortran git cmake ccache mpich libmpich-dev python3 libfftw3-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /erf
@@ -35,4 +35,7 @@ RUN /erf/Build/containers/cpu/configure.sh /erf /tmp/erf-build \
 
 FROM source AS dev
 COPY --from=build /opt/erf-ccache/ /opt/erf-ccache/
+# Keep source and build paths the same as the seed build for ccache and debug info.
+ENV CCACHE_DIR=/opt/erf-ccache
+RUN chmod -R a+rwX /erf /opt/erf-ccache
 CMD ["/bin/bash"]

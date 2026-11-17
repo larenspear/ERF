@@ -5,8 +5,8 @@ compiler cache. It is intended for testing source changes without installing
 ERF's build dependencies on the host. The image does not contain a configured
 build tree or an installed executable.
 
-The profile enables MPI, particles, double precision, unit tests, and
-`fcompare`. It disables NetCDF and FFT. It does not provide RRTMGP, Noah-MP,
+The profile enables MPI, FFT, particles, double precision, unit tests, and
+`fcompare`. It disables NetCDF. It does not provide RRTMGP, Noah-MP,
 EAMxx, or a GPU toolchain. Select a different build for a case that requires
 those features. The image is not an EARL container executor or a qualified
 scientific baseline.
@@ -23,12 +23,15 @@ docker run --rm --network=none --user "$(id -u):$(id -g)" \
   erf-cpu-dev:local bash /tmp/smoke.sh
 ```
 
-The image build runs the serial unit-test selection. The smoke script copies
-source and cache to writable temporary storage, changes one C++ translation
-unit, builds and runs the unit tests offline, checks the executable's native
-build description, and runs a two-step CPU case. The cache's effectiveness for
-changed source and other hosts must be measured; the test does not require a
-specific hit rate.
+The image build runs the serial unit-test selection. The smoke script changes one
+C++ translation unit in the disposable container, rebuilds at the same paths as
+the seed build, runs the unit tests and selected FFT and particle tests offline,
+checks the executable's native build description, and runs a two-step CPU case.
+The cache's effectiveness for changed source and other hosts must be measured;
+the test does not require a
+specific hit rate. The source and cache inside each container are writable so
+an unprivileged user can rebuild. Treat the container and its cache as disposable;
+do not share a writable cache between untrusted candidates.
 
 ## Scope
 
