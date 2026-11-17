@@ -32,6 +32,17 @@ jobs:
         run: docker build --platform linux/amd64 -f Build/containers/cpu/Containerfile --target dev -t erf-cpu-dev:ci .
       - name: Rebuild modified source and run offline
         run: |
+          mkdir -p "$RUNNER_TEMP/erf-cpu-dev-diagnostics"
           docker run --rm --network=none --user "$(id -u):$(id -g)" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/Build/containers/cpu/smoke.sh,target=/tmp/erf-cpu-dev-smoke.sh,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/erf-cpu-dev-diagnostics,target=/diagnostics" \
+            -e ERF_DEV_DIAGNOSTICS=/diagnostics \
             erf-cpu-dev:ci bash /tmp/erf-cpu-dev-smoke.sh
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpu-dev-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/erf-cpu-dev-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 7
