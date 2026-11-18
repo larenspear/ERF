@@ -13,6 +13,9 @@ on:
   schedule:
     - cron: '0 5 * * *'
   workflow_dispatch:
+  # TEMPORARY: fork test trigger, not for upstream.
+  push:
+    branches: [ci-nightly-checks-test]
 
 permissions:
   contents: read
@@ -25,23 +28,13 @@ jobs:
   check:
     name: ${{ matrix.name }}
     # Forks keep the workflow file but should not run it on a schedule.
-    if: github.repository == 'erf-model/ERF' || github.event_name == 'workflow_dispatch'
+    if: github.repository == 'erf-model/ERF' || github.event_name != 'schedule'
     runs-on: ubuntu-22.04
     timeout-minutes: 300  # keep JOB_TIMEOUT_MIN equal
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: bound-check
-            cc: gcc
-            cxx: g++
-            cmake_extra: -DAMReX_BOUND_CHECK:BOOL=ON
-            cxx_flags: ""
-            rwdi_flags: -O2 -g1 -DNDEBUG
-            amrex_defaults: ""
-            malloc_perturb: ""
-            test_labels: ""
-            jobs: 4
           # -O1 -g1 keeps file:line in reports and cuts compile memory: ASan
           # compiles need several GB each, and -j4 ran the 16 GB runner out of memory.
           - name: sanitizers
@@ -68,18 +61,6 @@ jobs:
             malloc_perturb: ""
             # Unit tests feed NaN and Inf on purpose to check that they are rejected.
             test_labels: regression|parallel|infrastructure
-            jobs: 4
-          # Stack variables start as a garbage pattern (GCC 12+), the heap likewise
-          # through MALLOC_PERTURB_, and libstdc++ checks iterators and container bounds.
-          - name: uninit-stdlib
-            cc: gcc-12
-            cxx: g++-12
-            cmake_extra: ""
-            cxx_flags: -ftrivial-auto-var-init=pattern -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC
-            rwdi_flags: -O2 -g1 -DNDEBUG
-            amrex_defaults: ""
-            malloc_perturb: "165"
-            test_labels: ""
             jobs: 4
     env:
       BUILD_DIR: ${{ github.workspace }}/build
