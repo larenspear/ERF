@@ -34,8 +34,9 @@ endfunction()
 # Three 0.1 s SINGLE steps accumulate to a double time that is not representable
 # in amrex::Real. Zero velocity keeps this advection-only fixture inside its
 # donor-CFL bound while exercising the production checkpoint/restart path.
+# erf.fixed_dt_cfl_limit=false keeps dt at 0.1 s; ERF otherwise lowers it to the CFL limit.
 run_erf("Continuous four-step FLOAT SBM run"
-  "max_step=4" "stop_time=0.5" "erf.fixed_dt=0.1"
+  "max_step=4" "stop_time=0.5" "erf.fixed_dt=0.1" "erf.fixed_dt_cfl_limit=false"
   "prob.U_0=0.0" "prob.V_0=0.0" "prob.W_0=0.0"
   "erf.check_file=sbm_float_continuous_chk" "erf.check_int=1"
   "erf.plot_int_1=-1")
@@ -57,7 +58,7 @@ endif()
 
 run_erf("FLOAT restart continuation from fractional-time checkpoint"
   "erf.restart=${_continuous_step_three}"
-  "max_step=4" "stop_time=0.5" "erf.fixed_dt=0.1"
+  "max_step=4" "stop_time=0.5" "erf.fixed_dt=0.1" "erf.fixed_dt_cfl_limit=false"
   "prob.U_0=0.0" "prob.V_0=0.0" "prob.W_0=0.0"
   "erf.check_file=sbm_float_restarted_chk" "erf.check_int=1"
   "erf.plot_int_1=-1")
