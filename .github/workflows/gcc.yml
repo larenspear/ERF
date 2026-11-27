@@ -168,6 +168,25 @@ jobs:
         return=$(tail -n 1 ${{runner.workspace}}/build-output-warnings.txt | awk '{print $2}')
         test "${return}" -eq 0
 
+    # ci-required checks that each registered test runs in some leg.
+    - name: Record registered tests
+      env:
+        MATRIX_JSON: ${{ toJSON(matrix) }}
+      run: |
+        mkdir -p ${{runner.workspace}}/ctest-registry
+        ctest --show-only=json-v1 > ${{runner.workspace}}/ctest-registry/registry.json
+        printf '%s\n' "$MATRIX_JSON" > ${{runner.workspace}}/ctest-registry/matrix.json
+      working-directory: ${{runner.workspace}}/ERF/build
+
+    - name: Upload registered tests
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ctest-registry-${{matrix.mesh_precision}}-${{matrix.particles}}-${{matrix.particles_precision}}
+        path: ${{runner.workspace}}/ctest-registry
+        if-no-files-found: error
+        retention-days: 1
+        overwrite: true
+
     - name: Check Unit Test Registration
       if: matrix.particles_precision == 'DOUBLE' && matrix.mesh_precision == 'DOUBLE'
       run: |
@@ -193,6 +212,12 @@ jobs:
         ctest -L auxiliary --output-on-failure --no-tests=error
       working-directory: ${{runner.workspace}}/ERF/build
 
+    - name: Run Immersed-Forcing and Cloud-Optics Integration Tests
+      if: matrix.particles == 'OFF' && matrix.particles_precision == 'DOUBLE' && matrix.mesh_precision == 'DOUBLE'
+      run: |
+        ctest -L '^(immersed-forcing|cloud_optics)$' --output-on-failure --no-tests=error
+      working-directory: ${{runner.workspace}}/ERF/build
+
     # Keep the existing DOUBLE unit/regression coverage and add focused SINGLE
     # SHOC and SBM remapping runtime checks without repeating the full unit
     # suite in the SINGLE build.
@@ -208,6 +233,12 @@ jobs:
         ctest -R '^(SBMRemapping|SBMFoundation)\.' -j 4 \
               --output-on-failure \
               --no-tests=error
+      working-directory: ${{runner.workspace}}/ERF/build
+
+    - name: Run SINGLE SBM Integration Tests
+      if: matrix.mesh_precision == 'SINGLE' && matrix.particles == 'ON' && matrix.particles_precision == 'SINGLE'
+      run: |
+        ctest -L sbm --output-on-failure --no-tests=error
       working-directory: ${{runner.workspace}}/ERF/build
 
     # The SDM diagnostics restart check, in the leg that builds the ML-uphys diagnostics.
@@ -356,7 +387,8 @@ jobs:
     name: ci-required
     if: ${{ !cancelled() }}
     needs: [library]
-    permissions: {}
+    permissions:
+      contents: read
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
@@ -367,3 +399,23 @@ jobs:
           # 'skipped' is legitimate (path filters); anything other than that or
           # 'success' means the matrix did not pass.
           [[ "${result}" == "success" || "${result}" == "skipped" ]] || exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.library.result == 'success'
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - name: Download registered tests
+        if: needs.library.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ctest-registry-*
+          path: ctest-registries
+
+      - name: Check every registered test runs
+        if: needs.library.result == 'success'
+        run: |
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user PyYAML==6.0.3
+          python3 .github/tests/ctest_coverage.py \
+            --workflow .github/workflows/gcc.yml --job library --registries ctest-registries
