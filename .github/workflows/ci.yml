@@ -178,8 +178,8 @@ jobs:
 
     - name: Check Parallel Test Registration
       run: |
-        ctest --show-only=json-v1 -L parallel > parallel-registration.json
-        ctest -N -V -L parallel | tee parallel-registration.txt
+        ctest --show-only=json-v1 -R '^erf_parallel_tests\.' > parallel-registration.json
+        ctest -N -V -R '^erf_parallel_tests\.' | tee parallel-registration.txt
         python3 - "$ERF_PARALLEL_TEST_NRANKS" \
           ${{runner.workspace}}/ERF/build-${{matrix.os}}/Tests/Unit/erf_parallel_tests \
           parallel-registration.json \
