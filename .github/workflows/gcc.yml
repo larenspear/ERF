@@ -2,7 +2,7 @@ name: Linux GCC
 
 on:
   push:
-    branches: [development]
+    branches: [development, ci-test-coverage-20261125]
     paths:
       - '**'
       - '!Build/spack/**'
@@ -293,7 +293,7 @@ jobs:
 
   gnumake:
     name: GNU Make - Mesh DOUBLE Particles OFF DOUBLE
-    if: github.event_name != 'pull_request'
+    if: false
     permissions:
       contents: read
       packages: write

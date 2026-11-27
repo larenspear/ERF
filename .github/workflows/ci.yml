@@ -3,7 +3,7 @@ name: ERF CI
 # MPICH on merge only, not PR
 on:
   push:
-    branches: [development]
+    branches: [development, ci-test-coverage-20261125]
     paths:
       - '**'
       - '!Build/spack/**'
